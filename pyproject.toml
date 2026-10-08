@@ -1,0 +1,48 @@
+[project]
+name = "voxcpm-studio"
+version = "0.1.0"
+description = "LoRA training and fast inference studio for VoxCPM"
+readme = "README.md"
+requires-python = "==3.13.*"
+dependencies = [
+    "voxcpm",
+    # Declared directly so the CUDA index below applies to them.
+    "torch>=2.14.1",
+    "torchaudio>=2.11",
+    "triton-windows~=3.8.0; sys_platform == 'win32'",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "soundfile",
+]
+
+[project.scripts]
+voxcpm-studio = "voxcpm_studio.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voxcpm_studio"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv.sources]
+# PyPI 2.0.3 predates generate(seed=...) and resolve_model_path; switch to
+# "voxcpm>=2.0.4" from PyPI once a release includes them.
+voxcpm = { git = "https://github.com/OpenBMB/VoxCPM", rev = "cce58a5b59303c9bd63d12f23afe6a49a4a80c59" }
+torch = [{ index = "pytorch" }]
+torchaudio = [{ index = "pytorch" }]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

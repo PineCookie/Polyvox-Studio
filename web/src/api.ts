@@ -1,0 +1,96 @@
+// Typed client for the VoxCPM Studio API (src/voxcpm_studio/api.py).
+
+export interface LoraConfig {
+  r: number
+  alpha: number
+  dropout: number
+  enable_lm: boolean
+  enable_dit: boolean
+  enable_proj: boolean
+  target_modules_lm: string[]
+  target_modules_dit: string[]
+}
+
+export interface Lora {
+  id: string
+  base_model: string | null
+  config: LoraConfig | null
+}
+
+export interface Status {
+  device: string
+  optimize: boolean
+  model: string
+  loaded: boolean
+  lora_rank: number | null
+  active_lora: string | null
+}
+
+export interface SynthesisParams {
+  text: string
+  control: string
+  loraId: string | null
+  referenceAudio: File | null
+  promptText: string
+  cfgValue: number
+  steps: number
+  normalize: boolean
+  denoise: boolean
+  seed: number | null
+}
+
+export interface SynthesisOutput {
+  audio: Blob
+  seed: number | null
+}
+
+async function errorMessage(resp: Response): Promise<string> {
+  try {
+    const body = await resp.json()
+    const detail = body?.detail
+    if (typeof detail === 'string') return detail
+    // FastAPI validation errors: [{ loc, msg }, ...]
+    if (Array.isArray(detail)) return detail.map((d) => `${d.loc?.at(-1) ?? 'input'}: ${d.msg}`).join('; ')
+  } catch {
+    // Non-JSON error body.
+  }
+  return `${resp.status} ${resp.statusText}`
+}
+
+async function request(input: string, init?: RequestInit): Promise<Response> {
+  const resp = await fetch(input, init)
+  if (!resp.ok) throw new Error(await errorMessage(resp))
+  return resp
+}
+
+export async function getStatus(): Promise<Status> {
+  return (await request('/api/status')).json()
+}
+
+export async function listLoras(): Promise<Lora[]> {
+  return (await request('/api/loras')).json()
+}
+
+export async function unloadModel(): Promise<Status> {
+  return (await request('/api/model/unload', { method: 'POST' })).json()
+}
+
+export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
+  const form = new FormData()
+  form.set('text', p.text)
+  form.set('control', p.control)
+  if (p.loraId) form.set('lora_id', p.loraId)
+  if (p.referenceAudio) {
+    form.set('reference_audio', p.referenceAudio)
+    if (p.promptText.trim()) form.set('prompt_text', p.promptText)
+  }
+  form.set('cfg_value', String(p.cfgValue))
+  form.set('inference_timesteps', String(p.steps))
+  form.set('normalize', String(p.normalize))
+  form.set('denoise', String(p.denoise))
+  if (p.seed !== null) form.set('seed', String(p.seed))
+
+  const resp = await request('/api/tts', { method: 'POST', body: form })
+  const seed = resp.headers.get('X-Seed')
+  return { audio: await resp.blob(), seed: seed === null ? null : Number(seed) }
+}
