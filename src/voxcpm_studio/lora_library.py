@@ -40,6 +40,44 @@ def default_lora_config() -> LoRAConfig:
     )
 
 
+def _union(lists) -> list[str]:
+    out: list[str] = []
+    for names in lists:
+        out += [n for n in names if n not in out]
+    return out
+
+
+def layout_covering(configs: list[LoRAConfig]) -> LoRAConfig:
+    """The smallest LoRA layout any of ``configs`` fits into: highest rank,
+    union of target layers. A smaller LoRA loads zero-padded (see inference)."""
+    configs = configs or [default_lora_config()]
+    r = max(c.r for c in configs)
+    return LoRAConfig(
+        enable_lm=any(c.enable_lm for c in configs),
+        enable_dit=any(c.enable_dit for c in configs),
+        enable_proj=any(c.enable_proj for c in configs),
+        r=r,
+        alpha=r,  # unused: each loaded LoRA sets its own alpha / r
+        dropout=0.0,
+        target_modules_lm=_union(c.target_modules_lm for c in configs if c.enable_lm),
+        target_modules_dit=_union(c.target_modules_dit for c in configs if c.enable_dit),
+        target_proj_modules=_union(c.target_proj_modules for c in configs if c.enable_proj),
+    )
+
+
+def covers(layout: LoRAConfig, config: LoRAConfig) -> bool:
+    """Whether a model built with ``layout`` can hold a LoRA with ``config``."""
+    return (
+        layout.r >= config.r
+        and (layout.enable_lm or not config.enable_lm)
+        and (layout.enable_dit or not config.enable_dit)
+        and (layout.enable_proj or not config.enable_proj)
+        and (not config.enable_lm or set(config.target_modules_lm) <= set(layout.target_modules_lm))
+        and (not config.enable_dit or set(config.target_modules_dit) <= set(layout.target_modules_dit))
+        and (not config.enable_proj or set(config.target_proj_modules) <= set(layout.target_proj_modules))
+    )
+
+
 def _read_metadata(ckpt_dir: Path) -> tuple[LoRAConfig | None, str | None]:
     config_file = ckpt_dir / CONFIG_FILE
     if not config_file.is_file():

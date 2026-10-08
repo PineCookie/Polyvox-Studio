@@ -4,11 +4,14 @@ import json
 import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import soundfile as sf
+import torch
+from safetensors.torch import save_file
+from torch import nn
+from voxcpm.modules.layers.lora import apply_lora_to_named_linear_modules
 
 from voxcpm_studio.config import Settings
 from voxcpm_studio.inference import InferenceService
@@ -17,30 +20,74 @@ from voxcpm_studio.training import TrainingManager
 FAKE_WORKER = Path(__file__).with_name("fake_train_worker.py")
 
 
-def make_lora(lora_dir: Path, rel: str, r: int | None = 32, base_model: str = "openbmb/VoxCPM2") -> Path:
-    """Create a fake checkpoint dir; r=None omits lora_config.json."""
+DIM = 8  # width of the tiny model's linear layers
+LM_LAYERS = [f"base_lm.layers.{i}.self_attn.{p}" for i in range(2) for p in ("q_proj", "k_proj", "v_proj", "o_proj")]
+
+
+def make_lora(
+    lora_dir: Path,
+    rel: str,
+    r: int | None = 32,
+    base_model: str = "openbmb/VoxCPM2",
+    alpha: float | None = None,
+    layers: list[str] = LM_LAYERS,
+) -> Path:
+    """Create a checkpoint with real LoRA weights for the tiny model; r=None
+    omits lora_config.json (the default layout, rank 32, applies)."""
     ckpt = lora_dir / rel
     ckpt.mkdir(parents=True)
-    (ckpt / "lora_weights.safetensors").write_bytes(b"")
+    rank = r or 32
+    gen = torch.Generator().manual_seed(rank)
+    tensors = {}
+    for layer in layers:
+        tensors[f"{layer}.lora_A"] = torch.randn(rank, DIM, generator=gen)
+        tensors[f"{layer}.lora_B"] = torch.randn(DIM, rank, generator=gen)
+    save_file(tensors, ckpt / "lora_weights.safetensors")
     if r is not None:
-        cfg = {"enable_lm": True, "enable_dit": True, "r": r, "alpha": r}
+        cfg = {"enable_lm": True, "enable_dit": True, "r": r, "alpha": alpha or r}
         (ckpt / "lora_config.json").write_text(json.dumps({"lora_config": cfg, "base_model": base_model}))
     return ckpt
+
+
+class TinyTTS(nn.Module):
+    """Stands in for a VoxCPM model: same LoRA injection on a few small layers."""
+
+    def __init__(self, lora_config):
+        super().__init__()
+
+        def block():
+            attn = nn.Module()
+            for p in ("q_proj", "k_proj", "v_proj", "o_proj"):
+                setattr(attn, p, nn.Linear(DIM, DIM))
+            layer = nn.Module()
+            layer.self_attn = attn
+            return layer
+
+        self.base_lm = nn.Module()
+        self.base_lm.layers = nn.ModuleList([block(), block()])
+        self.feat_decoder = nn.Module()
+        self.feat_decoder.layers = nn.ModuleList([block()])
+        self.sample_rate = 48000
+        self.last_successful_seed = 7
+        kwargs = dict(r=lora_config.r, alpha=lora_config.alpha, dropout=lora_config.dropout)
+        if lora_config.enable_lm:
+            apply_lora_to_named_linear_modules(self.base_lm, target_submodule_names=lora_config.target_modules_lm, **kwargs)
+        if lora_config.enable_dit:
+            apply_lora_to_named_linear_modules(
+                self.feat_decoder, target_submodule_names=lora_config.target_modules_dit, **kwargs
+            )
+
+    def lora_delta(self, layer: str) -> torch.Tensor:
+        """Effective weight change of one layer: scaling * B @ A."""
+        module = self.get_submodule(layer)
+        return module.scaling * module.lora_B @ module.lora_A
 
 
 class FakeModel:
     def __init__(self, lora_config):
         self.lora_config = lora_config
-        self.tts_model = SimpleNamespace(sample_rate=48000, last_successful_seed=7)
-        self.loaded_paths: list[str] = []
-        self.lora_enabled = False
+        self.tts_model = TinyTTS(lora_config)
         self.generate_calls: list[dict] = []
-
-    def load_lora(self, path):
-        self.loaded_paths.append(path)
-
-    def set_lora_enabled(self, enabled):
-        self.lora_enabled = enabled
 
     def generate(self, **kwargs):
         self.generate_calls.append(kwargs)
