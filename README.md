@@ -22,6 +22,7 @@ src/voxcpm_studio/
   manifests.py     training manifests: discovery, path fixes, inspection
   importer.py      dataset import from GPT-SoVITS lists, CSV, JSONL, folders
   asr.py           speech recognition (Qwen3-ASR, transformers-native)
+  jobs.py          in-process background jobs with progress and cancel
   training.py      training runs: config, job control, metrics
   train_worker.py  training subprocess around the vendored script
   sharing.py       export / import of shareable LoRA packages
@@ -101,9 +102,15 @@ on this computer:
 Lists often hold stale paths (another machine, a moved folder). Each clip is
 looked up as written, by file name next to the list and in its `wavs/` folder,
 and by file name in an optional audio folder. A preview shows what was found
-before anything is written; rows without audio or text are skipped. The import
-writes `data/<name>/train.jsonl` with paths relative to it and, by default,
-copies the audio into `data/<name>/wavs/` so the folder is self-contained.
+before anything is written; rows without audio are skipped. The import writes
+`data/<name>/train.jsonl` with paths relative to it and, by default, copies the
+audio into `data/<name>/wavs/` so the folder is self-contained.
+
+Clips that have audio but no transcript (a folder of bare recordings, or empty
+text in a list) can be transcribed with Qwen3-ASR during the import, optionally
+with a fixed language and names / terms to spell right. Imports run in the
+background with progress and can be cancelled. Transcribed clips are listed in
+`data/<name>/asr.json` so they can be reviewed.
 
 ## Sharing LoRAs
 
@@ -125,7 +132,6 @@ cd web; npm run dev             # UI on :5173, proxies /api to :8808
 
 ## Roadmap
 
-- Transcribe untranscribed clips with ASR during import.
 - Preprocessing pipeline: VAD slicing, forced alignment (Qwen3-ForcedAligner), a
   per-clip audit table, loudness normalization, optional vocal separation.
 - Training speed: batch size / token budget, cuDNN attention.

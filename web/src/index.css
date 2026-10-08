@@ -1122,3 +1122,26 @@ input[type='search']:focus {
   font-family: ui-monospace, 'Cascadia Code', monospace;
   font-size: 0.75rem;
 }
+
+/* Import: ASR options and job progress */
+
+.asr-options {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.asr-options .hint {
+  margin: 0;
+}
+
+.job-progress {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+}

@@ -205,9 +205,9 @@ export interface ImportPreview {
   kind: 'gsv' | 'csv' | 'jsonl' | 'folder'
   source: string
   rows: number
-  found: number
+  found: number // audio and transcript
+  untranscribed: number // audio, no transcript: ASR can fill it in
   missing: number
-  skipped_empty: number
   duplicates: number
   unreadable: number
   total_seconds: number
@@ -222,14 +222,49 @@ export async function previewImport(source: string, audioDir: string): Promise<I
   return (await postJson('/api/datasets/import/preview', { source, audio_dir: audioDir || null })).json()
 }
 
-export async function importDataset(
-  source: string,
-  audioDir: string,
-  name: string,
-  copyAudio: boolean,
-): Promise<{ id: string; imported: number }> {
-  const body = { source, audio_dir: audioDir || null, name, copy_audio: copyAudio }
+export interface Job<R = Record<string, unknown>> {
+  id: string
+  kind: string
+  title: string
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  phase: string
+  done: number
+  total: number
+  error: string | null
+  result: R
+}
+
+export interface ImportOptions {
+  source: string
+  audioDir: string
+  name: string
+  copyAudio: boolean
+  transcribe: boolean
+  language: string // '' = detect per clip
+  prompt: string // names / terms for ASR
+}
+
+export type ImportJob = Job<{ id: string; imported: number; transcribed: number }>
+
+export async function importDataset(o: ImportOptions): Promise<ImportJob> {
+  const body = {
+    source: o.source,
+    audio_dir: o.audioDir || null,
+    name: o.name,
+    copy_audio: o.copyAudio,
+    transcribe: o.transcribe,
+    language: o.language || null,
+    prompt: o.prompt.trim() || null,
+  }
   return (await postJson('/api/datasets/import', body)).json()
+}
+
+export async function getJob<J extends Job>(id: string): Promise<J> {
+  return (await request(`/api/jobs/${encodeURIComponent(id)}`)).json()
+}
+
+export async function cancelJob(id: string): Promise<void> {
+  await postJson(`/api/jobs/${encodeURIComponent(id)}/cancel`)
 }
 
 export async function inspectDataset(id: string): Promise<DatasetReport> {

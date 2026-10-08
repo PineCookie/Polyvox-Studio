@@ -22,6 +22,7 @@ from . import importer, lora_library, manifests, sharing
 from .asr import AsrService, load_audio
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
+from .jobs import Job, JobRunner
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -70,6 +71,10 @@ class ImportSourceIn(BaseModel):
 class ImportIn(ImportSourceIn):
     name: str
     copy_audio: bool = True
+    # Fill in missing transcripts with ASR (otherwise those clips are left out).
+    transcribe: bool = False
+    language: str | None = None  # e.g. "zh"; None = detect per clip
+    prompt: str | None = None  # names / terms the recognizer should prefer
 
 
 class ImportPreviewOut(BaseModel):
@@ -77,8 +82,8 @@ class ImportPreviewOut(BaseModel):
     source: str
     rows: int
     found: int
+    untranscribed: int
     missing: int
-    skipped_empty: int
     duplicates: int
     unreadable: int
     total_seconds: float
@@ -89,10 +94,18 @@ class ImportPreviewOut(BaseModel):
     suggested_name: str
 
 
-class ImportOut(BaseModel):
+class JobOut(BaseModel):
     id: str
-    imported: int
-    preview: ImportPreviewOut
+    kind: str
+    title: str
+    state: str
+    phase: str
+    done: int
+    total: int
+    error: str | None
+    result: dict
+    started: float
+    finished: float | None
 
 
 class ResumeIn(BaseModel):
@@ -119,10 +132,12 @@ def create_app(
     service: InferenceService | None = None,
     training: TrainingManager | None = None,
     asr: AsrService | None = None,
+    jobs: JobRunner | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     service = service or InferenceService(settings)
     asr = asr or AsrService(settings)
+    jobs = jobs or JobRunner()
     training = training or TrainingManager(
         settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr)
     )
@@ -252,17 +267,53 @@ def create_app(
         preview = _checked(importer.preview_import, body.source, body.audio_dir, settings.data_dir)
         return ImportPreviewOut(**dataclasses.asdict(preview))
 
-    @app.post("/api/datasets/import")
-    def import_dataset(body: ImportIn) -> ImportOut:
+    @app.post("/api/datasets/import", status_code=202)
+    def import_dataset(body: ImportIn) -> JobOut:
+        """Start an import job; poll /api/jobs/{id}. The job's result is
+        {"id", "imported", "transcribed"}."""
+        # Fail fast on what can be checked now.
         try:
-            dataset_id, preview = importer.import_dataset(
-                body.source, body.audio_dir, body.name, settings.data_dir, copy=body.copy_audio
-            )
+            importer.check_name(body.name, settings.data_dir)
+            importer.detect(importer.clean_path(body.source))
         except FileExistsError as e:
             raise HTTPException(409, str(e)) from e
         except (ValueError, OSError) as e:
             raise HTTPException(422, str(e)) from e
-        return ImportOut(id=dataset_id, imported=preview.found, preview=ImportPreviewOut(**dataclasses.asdict(preview)))
+        if running := jobs.running("import"):
+            raise HTTPException(409, f"Another import is running: {running.title}")
+        if body.transcribe and training.active_run and _cuda_index(asr.device) == (settings.train_gpu or 0):
+            raise HTTPException(
+                409,
+                f"Run '{training.active_run}' is training on the GPU ASR would use. Wait for it, or set "
+                "VOXCPM_STUDIO_ASR_DEVICE to another GPU.",
+            )
+
+        def transcriber(paths: list[Path]) -> list[tuple[str, str | None]]:
+            results = asr.transcribe([load_audio(p) for p in paths], language=body.language, prompt=body.prompt)
+            # A forced language is not detected, so record what was forced.
+            return [(r.text, r.language or body.language) for r in results]
+
+        def run(job: Job) -> dict:
+            result = importer.import_dataset(
+                body.source,
+                body.audio_dir,
+                body.name,
+                settings.data_dir,
+                copy=body.copy_audio,
+                transcriber=transcriber if body.transcribe else None,
+                progress=job.progress,
+            )
+            return {"id": result.id, "imported": result.imported, "transcribed": result.transcribed}
+
+        return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str) -> JobOut:
+        return JobOut(**_found(jobs.get, job_id).public())
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel_job(job_id: str) -> JobOut:
+        return JobOut(**_found(jobs.cancel, job_id).public())
 
     @app.get("/api/datasets/{dataset_id:path}")
     def inspect_dataset(dataset_id: str) -> DatasetReportOut:

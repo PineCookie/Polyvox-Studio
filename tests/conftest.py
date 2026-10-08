@@ -13,6 +13,7 @@ from safetensors.torch import save_file
 from torch import nn
 from voxcpm.modules.layers.lora import apply_lora_to_named_linear_modules
 
+from voxcpm_studio.asr import AsrService
 from voxcpm_studio.config import Settings
 from voxcpm_studio.inference import InferenceService
 from voxcpm_studio.training import TrainingManager
@@ -94,6 +95,54 @@ class FakeModel:
         return np.zeros(4800, dtype=np.float32)
 
 
+class FakeAsrInputs(dict):
+    def to(self, *args):
+        return self
+
+
+class FakeAsrProcessor:
+    """Mimics the transformers Qwen3ASRProcessor calls AsrService makes.
+    Transcribes each clip as "clip of <N> samples"."""
+
+    def __init__(self):
+        self.requests = []
+        self.forced = False
+
+    def apply_transcription_request(self, audios, language=None, prompt=None):
+        self.requests.append({"n": len(audios), "language": language, "prompt": prompt})
+        lengths = torch.tensor([[len(a)] for a in audios], dtype=torch.float32)
+        return FakeAsrInputs(input_ids=torch.zeros(len(audios), 2), lengths=lengths, language=language)
+
+    def decode(self, tokens, skip_special_tokens, return_format):
+        # FakeAsrModel.generate puts each clip's length after the 2 prompt tokens.
+        return [
+            {"transcription": f" clip of {int(row[0])} samples ", "language": None if self.forced else "Chinese"}
+            for row in tokens
+        ]
+
+
+class FakeAsrModel:
+    device = "cpu"
+    dtype = torch.float32
+
+    def __init__(self, processor):
+        self.processor = processor
+
+    def generate(self, input_ids, lengths, language, max_new_tokens):
+        self.processor.forced = language is not None
+        return torch.cat([input_ids, lengths], dim=1)
+
+
+class FakeAsrLoader:
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, model, device):
+        self.calls += 1
+        processor = FakeAsrProcessor()
+        return processor, FakeAsrModel(processor)
+
+
 class FakeLoader:
     def __init__(self):
         self.models: list[FakeModel] = []
@@ -166,6 +215,16 @@ def loader():
 @pytest.fixture
 def service(settings, loader):
     return InferenceService(settings, loader=loader)
+
+
+@pytest.fixture
+def asr_loader():
+    return FakeAsrLoader()
+
+
+@pytest.fixture
+def asr_service(settings, asr_loader):
+    return AsrService(settings, loader=asr_loader)
 
 
 @pytest.fixture
