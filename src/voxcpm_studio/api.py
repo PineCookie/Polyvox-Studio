@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import os
 import shutil
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
 import soundfile as sf
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from . import lora_library
+from . import lora_library, manifests
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
+from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 
@@ -39,10 +42,57 @@ class LoraOut(BaseModel):
     config: LoraConfigOut | None
 
 
-def create_app(settings: Settings | None = None, service: InferenceService | None = None) -> FastAPI:
+class DatasetReportOut(BaseModel):
+    id: str
+    samples: int
+    valid: int
+    total_seconds: float
+    min_seconds: float | None
+    median_seconds: float | None
+    max_seconds: float | None
+    sample_rates: dict[int, int]
+    errors: list[str]
+    warnings: list[str]
+
+
+class ResumeIn(BaseModel):
+    num_iters: int | None = Field(None, ge=1, le=1_000_000)
+
+
+def _cuda_index(device: str) -> int | None:
+    if not device.startswith("cuda"):
+        return None
+    index = device.partition(":")[2]
+    return int(index) if index else 0
+
+
+def free_gpu_for_training(service: InferenceService, train_gpu: int | None) -> None:
+    """Unload the inference model if it sits on the GPU a training job will use."""
+    if _cuda_index(service.device) == (train_gpu or 0):
+        service.unload()
+
+
+def create_app(
+    settings: Settings | None = None,
+    service: InferenceService | None = None,
+    training: TrainingManager | None = None,
+) -> FastAPI:
     settings = settings or Settings.from_env()
     service = service or InferenceService(settings)
-    app = FastAPI(title="VoxCPM Studio")
+    training = training or TrainingManager(
+        settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu)
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        training.shutdown()  # saves a checkpoint
+
+    app = FastAPI(title="VoxCPM Studio", lifespan=lifespan)
+
+    @app.exception_handler(TrainingConflict)
+    def conflict(request: Request, exc: TrainingConflict) -> JSONResponse:
+        return JSONResponse({"detail": str(exc)}, status_code=409)
 
     @app.get("/api/status")
     def status() -> dict:
@@ -106,10 +156,59 @@ def create_app(settings: Settings | None = None, service: InferenceService | Non
         service.unload()
         return service.status()
 
+    @app.get("/api/datasets")
+    def list_datasets() -> list[str]:
+        return manifests.scan(settings.data_dir)
+
+    @app.get("/api/datasets/{dataset_id:path}")
+    def inspect_dataset(dataset_id: str) -> DatasetReportOut:
+        path = _found(manifests.resolve, settings.data_dir, dataset_id)
+        report = manifests.inspect(path, manifests.legacy_root(settings.data_dir))
+        return DatasetReportOut(id=dataset_id, **dataclasses.asdict(report))
+
+    @app.get("/api/training/runs")
+    def list_runs() -> list[RunSummary]:
+        return training.list_runs()
+
+    @app.post("/api/training/runs")
+    def start_run(params: TrainParams) -> RunDetail:
+        return _checked(training.start, params)
+
+    @app.get("/api/training/runs/{name}")
+    def run_detail(name: str) -> RunDetail:
+        return _found(training.detail, name)
+
+    @app.post("/api/training/runs/{name}/resume")
+    def resume_run(name: str, body: ResumeIn | None = None) -> RunDetail:
+        return _checked(training.resume, name, body.num_iters if body else None)
+
+    @app.post("/api/training/stop")
+    def stop_training() -> dict:
+        training.stop()
+        return {"stopping": training.active_run}
+
+    @app.get("/api/training/runs/{name}/samples/{file}")
+    def run_sample(name: str, file: str) -> FileResponse:
+        return FileResponse(_found(training.sample_file, name, file), media_type="audio/wav")
+
     if WEB_DIST.is_dir():
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
 
     return app
+
+
+def _found(fn, *args):
+    try:
+        return fn(*args)
+    except KeyError as e:
+        raise HTTPException(404, str(e.args[0])) from e
+
+
+def _checked(fn, *args):
+    try:
+        return _found(fn, *args)
+    except (ValueError, OSError) as e:
+        raise HTTPException(422, str(e)) from e
 
 
 def _save_upload(upload: UploadFile) -> Path:

@@ -20,7 +20,11 @@ function groupByRun(loras: Lora[]): Run[] {
   for (const lora of loras) {
     const [name, ...rest] = lora.id.split('/')
     const step = /step_0*(\d+)$/.exec(lora.id)
-    const label = step ? `Step ${Number(step[1]).toLocaleString()}` : rest.join('/') || 'Latest'
+    const label = step
+      ? `Step ${Number(step[1]).toLocaleString()}`
+      : rest.at(-1) === 'latest' || rest.length === 0
+        ? 'Latest'
+        : rest.join('/')
     if (!runs.has(name)) runs.set(name, { name, checkpoints: [] })
     runs.get(name)!.checkpoints.push({ lora, label })
   }

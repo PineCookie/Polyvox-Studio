@@ -94,3 +94,113 @@ export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
   const seed = resp.headers.get('X-Seed')
   return { audio: await resp.blob(), seed: seed === null ? null : Number(seed) }
 }
+
+// Training
+
+export interface DatasetReport {
+  id: string
+  samples: number
+  valid: number
+  total_seconds: number
+  min_seconds: number | null
+  median_seconds: number | null
+  max_seconds: number | null
+  sample_rates: Record<string, number>
+  errors: string[]
+  warnings: string[]
+}
+
+export type RunStatus = 'running' | 'stopping' | 'complete' | 'incomplete' | 'failed'
+
+export interface RunSummary {
+  name: string
+  status: RunStatus
+  step: number | null
+  saved_step: number | null
+  num_iters: number
+  lora_rank: number | null
+  lora_alpha: number | null
+  train_manifest: string
+  val_manifest: string
+  updated: number
+}
+
+// { step, "loss/diff", "loss/stop", lr, ... } as logged by the training script.
+export type MetricPoint = { step: number } & Record<string, number>
+
+export interface RunDetail extends RunSummary {
+  config: Record<string, unknown>
+  train: MetricPoint[]
+  val: MetricPoint[]
+  seconds_per_step: number | null
+  samples: { step: number; index: number; file: string }[]
+  references: string[]
+  sample_texts: string[]
+  log: string[]
+}
+
+export interface TrainParams {
+  name: string
+  dataset: string
+  val_dataset: string | null
+  val_holdout: number
+  num_iters: number
+  batch_size: number
+  grad_accum_steps: number
+  learning_rate: number
+  weight_decay: number
+  warmup_steps: number
+  max_grad_norm: number
+  log_interval: number
+  valid_interval: number
+  save_interval: number
+  num_workers: number
+  lora_rank: number
+  lora_alpha: number
+  lora_dropout: number
+  enable_lm: boolean
+  enable_dit: boolean
+  enable_proj: boolean
+}
+
+function postJson(url: string, body?: unknown): Promise<Response> {
+  return request(url, {
+    method: 'POST',
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+}
+
+const runUrl = (name: string) => `/api/training/runs/${encodeURIComponent(name)}`
+
+export async function listDatasets(): Promise<string[]> {
+  return (await request('/api/datasets')).json()
+}
+
+export async function inspectDataset(id: string): Promise<DatasetReport> {
+  return (await request(`/api/datasets/${id.split('/').map(encodeURIComponent).join('/')}`)).json()
+}
+
+export async function listRuns(): Promise<RunSummary[]> {
+  return (await request('/api/training/runs')).json()
+}
+
+export async function getRun(name: string): Promise<RunDetail> {
+  return (await request(runUrl(name))).json()
+}
+
+export async function startRun(params: TrainParams): Promise<RunDetail> {
+  return (await postJson('/api/training/runs', params)).json()
+}
+
+export async function resumeRun(name: string, numIters?: number): Promise<RunDetail> {
+  return (await postJson(`${runUrl(name)}/resume`, { num_iters: numIters ?? null })).json()
+}
+
+export async function stopTraining(): Promise<void> {
+  await postJson('/api/training/stop')
+}
+
+export function sampleUrl(name: string, file: string): string {
+  return `${runUrl(name)}/samples/${encodeURIComponent(file)}`
+}

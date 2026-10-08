@@ -5,9 +5,13 @@ import { History } from './components/History'
 import type { Clip } from './components/History'
 import { StatusBar } from './components/StatusBar'
 import { SynthesisPanel } from './components/SynthesisPanel'
+import { TrainingView } from './components/TrainingView'
 import { VoicePanel } from './components/VoicePanel'
 
+type Tab = 'synthesize' | 'train'
+
 export default function App() {
+  const [tab, setTab] = useState<Tab>(() => (location.hash === '#train' ? 'train' : 'synthesize'))
   const [status, setStatus] = useState<Status | null>(null)
   const [loras, setLoras] = useState<Lora[]>([])
   const [lorasLoading, setLorasLoading] = useState(true)
@@ -17,6 +21,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nextClipId = useRef(1)
+  const showError = useCallback((message: string) => setError(message), [])
 
   const refreshStatus = useCallback(() => {
     getStatus().then(setStatus, (e: Error) => setError(e.message))
@@ -78,12 +83,41 @@ export default function App() {
     }
   }
 
+  function switchTab(next: Tab) {
+    setTab(next)
+    history.replaceState(null, '', next === 'train' ? '#train' : location.pathname)
+    // Training writes checkpoints and may unload the inference model.
+    if (next === 'synthesize') {
+      refreshLoras()
+      refreshStatus()
+    }
+  }
+
+  function tryCheckpoint(loraId: string) {
+    setSelectedLora(loraId)
+    switchTab('synthesize')
+  }
+
   return (
     <div className="app">
       <header className="topbar">
         <h1>
           VoxCPM <span>Studio</span>
         </h1>
+        <nav className="tabs" aria-label="Sections">
+          {(['synthesize', 'train'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={tab === t ? 'active' : ''}
+              aria-current={tab === t ? 'page' : undefined}
+              onClick={() => switchTab(t)}
+            >
+              {t === 'synthesize' ? 'Synthesize' : 'Train'}
+            </button>
+          ))}
+        </nav>
+        <span className="spacer" />
         <StatusBar status={status} onUnload={unload} />
       </header>
 
@@ -96,7 +130,8 @@ export default function App() {
         </div>
       )}
 
-      <main className="layout">
+      {/* Both views stay mounted so form input and clips survive tab switches. */}
+      <main className="layout" hidden={tab !== 'synthesize'}>
         <div className="main-col">
           <SynthesisPanel busy={busy} seed={seed} onSeedChange={setSeed} onGenerate={generate} />
           <History clips={clips} onUseSeed={setSeed} onRemove={removeClip} />
@@ -111,6 +146,7 @@ export default function App() {
           />
         </aside>
       </main>
+      {tab === 'train' && <TrainingView loras={loras} onError={showError} onTryCheckpoint={tryCheckpoint} />}
     </div>
   )
 }
