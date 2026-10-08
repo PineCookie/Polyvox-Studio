@@ -8,3 +8,6 @@ models/
 lora/
 data/
 output/
+
+# Local agent notes (machine-specific)
+CLAUDE.md
