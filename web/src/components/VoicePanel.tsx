@@ -1,11 +1,14 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { Lora } from '../api'
+import { ExportForm } from './ExportForm'
 
 interface Props {
   loras: Lora[]
   selected: string | null
   onSelect: (id: string | null) => void
   onRefresh: () => void
+  onImport: (file: File) => Promise<void>
+  onError: (message: string) => void
   loading: boolean
 }
 
@@ -31,17 +34,49 @@ function groupByRun(loras: Lora[]): Run[] {
   return [...runs.values()]
 }
 
-export function VoicePanel({ loras, selected, onSelect, onRefresh, loading }: Props) {
+export function VoicePanel({ loras, selected, onSelect, onRefresh, onImport, onError, loading }: Props) {
   const runs = useMemo(() => groupByRun(loras), [loras])
   const current = loras.find((l) => l.id === selected) ?? null
+  const [exporting, setExporting] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
+
+  async function importFile(file: File | undefined) {
+    if (!file) return
+    setImporting(true)
+    try {
+      await onImport(file)
+    } finally {
+      setImporting(false)
+      if (fileInput.current) fileInput.current.value = ''
+    }
+  }
 
   return (
     <section className="panel">
       <header className="panel-head">
         <h2>Voice</h2>
-        <button type="button" className="ghost small" onClick={onRefresh} disabled={loading}>
-          {loading ? 'Scanning…' : 'Refresh'}
-        </button>
+        <span className="run-actions">
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".zip,application/zip"
+            hidden
+            onChange={(e) => importFile(e.target.files?.[0])}
+          />
+          <button
+            type="button"
+            className="ghost small"
+            onClick={() => fileInput.current?.click()}
+            disabled={importing}
+            title="Add a LoRA package (.zip) exported from VoxCPM Studio"
+          >
+            {importing ? 'Importing…' : 'Import'}
+          </button>
+          <button type="button" className="ghost small" onClick={onRefresh} disabled={loading}>
+            {loading ? 'Scanning…' : 'Refresh'}
+          </button>
+        </span>
       </header>
 
       <div className="voice-list" role="radiogroup" aria-label="Voice">
@@ -109,6 +144,15 @@ export function VoicePanel({ loras, selected, onSelect, onRefresh, loading }: Pr
           <dd className="path">{current.base_model ?? 'not recorded'}</dd>
         </dl>
       )}
+
+      {current &&
+        (exporting === current.id ? (
+          <ExportForm key={current.id} lora={current} onError={onError} onClose={() => setExporting(null)} />
+        ) : (
+          <button type="button" className="ghost small share" onClick={() => setExporting(current.id)}>
+            Export for sharing…
+          </button>
+        ))}
     </section>
   )
 }

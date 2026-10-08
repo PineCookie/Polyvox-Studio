@@ -913,3 +913,32 @@ select {
     display: none;
   }
 }
+
+/* LoRA sharing */
+
+.share {
+  justify-self: start;
+}
+
+.export-form {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.export-form .hint {
+  margin: 0;
+}
+
+.export-form code {
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 0.85em;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}

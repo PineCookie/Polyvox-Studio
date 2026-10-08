@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getStatus, listLoras, synthesize, unloadModel } from './api'
+import { getStatus, importLora, listLoras, synthesize, unloadModel } from './api'
 import type { Lora, Status, SynthesisParams } from './api'
 import { History } from './components/History'
 import type { Clip } from './components/History'
@@ -93,6 +93,16 @@ export default function App() {
     }
   }
 
+  async function importPackage(file: File) {
+    try {
+      const id = await importLora(file)
+      refreshLoras()
+      setSelectedLora(id)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   function tryCheckpoint(loraId: string) {
     setSelectedLora(loraId)
     switchTab('synthesize')
@@ -142,6 +152,8 @@ export default function App() {
             selected={selectedLora}
             onSelect={setSelectedLora}
             onRefresh={refreshLoras}
+            onImport={importPackage}
+            onError={showError}
             loading={lorasLoading}
           />
         </aside>

@@ -16,8 +16,9 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
-from . import lora_library, manifests
+from . import lora_library, manifests, sharing
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
@@ -39,6 +40,9 @@ class LoraConfigOut(BaseModel):
 class LoraOut(BaseModel):
     id: str
     base_model: str | None
+    # Hugging Face id guessed from base_model; the default when exporting.
+    base_model_id: str | None
+    step: int | None
     config: LoraConfigOut | None
 
 
@@ -104,10 +108,32 @@ def create_app(
             LoraOut(
                 id=c.id,
                 base_model=c.base_model,
+                base_model_id=sharing.hub_id(c.base_model),
+                step=sharing.checkpoint_step(c),
                 config=LoraConfigOut(**c.config.model_dump()) if c.config else None,
             )
             for c in lora_library.scan(settings.lora_dir)
         ]
+
+    @app.get("/api/loras/export", responses={200: {"content": {"application/zip": {}}}})
+    def export_lora(id: str, name: str, base_model: str, half: bool = True) -> FileResponse:
+        ckpt = _found(lora_library.resolve, settings.lora_dir, id)
+        path = _checked(sharing.export_package, ckpt, name, base_model, half)
+        return FileResponse(
+            path, media_type="application/zip", filename=f"{name}.zip", background=BackgroundTask(path.unlink)
+        )
+
+    @app.post("/api/loras/import")
+    def import_lora(package: Annotated[UploadFile, File()]) -> dict:
+        path = _save_upload(package)
+        try:
+            return {"id": sharing.import_package(settings.lora_dir, path, package.filename or "lora.zip")}
+        except FileExistsError as e:
+            raise HTTPException(409, str(e)) from e
+        except (ValueError, OSError) as e:
+            raise HTTPException(422, str(e)) from e
+        finally:
+            path.unlink(missing_ok=True)
 
     @app.post("/api/tts", responses={200: {"content": {"audio/wav": {}}}})
     def tts(

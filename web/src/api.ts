@@ -14,6 +14,9 @@ export interface LoraConfig {
 export interface Lora {
   id: string
   base_model: string | null
+  // Hugging Face id guessed from base_model (the export default).
+  base_model_id: string | null
+  step: number | null
   config: LoraConfig | null
 }
 
@@ -69,6 +72,17 @@ export async function getStatus(): Promise<Status> {
 
 export async function listLoras(): Promise<Lora[]> {
   return (await request('/api/loras')).json()
+}
+
+export async function exportLora(id: string, name: string, baseModel: string, half: boolean): Promise<Blob> {
+  const q = new URLSearchParams({ id, name, base_model: baseModel, half: String(half) })
+  return (await request(`/api/loras/export?${q}`)).blob()
+}
+
+export async function importLora(file: File): Promise<string> {
+  const form = new FormData()
+  form.set('package', file)
+  return (await (await request('/api/loras/import', { method: 'POST', body: form })).json()).id
 }
 
 export async function unloadModel(): Promise<Status> {

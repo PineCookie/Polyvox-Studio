@@ -22,6 +22,7 @@ src/voxcpm_studio/
   manifests.py     training manifests: discovery, path fixes, inspection
   training.py      training runs: config, job control, metrics
   train_worker.py  training subprocess around the vendored script
+  sharing.py       export / import of shareable LoRA packages
   vendor/          train_voxcpm_finetune.py, unmodified from the pinned commit
   api.py           FastAPI routes; serves web/dist when built
 web/               Vite + React + TypeScript frontend
@@ -74,6 +75,16 @@ too and can be resumed or continued with more steps.
   manifests hold paths relative to the folder holding `data/` and `lora/`
   (`data/<name>/wavs/...`), which the current
   `voxcpm` loader would resolve against the manifest's folder instead.
+
+## Sharing LoRAs
+
+Select a checkpoint in the Voice panel and choose **Export for sharing**. The zip
+holds only `lora_weights.safetensors` (bfloat16 by default: half the size, same
+output), `lora_config.json` with the base model as a Hugging Face id, and a
+README with usage for VoxCPM Studio, the `voxcpm` Python API and its CLI. Local
+paths, optimizer state, logs, transcripts and dataset audio are left out.
+
+**Import** in the Voice panel adds such a zip to the LoRA dir.
 
 ## Development
 
