@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from . import importer, lora_library, manifests, sharing
+from .asr import AsrService, load_audio
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
@@ -105,21 +106,25 @@ def _cuda_index(device: str) -> int | None:
     return int(index) if index else 0
 
 
-def free_gpu_for_training(service: InferenceService, train_gpu: int | None) -> None:
-    """Unload the inference model if it sits on the GPU a training job will use."""
+def free_gpu_for_training(service: InferenceService, train_gpu: int | None, asr: AsrService | None = None) -> None:
+    """Unload the models that sit on the GPU a training job will use."""
     if _cuda_index(service.device) == (train_gpu or 0):
         service.unload()
+    if asr is not None and asr.loaded and _cuda_index(asr.device) == (train_gpu or 0):
+        asr.unload()
 
 
 def create_app(
     settings: Settings | None = None,
     service: InferenceService | None = None,
     training: TrainingManager | None = None,
+    asr: AsrService | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     service = service or InferenceService(settings)
+    asr = asr or AsrService(settings)
     training = training or TrainingManager(
-        settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu)
+        settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr)
     )
 
     @asynccontextmanager
@@ -135,7 +140,7 @@ def create_app(
 
     def status_with_model_id() -> dict:
         # The hub id lets the UI flag LoRAs trained on a different base model.
-        return {**service.status(), "model_id": sharing.hub_id(settings.model)}
+        return {**service.status(), "model_id": sharing.hub_id(settings.model), "asr_loaded": asr.loaded}
 
     @app.get("/api/status")
     def status() -> dict:
@@ -218,8 +223,25 @@ def create_app(
 
     @app.post("/api/model/unload")
     def unload() -> dict:
+        # Frees all GPU memory the server holds: TTS and ASR.
         service.unload()
+        asr.unload()
         return status_with_model_id()
+
+    @app.post("/api/asr")
+    def transcribe(
+        audio: Annotated[UploadFile, File()],
+        language: Annotated[str | None, Form()] = None,
+        prompt: Annotated[str | None, Form()] = None,
+    ) -> dict:
+        path = _save_upload(audio)
+        try:
+            (result,) = asr.transcribe([load_audio(path)], language=language or None, prompt=prompt or None)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(422, str(e)) from e
+        finally:
+            path.unlink(missing_ok=True)
+        return {"text": result.text, "language": result.language}
 
     @app.get("/api/datasets")
     def list_datasets() -> list[str]:

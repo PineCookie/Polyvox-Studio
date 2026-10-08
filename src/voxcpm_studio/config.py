@@ -30,6 +30,10 @@ class Settings:
     load_denoiser: bool = True
     # CUDA device index for training jobs; None = the default device.
     train_gpu: int | None = None
+    # Speech recognition (transformers-native Qwen3-ASR): local dir or Hugging Face id.
+    asr_model: str = "Qwen/Qwen3-ASR-1.7B-hf"
+    # "auto" = the inference device.
+    asr_device: str = "auto"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -43,4 +47,6 @@ class Settings:
             optimize=None if optimize == "auto" else _parse_bool(optimize),
             load_denoiser=_parse_bool(_env("DENOISER", "1")),
             train_gpu=int(train_gpu) if train_gpu else None,
+            asr_model=_env("ASR_MODEL", cls.asr_model),
+            asr_device=_env("ASR_DEVICE", cls.asr_device),
         )

@@ -14,8 +14,9 @@ export function StatusBar({ status, onUnload }: Props) {
       <span>{status.loaded ? 'Model loaded' : 'Model idle'}</span>
       <span className="muted">{status.device}</span>
       <span className="muted">{status.optimize ? 'Triton on' : 'Triton off'}</span>
-      {status.loaded && (
-        <button type="button" className="ghost small" onClick={onUnload} title="Free GPU memory">
+      {status.asr_loaded && <span className="muted">ASR loaded</span>}
+      {(status.loaded || status.asr_loaded) && (
+        <button type="button" className="ghost small" onClick={onUnload} title="Free GPU memory (TTS and ASR)">
           Unload
         </button>
       )}

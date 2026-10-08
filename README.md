@@ -21,6 +21,7 @@ src/voxcpm_studio/
   inference.py     model cache, LoRA hot-swap, synthesis
   manifests.py     training manifests: discovery, path fixes, inspection
   importer.py      dataset import from GPT-SoVITS lists, CSV, JSONL, folders
+  asr.py           speech recognition (Qwen3-ASR, transformers-native)
   training.py      training runs: config, job control, metrics
   train_worker.py  training subprocess around the vendored script
   sharing.py       export / import of shareable LoRA packages
@@ -52,12 +53,22 @@ Open http://127.0.0.1:8808. The first generation after a model load takes about
 | `VOXCPM_STUDIO_DATA_DIR` | `data` | JSONL training manifests |
 | `VOXCPM_STUDIO_DEVICE` | `auto` | inference device: `cuda`, `cuda:1`, `cpu`, ... |
 | `VOXCPM_STUDIO_TRAIN_GPU` | | CUDA index for training jobs (default: the first GPU) |
+| `VOXCPM_STUDIO_ASR_MODEL` | `Qwen/Qwen3-ASR-1.7B-hf` | speech recognition model (dir or Hugging Face id) |
+| `VOXCPM_STUDIO_ASR_DEVICE` | `auto` | ASR device; `auto` = the inference device |
 | `VOXCPM_STUDIO_OPTIMIZE` | `auto` | Triton `torch.compile`; `auto` = on for CUDA |
 | `VOXCPM_STUDIO_DENOISER` | `1` | load the ZipEnhancer denoiser |
 
 `run.bat` defaults to the project's own `models/openbmb__VoxCPM2`, `lora/` and
-`data/`; set the variables to use other paths. To fetch the model:
-`hf download openbmb/VoxCPM2 --local-dir models/openbmb__VoxCPM2`.
+`data/`; set the variables to use other paths. To fetch the models:
+
+```powershell
+hf download openbmb/VoxCPM2 --local-dir models/openbmb__VoxCPM2
+hf download Qwen/Qwen3-ASR-1.7B-hf --local-dir models/Qwen__Qwen3-ASR-1.7B-hf  # optional
+```
+
+Speech recognition (the **Transcribe** button for reference audio) uses
+Qwen3-ASR through transformers itself, so it needs no extra packages. It loads
+on first use (about 4 GB of GPU memory); Unload frees it with the TTS model.
 
 Starting a training job unloads the inference model if both use the same GPU.
 To keep synthesizing while training, put them on different GPUs, e.g.

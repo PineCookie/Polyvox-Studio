@@ -27,6 +27,7 @@ export interface Status {
   // Hugging Face id of the base model, when it can be inferred.
   model_id: string | null
   loaded: boolean
+  asr_loaded: boolean
   lora_rank: number | null
   active_lora: string | null
 }
@@ -89,6 +90,13 @@ export async function importLora(file: File): Promise<string> {
 
 export async function unloadModel(): Promise<Status> {
   return (await request('/api/model/unload', { method: 'POST' })).json()
+}
+
+export async function transcribe(audio: File, language?: string): Promise<{ text: string; language: string | null }> {
+  const form = new FormData()
+  form.set('audio', audio)
+  if (language) form.set('language', language)
+  return (await request('/api/asr', { method: 'POST', body: form })).json()
 }
 
 export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {

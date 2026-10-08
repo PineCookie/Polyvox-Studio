@@ -158,7 +158,14 @@ export default function App() {
       {/* Both views stay mounted so form input and clips survive tab switches. */}
       <main className="layout" hidden={tab !== 'synthesize'}>
         <div className="main-col">
-          <SynthesisPanel busy={busy} seed={seed} onSeedChange={setSeed} onGenerate={generate} />
+          <SynthesisPanel
+            busy={busy}
+            seed={seed}
+            onSeedChange={setSeed}
+            onGenerate={generate}
+            onError={showError}
+            onTranscribed={refreshStatus}
+          />
           <History clips={clips} onUseSeed={setSeed} onRemove={removeClip} />
         </div>
         <aside className="side-col">

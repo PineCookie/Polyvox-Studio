@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
+import { transcribe } from '../api'
 import type { SynthesisParams } from '../api'
 
 interface Props {
@@ -7,9 +8,12 @@ interface Props {
   seed: number | null
   onSeedChange: (seed: number | null) => void
   onGenerate: (params: Omit<SynthesisParams, 'loraId'>) => void
+  onError: (message: string) => void
+  // Called after a transcription (it loads the ASR model).
+  onTranscribed: () => void
 }
 
-export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate }: Props) {
+export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, onTranscribed }: Props) {
   const [text, setText] = useState('')
   const [control, setControl] = useState('')
   const [referenceAudio, setReferenceAudio] = useState<File | null>(null)
@@ -18,9 +22,23 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate }: Props) 
   const [steps, setSteps] = useState(10)
   const [normalize, setNormalize] = useState(true)
   const [denoise, setDenoise] = useState(true)
+  const [transcribing, setTranscribing] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const canSubmit = !busy && text.trim().length > 0
+
+  async function transcribeReference() {
+    if (!referenceAudio) return
+    setTranscribing(true)
+    try {
+      setPromptText((await transcribe(referenceAudio)).text)
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setTranscribing(false)
+      onTranscribed()
+    }
+  }
 
   function submit(e?: FormEvent) {
     e?.preventDefault()
@@ -84,11 +102,22 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate }: Props) 
           )}
         </div>
         {referenceAudio && (
-          <input
-            value={promptText}
-            onChange={(e) => setPromptText(e.target.value)}
-            placeholder="Transcript of the reference (improves cloning fidelity)"
-          />
+          <div className="file-row">
+            <input
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+              placeholder="Transcript of the reference (improves cloning fidelity)"
+            />
+            <button
+              type="button"
+              className="ghost small"
+              onClick={transcribeReference}
+              disabled={transcribing}
+              title="Fill in the transcript with speech recognition (Qwen3-ASR)"
+            >
+              {transcribing ? 'Transcribing…' : 'Transcribe'}
+            </button>
+          </div>
         )}
       </fieldset>
 
