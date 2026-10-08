@@ -125,5 +125,9 @@ cd web; npm run dev             # UI on :5173, proxies /api to :8808
 
 ## Roadmap
 
-- Dataset tools: import GPT-SoVITS `.list` / CSV datasets, ASR transcripts.
+- Transcribe untranscribed clips with ASR during import.
+- Preprocessing pipeline: VAD slicing, forced alignment (Qwen3-ForcedAligner), a
+  per-clip audit table, loudness normalization, optional vocal separation.
+- Training speed: batch size / token budget, cuDNN attention.
+- VoxCPM 1.5 as a second base model.
 - Streaming synthesis via `VoxCPM.generate_streaming`.
