@@ -193,6 +193,37 @@ export async function listDatasets(): Promise<string[]> {
   return (await request('/api/datasets')).json()
 }
 
+export interface ImportPreview {
+  kind: 'gsv' | 'csv' | 'jsonl' | 'folder'
+  source: string
+  rows: number
+  found: number
+  missing: number
+  skipped_empty: number
+  duplicates: number
+  unreadable: number
+  total_seconds: number
+  median_seconds: number | null
+  sample_rates: Record<string, number>
+  examples: { text: string; audio: string }[]
+  missing_examples: string[]
+  suggested_name: string
+}
+
+export async function previewImport(source: string, audioDir: string): Promise<ImportPreview> {
+  return (await postJson('/api/datasets/import/preview', { source, audio_dir: audioDir || null })).json()
+}
+
+export async function importDataset(
+  source: string,
+  audioDir: string,
+  name: string,
+  copyAudio: boolean,
+): Promise<{ id: string; imported: number }> {
+  const body = { source, audio_dir: audioDir || null, name, copy_audio: copyAudio }
+  return (await postJson('/api/datasets/import', body)).json()
+}
+
 export async function inspectDataset(id: string): Promise<DatasetReport> {
   return (await request(`/api/datasets/${id.split('/').map(encodeURIComponent).join('/')}`)).json()
 }

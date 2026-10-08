@@ -6,6 +6,18 @@ export function formatDuration(seconds: number): string {
   return `${Math.floor(m / 60)} h ${m % 60} min`
 }
 
+// { "32000": 650, "44100": 6 } -> "32 kHz, 44.1 kHz"
+export function formatRates(rates: Record<string, number>): string {
+  return Object.keys(rates)
+    .map((r) => `${Number(r) / 1000} kHz`)
+    .join(', ')
+}
+
+// "speaker_a/train.jsonl" -> "speaker_a"; other manifests keep their path.
+export function datasetName(id: string): string {
+  return id.endsWith('/train.jsonl') ? id.slice(0, -'/train.jsonl'.length) : id
+}
+
 export function formatStep(step: number): string {
   return step.toLocaleString()
 }

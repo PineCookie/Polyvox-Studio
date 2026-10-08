@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { inspectDataset } from '../api'
 import type { DatasetReport, TrainParams } from '../api'
-import { formatDuration } from '../format'
+import { DatasetSummary } from './DatasetSummary'
 
 interface Props {
   datasets: string[]
@@ -10,6 +10,8 @@ interface Props {
   // Name of a run that is currently training, if any; only one job runs at a time.
   activeRun: string | null
   onStart: (params: TrainParams) => Promise<void>
+  // Preselected from the Data tab's "Train on this".
+  initialDataset?: string
 }
 
 const DEFAULTS: Omit<TrainParams, 'name' | 'dataset'> = {
@@ -34,21 +36,22 @@ const DEFAULTS: Omit<TrainParams, 'name' | 'dataset'> = {
   enable_proj: false,
 }
 
-const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/
+// Matches training.RUN_NAME: letters of any language, digits, "." "_" "-".
+const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 
 type NumericKey = { [K in keyof TrainParams]: TrainParams[K] extends number ? K : never }[keyof TrainParams]
 type FlagKey = 'enable_lm' | 'enable_dit' | 'enable_proj'
 
 function suggestName(dataset: string, rank: number, taken: string[]): string {
-  const base = `${dataset.split('/').at(-2) ?? dataset.replace(/\.jsonl$/, '')}_r${rank}`.replace(/[^A-Za-z0-9._-]/g, '_')
+  const base = `${dataset.split('/').at(-2) ?? dataset.replace(/\.jsonl$/, '')}_r${rank}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
   let name = base
   for (let i = 2; taken.includes(name); i++) name = `${base}_${i}`
   return name
 }
 
-export function NewRunForm({ datasets, runNames, activeRun, onStart }: Props) {
+export function NewRunForm({ datasets, runNames, activeRun, onStart, initialDataset }: Props) {
   const [params, setParams] = useState<Omit<TrainParams, 'name' | 'dataset'>>(DEFAULTS)
-  const [dataset, setDataset] = useState('')
+  const [dataset, setDataset] = useState(initialDataset ?? '')
   const [customName, setCustomName] = useState<string | null>(null)
   const [useValDataset, setUseValDataset] = useState(false)
   const [report, setReport] = useState<DatasetReport | null>(null)
@@ -226,43 +229,5 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart }: Props) {
         </button>
       </div>
     </form>
-  )
-}
-
-function DatasetSummary({ report, error }: { report: DatasetReport | null; error: string | null }) {
-  if (error) return <p className="field-error">{error}</p>
-  if (!report) return <p className="muted hint">Checking audio files…</p>
-
-  const rates = Object.keys(report.sample_rates)
-    .map((r) => `${Number(r) / 1000} kHz`)
-    .join(', ')
-  return (
-    <div className="dataset-summary">
-      <p>
-        <strong>{report.valid}</strong>
-        {report.valid !== report.samples && <span className="muted"> of {report.samples}</span>} clips
-        {report.valid > 0 && (
-          <>
-            {' · '}
-            {formatDuration(report.total_seconds)} total · median {report.median_seconds!.toFixed(1)} s ·{' '}
-            <span title="Resampled to the model's rate during training">{rates}</span>
-          </>
-        )}
-      </p>
-      {report.errors.length > 0 && (
-        <ul className="issues errors">
-          {report.errors.map((e) => (
-            <li key={e}>{e}</li>
-          ))}
-        </ul>
-      )}
-      {report.warnings.length > 0 && (
-        <ul className="issues">
-          {report.warnings.map((w) => (
-            <li key={w}>{w}</li>
-          ))}
-        </ul>
-      )}
-    </div>
   )
 }

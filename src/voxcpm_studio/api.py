@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import lora_library, manifests, sharing
+from . import importer, lora_library, manifests, sharing
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
@@ -57,6 +57,41 @@ class DatasetReportOut(BaseModel):
     sample_rates: dict[int, int]
     errors: list[str]
     warnings: list[str]
+
+
+class ImportSourceIn(BaseModel):
+    # Server-local paths: a list / CSV / JSONL file or a folder of audio + transcripts.
+    source: str
+    # Where to look up audio by file name when the source's paths are stale.
+    audio_dir: str | None = None
+
+
+class ImportIn(ImportSourceIn):
+    name: str
+    copy_audio: bool = True
+
+
+class ImportPreviewOut(BaseModel):
+    kind: str
+    source: str
+    rows: int
+    found: int
+    missing: int
+    skipped_empty: int
+    duplicates: int
+    unreadable: int
+    total_seconds: float
+    median_seconds: float | None
+    sample_rates: dict[int, int]
+    examples: list[dict]
+    missing_examples: list[str]
+    suggested_name: str
+
+
+class ImportOut(BaseModel):
+    id: str
+    imported: int
+    preview: ImportPreviewOut
 
 
 class ResumeIn(BaseModel):
@@ -189,6 +224,23 @@ def create_app(
     @app.get("/api/datasets")
     def list_datasets() -> list[str]:
         return manifests.scan(settings.data_dir)
+
+    @app.post("/api/datasets/import/preview")
+    def preview_import(body: ImportSourceIn) -> ImportPreviewOut:
+        preview = _checked(importer.preview_import, body.source, body.audio_dir, settings.data_dir)
+        return ImportPreviewOut(**dataclasses.asdict(preview))
+
+    @app.post("/api/datasets/import")
+    def import_dataset(body: ImportIn) -> ImportOut:
+        try:
+            dataset_id, preview = importer.import_dataset(
+                body.source, body.audio_dir, body.name, settings.data_dir, copy=body.copy_audio
+            )
+        except FileExistsError as e:
+            raise HTTPException(409, str(e)) from e
+        except (ValueError, OSError) as e:
+            raise HTTPException(422, str(e)) from e
+        return ImportOut(id=dataset_id, imported=preview.found, preview=ImportPreviewOut(**dataclasses.asdict(preview)))
 
     @app.get("/api/datasets/{dataset_id:path}")
     def inspect_dataset(dataset_id: str) -> DatasetReportOut:

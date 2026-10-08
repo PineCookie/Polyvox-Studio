@@ -9,6 +9,8 @@ interface Props {
   loras: Lora[]
   onError: (message: string) => void
   onTryCheckpoint: (loraId: string) => void
+  // Open the New run form with this dataset (from the Data tab).
+  newRunDataset?: string
 }
 
 const LIST_POLL_MS = 4000
@@ -16,11 +18,11 @@ const DETAIL_POLL_MS = 2000
 
 const isLive = (run: { status: string }) => run.status === 'running' || run.status === 'stopping'
 
-export function TrainingView({ loras, onError, onTryCheckpoint }: Props) {
+export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }: Props) {
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [runsLoaded, setRunsLoaded] = useState(false)
   const [datasets, setDatasets] = useState<string[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(newRunDataset ? NEW_RUN : null)
   const [detail, setDetail] = useState<Run | null>(null)
 
   const activeRun = runs.find(isLive)?.name ?? null
@@ -94,7 +96,13 @@ export function TrainingView({ loras, onError, onTryCheckpoint }: Props) {
     <main className="layout training">
       <div className="main-col">
         {selected === NEW_RUN ? (
-          <NewRunForm datasets={datasets} runNames={runs.map((r) => r.name)} activeRun={activeRun} onStart={start} />
+          <NewRunForm
+            datasets={datasets}
+            runNames={runs.map((r) => r.name)}
+            activeRun={activeRun}
+            onStart={start}
+            initialDataset={newRunDataset}
+          />
         ) : shown ? (
           <RunDetail
             key={shown.name}

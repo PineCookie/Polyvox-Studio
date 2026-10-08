@@ -12,7 +12,7 @@ interface Props {
   onClose: () => void
 }
 
-const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/
+const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 const HUB_ID_PATTERN = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/
 
 // "speaker_r64/checkpoints/step_0004000" -> "speaker_r64_step4000"; the run name for its final weights.

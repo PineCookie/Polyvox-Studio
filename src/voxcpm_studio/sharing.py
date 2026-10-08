@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
 
 README_FILE = "README.md"
-PACKAGE_NAME = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"
+PACKAGE_NAME = r"^[^\W_][\w.-]{0,79}$"  # Unicode letters allowed, like run names
 HUB_ID = re.compile(r"[A-Za-z0-9][\w.-]*/[\w.-]+")
 MAX_PACKAGE_BYTES = 2 * 1024**3
 
@@ -101,7 +101,7 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
     from safetensors.torch import load_file, save
 
     if not re.fullmatch(PACKAGE_NAME, name):
-        raise ValueError("Package name may contain letters, digits, '.', '_' and '-' only.")
+        raise ValueError("Package name may contain letters (any language), digits, '.', '_' and '-' only.")
     if not HUB_ID.fullmatch(base_model):
         raise ValueError("Base model must be a Hugging Face id such as 'openbmb/VoxCPM2'.")
 

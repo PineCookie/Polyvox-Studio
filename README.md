@@ -20,6 +20,7 @@ src/voxcpm_studio/
   lora_library.py  checkpoint discovery and metadata
   inference.py     model cache, LoRA hot-swap, synthesis
   manifests.py     training manifests: discovery, path fixes, inspection
+  importer.py      dataset import from GPT-SoVITS lists, CSV, JSONL, folders
   training.py      training runs: config, job control, metrics
   train_worker.py  training subprocess around the vendored script
   sharing.py       export / import of shareable LoRA packages
@@ -75,6 +76,23 @@ too and can be resumed or continued with more steps.
   manifests hold paths relative to the folder holding `data/` and `lora/`
   (`data/<name>/wavs/...`), which the current
   `voxcpm` loader would resolve against the manifest's folder instead.
+
+## Datasets
+
+The Data tab lists the datasets in the data dir and imports new ones from a path
+on this computer:
+
+- a GPT-SoVITS `.list` (`path|speaker|lang|text`),
+- a `file|text` CSV (LJSpeech style),
+- a `.jsonl` manifest, or
+- a folder of audio files with same-name `.txt` / `.lab` transcripts.
+
+Lists often hold stale paths (another machine, a moved folder). Each clip is
+looked up as written, by file name next to the list and in its `wavs/` folder,
+and by file name in an optional audio folder. A preview shows what was found
+before anything is written; rows without audio or text are skipped. The import
+writes `data/<name>/train.jsonl` with paths relative to it and, by default,
+copies the audio into `data/<name>/wavs/` so the folder is self-contained.
 
 ## Sharing LoRAs
 

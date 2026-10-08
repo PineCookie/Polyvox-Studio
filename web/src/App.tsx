@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getStatus, importLora, listLoras, synthesize, unloadModel } from './api'
 import type { Lora, Status, SynthesisParams } from './api'
+import { DataView } from './components/DataView'
 import { History } from './components/History'
 import type { Clip } from './components/History'
 import { StatusBar } from './components/StatusBar'
@@ -8,10 +9,18 @@ import { SynthesisPanel } from './components/SynthesisPanel'
 import { TrainingView } from './components/TrainingView'
 import { VoicePanel } from './components/VoicePanel'
 
-type Tab = 'synthesize' | 'train'
+const TABS = { synthesize: 'Synthesize', data: 'Data', train: 'Train' } as const
+type Tab = keyof typeof TABS
+
+function tabFromHash(): Tab {
+  const t = location.hash.slice(1)
+  return t in TABS ? (t as Tab) : 'synthesize'
+}
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>(() => (location.hash === '#train' ? 'train' : 'synthesize'))
+  const [tab, setTab] = useState<Tab>(tabFromHash)
+  // Set by the Data tab's "Train on this"; opens New run with that dataset.
+  const [trainDataset, setTrainDataset] = useState<{ id: string; key: number } | null>(null)
   const [status, setStatus] = useState<Status | null>(null)
   const [loras, setLoras] = useState<Lora[]>([])
   const [lorasLoading, setLorasLoading] = useState(true)
@@ -85,7 +94,8 @@ export default function App() {
 
   function switchTab(next: Tab) {
     setTab(next)
-    history.replaceState(null, '', next === 'train' ? '#train' : location.pathname)
+    setTrainDataset(null)
+    history.replaceState(null, '', next === 'synthesize' ? location.pathname : `#${next}`)
     // Training writes checkpoints and may unload the inference model.
     if (next === 'synthesize') {
       refreshLoras()
@@ -108,6 +118,11 @@ export default function App() {
     switchTab('synthesize')
   }
 
+  function trainOn(datasetId: string) {
+    switchTab('train')
+    setTrainDataset({ id: datasetId, key: Date.now() })
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -115,7 +130,7 @@ export default function App() {
           VoxCPM <span>Studio</span>
         </h1>
         <nav className="tabs" aria-label="Sections">
-          {(['synthesize', 'train'] as const).map((t) => (
+          {(Object.keys(TABS) as Tab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -123,7 +138,7 @@ export default function App() {
               aria-current={tab === t ? 'page' : undefined}
               onClick={() => switchTab(t)}
             >
-              {t === 'synthesize' ? 'Synthesize' : 'Train'}
+              {TABS[t]}
             </button>
           ))}
         </nav>
@@ -159,7 +174,16 @@ export default function App() {
           />
         </aside>
       </main>
-      {tab === 'train' && <TrainingView loras={loras} onError={showError} onTryCheckpoint={tryCheckpoint} />}
+      {tab === 'data' && <DataView onError={showError} onTrain={trainOn} />}
+      {tab === 'train' && (
+        <TrainingView
+          key={trainDataset?.key}
+          loras={loras}
+          onError={showError}
+          onTryCheckpoint={tryCheckpoint}
+          newRunDataset={trainDataset?.id}
+        />
+      )}
     </div>
   )
 }
