@@ -150,6 +150,7 @@ export default function App() {
           <VoicePanel
             loras={loras}
             selected={selectedLora}
+            modelId={status?.model_id ?? null}
             onSelect={setSelectedLora}
             onRefresh={refreshLoras}
             onImport={importPackage}

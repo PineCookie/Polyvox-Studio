@@ -98,9 +98,13 @@ def create_app(
     def conflict(request: Request, exc: TrainingConflict) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
+    def status_with_model_id() -> dict:
+        # The hub id lets the UI flag LoRAs trained on a different base model.
+        return {**service.status(), "model_id": sharing.hub_id(settings.model)}
+
     @app.get("/api/status")
     def status() -> dict:
-        return service.status()
+        return status_with_model_id()
 
     @app.get("/api/loras")
     def list_loras() -> list[LoraOut]:
@@ -180,7 +184,7 @@ def create_app(
     @app.post("/api/model/unload")
     def unload() -> dict:
         service.unload()
-        return service.status()
+        return status_with_model_id()
 
     @app.get("/api/datasets")
     def list_datasets() -> list[str]:

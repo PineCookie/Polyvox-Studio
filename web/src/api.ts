@@ -24,6 +24,8 @@ export interface Status {
   device: string
   optimize: boolean
   model: string
+  // Hugging Face id of the base model, when it can be inferred.
+  model_id: string | null
   loaded: boolean
   lora_rank: number | null
   active_lora: string | null

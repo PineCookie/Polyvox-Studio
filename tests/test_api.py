@@ -55,8 +55,9 @@ def test_tts_errors_map_to_http_codes(client):
     assert client.post("/api/tts", data={"text": "hi", "cfg_value": "99"}).status_code == 422
 
 
-def test_status_reports_loaded_model(client):
+def test_status_reports_loaded_model(client, settings):
     assert client.get("/api/status").json()["loaded"] is False
+    assert client.get("/api/status").json()["model_id"] is None  # tmp model dir has no hub-style name
     client.post("/api/tts", data={"text": "hello"})
     assert client.get("/api/status").json()["loaded"] is True
     assert client.post("/api/model/unload").json()["loaded"] is False
