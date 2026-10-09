@@ -25,7 +25,9 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OVERLAP = 2  # chunks per position; MSST configs often ask 4-8 (slower, marginally smoother)
+# Chunks per position. MSST configs ask 4-8; 1 (chunks only crossfade at their
+# seams) is about twice as fast as 2 with a difference far below audibility.
+DEFAULT_OVERLAP = 1
 BATCH_SIZE = 2
 
 
@@ -122,8 +124,9 @@ def demix(model: Callable, audio: np.ndarray, chunk: int, overlap: int, device: 
     import torch
 
     x = torch.from_numpy(audio)
-    step = chunk // overlap
     fade = chunk // 10
+    # overlap 1: chunks follow each other and only crossfade over the fade length.
+    step = chunk - fade if overlap <= 1 else chunk // overlap
     border = chunk - step
     length = x.shape[-1]
     padded = length > 2 * border

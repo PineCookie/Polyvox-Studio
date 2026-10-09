@@ -12,15 +12,22 @@ from voxcpm_studio.asr import AsrService
 
 
 def test_transcribe_keeps_input_order_across_batches(asr_service, asr_loader):
-    lengths = [16000 * (i % 7 + 1) for i in range(20)]
+    lengths = [16000 * (i % 7 + 1) for i in range(40)]
 
     results = asr_service.transcribe([np.zeros(n, dtype=np.float32) for n in lengths])
 
     assert [r.text for r in results] == [f"clip of {n} samples" for n in lengths]
     assert all(r.language == "Chinese" for r in results)
     processor = asr_service._processor
-    assert [r["n"] for r in processor.requests] == [16, 4]
+    assert [r["n"] for r in processor.requests] == [asr.BATCH_SIZE, 40 - asr.BATCH_SIZE]
     assert asr_loader.calls == 1
+
+
+def test_long_clips_make_smaller_batches(asr_service):
+    seconds = asr.BATCH_SECONDS // 4  # four of them fill a batch
+    asr_service.transcribe([np.zeros(16000 * seconds, dtype=np.float32) for _ in range(10)])
+
+    assert [r["n"] for r in asr_service._processor.requests] == [4, 4, 2]
 
 
 def test_language_and_prompt_are_forwarded(asr_service):

@@ -21,7 +21,8 @@ from .config import Settings
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16_000
-BATCH_SIZE = 16
+BATCH_SIZE = 32  # larger batches are much faster; transcripts barely change
+BATCH_SECONDS = 400  # padded audio per batch, so long chunks don't run out of memory
 MAX_NEW_TOKENS = 512
 
 
@@ -65,6 +66,19 @@ def load_audio(path: Path) -> np.ndarray:
     return wav.astype(np.float32)
 
 
+def _batches(order: list[int], lengths: list[int]) -> list[list[int]]:
+    """Runs of ``order`` (sorted by length) of at most BATCH_SIZE clips and
+    BATCH_SECONDS of padded audio."""
+    out: list[list[int]] = []
+    for i in order:
+        batch = out[-1] if out else None
+        if batch and len(batch) < BATCH_SIZE and (len(batch) + 1) * lengths[i] <= BATCH_SECONDS * SAMPLE_RATE:
+            batch.append(i)
+        else:
+            out.append([i])
+    return out
+
+
 class AsrService:
     def __init__(self, settings: Settings, loader: AsrLoader = load_qwen3_asr):
         self.settings = settings
@@ -99,8 +113,7 @@ class AsrService:
         order = sorted(range(len(audios)), key=lambda i: len(audios[i]))
         with self._lock:
             processor, model = self._ensure_loaded()
-            for start in range(0, len(order), BATCH_SIZE):
-                idx = order[start : start + BATCH_SIZE]
+            for idx in _batches(order, [len(a) for a in audios]):
                 inputs = processor.apply_transcription_request(
                     [audios[i] for i in idx],
                     language=language or None,
