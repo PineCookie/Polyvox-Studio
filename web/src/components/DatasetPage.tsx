@@ -16,6 +16,7 @@ interface Props {
 /** A prepared dataset: check its clips against their text, review, then train. */
 export function DatasetPage({ id, imported, onTrain }: Props) {
   const [aligner, setAligner] = useState<Aligner>('qwen3')
+  const [compareAsr, setCompareAsr] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // Bumped when a check finishes, so the review reloads the results.
   const [version, setVersion] = useState(0)
@@ -29,7 +30,7 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
   async function check() {
     setError(null)
     try {
-      setJob(await checkDataset(id, aligner))
+      setJob(await checkDataset(id, aligner, compareAsr))
     } catch (e) {
       setError((e as Error).message)
     }
@@ -82,11 +83,20 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
               </option>
             ))}
           </select>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={compareAsr}
+              onChange={(e) => setCompareAsr(e.target.checked)}
+              disabled={running}
+            />{' '}
+            and compare with ASR
+          </label>
         </div>
         <p className="muted hint">
           Forced alignment finds text that does not match the audio, untranscribed speech, words cut at the file edge
-          and long silence. Qwen3 also handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese model
-          by default).
+          and long silence; comparing with ASR finds words the text leaves out (texts made by ASR are not compared).
+          Qwen3 also handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese model by default).
         </p>
         <div className="inline-field check-action">
           <button

@@ -123,10 +123,10 @@ def test_check_dataset_writes_results_the_review_shows(data_dir, align_service):
         "aligner": "qwen3",
         "checked": 3,
         "flagged": 1,
-        "flags": {"mismatch": 1, "filler": 0, "extra_speech": 0, "cut_edge": 0, "long_silence": 0},
+        "flags": {"mismatch": 1, "asr_more": 0, "filler": 0, "extra_speech": 0, "cut_edge": 0, "long_silence": 0},
     }
     assert phases[-1] == ("aligning", 3, 3)
-    page = manifests.read_rows(manifest, flagged=True)
+    page = manifests.read_rows(manifest, flag="any")
     assert [(r.file, r.flags) for r in page.rows] == [("wavs/1.wav", ["mismatch"])]
 
 
@@ -168,7 +168,7 @@ def test_check_job_endpoint(service, training, asr_service, align_service, align
 
     page = client.get("/api/dataset-rows", params={"id": "speaker_a/train.jsonl", "order": "worst"}).json()
     assert page["checks"]["aligner"] == "qwen3" and page["rows"][0]["flags"] == ["mismatch"]
-    flagged = client.get("/api/dataset-rows", params={"id": "speaker_a/train.jsonl", "flagged": True}).json()
+    flagged = client.get("/api/dataset-rows", params={"id": "speaker_a/train.jsonl", "flag": "any"}).json()
     assert flagged["total"] == 1
 
     clip = client.get("/api/dataset-clip", params={"id": "speaker_a/train.jsonl", "index": 1}).json()

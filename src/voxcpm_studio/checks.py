@@ -27,14 +27,15 @@ import json
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import numpy as np
 
 from . import slicer
-from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges, words_score
+from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges, split_words, words_score
 from .fillers import is_filler
-from .manifests import ALIGN_FILE, read_manifest, row_key, text_key
+from .manifests import ALIGN_FILE, ASR_FILE, read_manifest, read_sidecar, row_key, text_key
 from .slicer import Vad
 
 # Set to flag a few percent of correct transcripts while catching most with
@@ -58,7 +59,12 @@ EDGE_SOUND_GAP_S = 0.15  # a pause this long lets trimming cut off untranscribed
 FILLER_SQUEEZED_S = 0.04
 FILLER_PROBE_S = 0.1
 FILLER_LOUD_SHARE = 0.3
-FLAGS = ("mismatch", "filler", "extra_speech", "cut_edge", "long_silence")
+# ASR hears more than the transcript has (words left out): at least this many
+# words, and this share of the transcript's words. Catches most left-out words
+# while rarely flagging a correct transcript.
+ASR_MORE_MIN = 2
+ASR_MORE_SHARE = 0.1
+FLAGS = ("mismatch", "asr_more", "filler", "extra_speech", "cut_edge", "long_silence")
 
 
 @dataclass
@@ -77,6 +83,8 @@ class ClipCheck:
     # from them: (where a cut would exclude it, seconds of it), else None.
     sound_before: tuple[float, float] | None = None
     sound_after: tuple[float, float] | None = None
+    # compare_asr(): what ASR heard, when the check compared with it.
+    asr: dict | None = None
 
     def trim_range(self, pad: float = TRIM_PAD_S) -> tuple[float, float] | None:
         """(start, end) to keep: ``pad`` of silence around the speech, and
@@ -122,6 +130,44 @@ class ClipCheck:
             sound_before=None if cut_before else _shift(self.sound_before, start),
             sound_after=None if cut_after else _shift(self.sound_after, start),
         )
+
+
+def _units(text: str) -> list[str]:
+    """Words to compare a transcript with ASR on: no punctuation, no fillers, any case."""
+    return [w.lower() for w in split_words(text) if not is_filler(w)]
+
+
+def asr_diff(text: str, heard: str) -> list[tuple[str, str, str]]:
+    """(op, transcript part, ASR part) per stretch: op is equal, missing (only
+    in the transcript), extra (only heard) or changed."""
+    a, b = _units(text), _units(heard)
+    out = []
+    for op, i1, i2, j1, j2 in SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        name = {"equal": "equal", "delete": "missing", "insert": "extra", "replace": "changed"}[op]
+        out.append((name, " ".join(a[i1:i2]), " ".join(b[j1:j2])))
+    return out
+
+
+def compare_asr(text: str, heard: str) -> dict:
+    """What ASR heard against the transcript: counts of words only ASR heard
+    (extra), only in the transcript (missing) and substituted (changed)."""
+    a, b = _units(text), _units(heard)
+    extra = missing = changed = 0
+    for op, i1, i2, j1, j2 in SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        n, m = i2 - i1, j2 - j1
+        if op == "insert":
+            extra += m
+        elif op == "delete":
+            missing += n
+        elif op == "replace":
+            changed += min(n, m)
+            extra += max(0, m - n)
+            missing += max(0, n - m)
+    return {"text": heard, "extra": extra, "missing": missing, "changed": changed, "words": len(a)}
+
+
+def _hears_more(asr: dict) -> bool:
+    return asr["extra"] >= max(ASR_MORE_MIN, ASR_MORE_SHARE * asr["words"])
 
 
 def _shift(sound: tuple[float, float] | None, by: float) -> tuple[float, float] | None:
@@ -215,19 +261,37 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
     )
 
 
-# (16 kHz clips, transcripts) -> checks
-Checker = Callable[[list[np.ndarray], list[str]], list[ClipCheck]]
+def with_asr(check: ClipCheck, text: str, heard: str) -> ClipCheck:
+    """``check`` with what ASR heard compared to ``text`` (flag asr_more)."""
+    asr = compare_asr(text, heard)
+    flags = set(check.flags) | ({"asr_more"} if _hears_more(asr) else set())
+    return replace(check, asr=asr, flags=[f for f in FLAGS if f in flags])
+
+
+# (16 kHz clips, transcripts[, compare with ASR per clip]) -> checks
+Checker = Callable[..., list[ClipCheck]]
 # (16 kHz clips, transcripts) -> alignments
 AlignFn = Callable[[list[np.ndarray], list[str]], list[Alignment]]
+# 16 kHz clips -> what ASR hears in each
+Transcribe = Callable[[list[np.ndarray]], list[str]]
 
 
-def make_checker(align: AlignFn, kind: str, vad: Vad | None = None) -> Checker:
-    """``vad`` defaults to Silero VAD, batched over the clips (looked up per call)."""
+def make_checker(align: AlignFn, kind: str, vad: Vad | None = None, transcribe: Transcribe | None = None) -> Checker:
+    """``vad`` defaults to Silero VAD, batched over the clips (looked up per
+    call). With ``transcribe``, clips are also compared with what ASR hears,
+    except where ``compare`` (third argument, per clip) is False: a text made
+    by the same ASR would only agree with itself."""
 
-    def check(wavs: list[np.ndarray], texts: list[str]) -> list[ClipCheck]:
+    def check(wavs: list[np.ndarray], texts: list[str], compare: list[bool] | None = None) -> list[ClipCheck]:
         alignments = align(wavs, texts)
         segments = [vad(w) for w in wavs] if vad else slicer.silero_vad_many(wavs)
-        return [check_clip(w, a, kind, s) for w, a, s in zip(wavs, alignments, segments, strict=True)]
+        out = [check_clip(w, a, kind, s) for w, a, s in zip(wavs, alignments, segments, strict=True)]
+        if transcribe:
+            todo = [i for i in range(len(wavs)) if compare is None or compare[i]]
+            heard = transcribe([wavs[i] for i in todo]) if todo else []
+            for i, h in zip(todo, heard, strict=True):
+                out[i] = with_asr(out[i], texts[i], h)
+        return out
 
     return check
 
@@ -266,6 +330,7 @@ def check_dataset(
     progress = progress or (lambda phase, done, total: None)
     entries, _ = read_manifest(manifest, root)
     manifest_dir = manifest.resolve().parent
+    asr_made = set(read_sidecar(manifest_dir / ASR_FILE))
     results: dict[str, tuple[str, ClipCheck]] = {}
     for start in range(0, len(entries), CHECK_CHUNK):
         progress("aligning", start, len(entries))
@@ -276,8 +341,36 @@ def check_dataset(
                 chunk.append(entry)
             except Exception:
                 continue
-        for entry, check in zip(chunk, checker(wavs, [e["text"] for e in chunk]) if chunk else [], strict=True):
-            results[row_key(entry["audio"], manifest_dir)] = (entry["text"], check)
+        if not chunk:
+            continue
+        keys = [row_key(e["audio"], manifest_dir) for e in chunk]
+        checked = checker(wavs, [e["text"] for e in chunk], [k not in asr_made for k in keys])
+        for key, entry, check in zip(keys, chunk, checked, strict=True):
+            results[key] = (entry["text"], check)
     progress("aligning", len(entries), len(entries))
     write_checks(manifest_dir, kind, results)
     return {"aligner": kind, **summarize([c for _, c in results.values()])}
+
+
+def check_one(
+    manifest: Path, root: Path | None, index: int, checker: Checker, kind: str, load: Callable[[Path], np.ndarray]
+) -> ClipCheck:
+    """Check one clip again (after its text was edited) and update its entry
+    in align.json; the other entries stay. Uses ``kind`` for the whole file
+    only when there were no checks yet."""
+    entries, _ = read_manifest(manifest, root)
+    if not 0 <= index < len(entries):
+        raise KeyError(f"No clip {index} in this dataset.")
+    entry = entries[index]
+    manifest_dir = manifest.resolve().parent
+    key = row_key(entry["audio"], manifest_dir)
+    compare = key not in set(read_sidecar(manifest_dir / ASR_FILE))
+    (check,) = checker([load(Path(entry["audio"]))], [entry["text"]], [compare])
+    saved = read_sidecar(manifest_dir / ALIGN_FILE)
+    clips = dict(saved.get("clips", {}))
+    clips[key] = {"text": text_key(entry["text"]), **asdict(check)}
+    tmp = manifest_dir / f".{ALIGN_FILE}.tmp"
+    data = {"aligner": saved.get("aligner", kind), "clips": clips}
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(manifest_dir / ALIGN_FILE)
+    return check

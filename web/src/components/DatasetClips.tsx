@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { datasetAudioUrl, getDatasetRows } from '../api'
-import type { CheckFlag, CheckSummary, ClipPage, DatasetSource } from '../api'
+import type { CheckFlag, CheckSummary, ClipPage, DatasetSource, FlagFilter } from '../api'
 import { ALIGNER_LABEL, FLAG_LABEL } from '../format'
 import { ClipView } from './ClipView'
 import { Waveform } from './Waveform'
@@ -20,15 +20,18 @@ export function DatasetClips({ source }: Props) {
   const sourceKey = JSON.stringify(source)
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState('')
-  const [flagged, setFlagged] = useState(false)
+  const [flag, setFlag] = useState<FlagFilter>('')
   const [worstFirst, setWorstFirst] = useState(false)
   const [offset, setOffset] = useState(0)
   const [page, setPage] = useState<ClipPage | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState<number | null>(null)
   const [open, setOpen] = useState<number | null>(null) // clip shown with its words
+  // Bumped after an edit or drop, so the page reloads.
+  const [version, setVersion] = useState(0)
   const audio = useRef<HTMLAudioElement>(null)
   const loaded = useRef<number | null>(null) // clip index the player holds
+  const openPos = useRef(0) // the open clip's row on the page
 
   // Debounce typing into the search box; a new search starts at page 1.
   useEffect(() => {
@@ -41,14 +44,20 @@ export function DatasetClips({ source }: Props) {
 
   useEffect(() => {
     let cancelled = false
-    getDatasetRows(JSON.parse(sourceKey), offset, PAGE, { query: search, flagged, worstFirst }).then(
-      (p) => !cancelled && (setPage(p), setError(null)),
+    getDatasetRows(JSON.parse(sourceKey), offset, PAGE, { query: search, flag, worstFirst }).then(
+      (p) => {
+        if (cancelled) return
+        setPage(p)
+        setError(null)
+        // A fixed clip that left a filtered list: open the one now in its place, to review on.
+        setOpen((o) => (o === null || p.rows.some((r) => r.index === o) ? o : (p.rows[openPos.current]?.index ?? null)))
+      },
       (e: Error) => !cancelled && setError(e.message),
     )
     return () => {
       cancelled = true
     }
-  }, [sourceKey, offset, search, flagged, worstFirst])
+  }, [sourceKey, offset, search, flag, worstFirst, version])
 
   // `at`: start from this second (a click on the waveform); otherwise play / pause.
   function play(index: number, at?: number) {
@@ -70,6 +79,7 @@ export function DatasetClips({ source }: Props) {
   }
 
   function toggle(index: number) {
+    openPos.current = page?.rows.findIndex((r) => r.index === index) ?? 0
     setOpen((o) => (o === index ? null : index))
   }
 
@@ -83,12 +93,13 @@ export function DatasetClips({ source }: Props) {
 
   return (
     <div className="clips">
-      {page?.checks && (
+      {page && (page.checks || page.dropped > 0) && (
         <CheckBar
           checks={page.checks}
-          flagged={flagged}
+          dropped={page.dropped}
+          flag={flag}
           worstFirst={worstFirst}
-          onFlagged={(v) => filter(() => setFlagged(v))}
+          onFlag={(v) => filter(() => setFlag(v))}
           onWorstFirst={(v) => filter(() => setWorstFirst(v))}
         />
       )}
@@ -113,7 +124,15 @@ export function DatasetClips({ source }: Props) {
             <tbody>
               {page.rows.map((row) => (
                 <Fragment key={row.index}>
-                  <tr className={`${row.index === playing ? 'playing' : ''} ${row.index === open ? 'open' : ''}`}>
+                  <tr
+                    className={[
+                      row.index === playing && 'playing',
+                      row.index === open && 'open',
+                      row.dropped && 'dropped',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
                     <td className="clip-play">
                       <button
                         type="button"
@@ -139,6 +158,7 @@ export function DatasetClips({ source }: Props) {
                     </td>
                     <td className="clip-text" onClick={() => toggle(row.index)}>
                       {row.text}
+                      {row.dropped && <span className="tag subtle">Dropped</span>}
                       {row.asr && <span className="tag subtle">ASR</span>}
                       {row.flags.map((f) => (
                         <FlagTag key={f} flag={f} score={row.score} />
@@ -165,6 +185,7 @@ export function DatasetClips({ source }: Props) {
                           index={row.index}
                           audio={row.index === playing ? audio.current : null}
                           onSeek={(at) => play(row.index, at)}
+                          onChanged={() => setVersion((v) => v + 1)}
                         />
                       </td>
                     </tr>
@@ -216,41 +237,48 @@ function FlagTag({ flag, score }: { flag: CheckFlag; score: number | null }) {
 }
 
 interface CheckBarProps {
-  checks: CheckSummary
-  flagged: boolean
+  checks: CheckSummary | null
+  dropped: number
+  flag: FlagFilter
   worstFirst: boolean
-  onFlagged: (value: boolean) => void
+  onFlag: (value: FlagFilter) => void
   onWorstFirst: (value: boolean) => void
 }
 
 /** What the alignment check found, with the review filters. */
-function CheckBar({ checks, flagged, worstFirst, onFlagged, onWorstFirst }: CheckBarProps) {
-  const counts = (Object.keys(FLAG_LABEL) as CheckFlag[]).filter((f) => checks.flags[f])
+function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst }: CheckBarProps) {
+  const counts = checks ? (Object.keys(FLAG_LABEL) as CheckFlag[]).filter((f) => checks.flags[f]) : []
   return (
     <div className="check-bar">
       <p>
-        <strong>{checks.flagged.toLocaleString()}</strong> of {checks.checked.toLocaleString()} checked clips flagged
-        {counts.length > 0 && (
-          <span className="muted">
-            {' · '}
-            {counts.map((f) => `${checks.flags[f]} ${FLAG_LABEL[f][0].toLowerCase()}`).join(', ')}
-          </span>
+        {checks ? (
+          <>
+            <strong>{checks.flagged.toLocaleString()}</strong> of {checks.checked.toLocaleString()} checked clips
+            flagged
+            {checks.aligner && <span className="muted"> · {ALIGNER_LABEL[checks.aligner]}</span>}
+          </>
+        ) : (
+          'Not checked yet'
         )}
-        {checks.aligner && <span className="muted"> · {ALIGNER_LABEL[checks.aligner]}</span>}
+        {dropped > 0 && <span className="muted"> · {dropped.toLocaleString()} dropped</span>}
       </p>
       <div className="check-filters">
-        <div className="segmented" role="radiogroup" aria-label="Clips shown">
-          <label>
-            <input type="radio" checked={!flagged} onChange={() => onFlagged(false)} /> All
+        <select value={flag} onChange={(e) => onFlag(e.target.value as FlagFilter)} aria-label="Clips shown">
+          <option value="">All clips</option>
+          {checks && <option value="any">Any flag ({checks.flagged.toLocaleString()})</option>}
+          {counts.map((f) => (
+            <option key={f} value={f}>
+              {FLAG_LABEL[f][0]} ({checks!.flags[f]!.toLocaleString()})
+            </option>
+          ))}
+          {dropped > 0 && <option value="dropped">Dropped ({dropped.toLocaleString()})</option>}
+        </select>
+        {checks && (
+          <label className="check">
+            <input type="checkbox" checked={worstFirst} onChange={(e) => onWorstFirst(e.target.checked)} /> Worst match
+            first
           </label>
-          <label>
-            <input type="radio" checked={flagged} onChange={() => onFlagged(true)} /> Flagged
-          </label>
-        </div>
-        <label className="check">
-          <input type="checkbox" checked={worstFirst} onChange={(e) => onWorstFirst(e.target.checked)} /> Worst match
-          first
-        </label>
+        )}
       </div>
     </div>
   )

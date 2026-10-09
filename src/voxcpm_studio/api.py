@@ -54,6 +54,7 @@ class LoraOut(BaseModel):
 class DatasetReportOut(BaseModel):
     id: str
     samples: int
+    dropped: int
     valid: int
     total_seconds: float
     min_seconds: float | None
@@ -102,6 +103,20 @@ class DatasetIn(BaseModel):
 class CheckIn(BaseModel):
     id: str  # dataset manifest id
     aligner: Literal["qwen3", "ctc"] = "qwen3"
+    # Also transcribe each clip and flag those where ASR hears words the text lacks.
+    compare_asr: bool = False
+
+
+class ClipTextIn(BaseModel):
+    id: str
+    index: int
+    text: str
+
+
+class ClipDropIn(BaseModel):
+    id: str
+    index: int
+    dropped: bool = True
 
 
 class ImportPreviewOut(BaseModel):
@@ -132,6 +147,7 @@ class ClipRowOut(BaseModel):
     flags: list[str]
     speech: tuple[float, float] | None
     peaks: list[float] | None
+    dropped: bool  # dropped in review: left out of training runs
 
 
 class WordOut(BaseModel):
@@ -142,9 +158,19 @@ class WordOut(BaseModel):
     weak: bool  # below checks.WEAK_WORD_BELOW for the aligner: likely not what was said
 
 
+class HeardOut(BaseModel):
+    text: str  # what ASR heard
+    extra: int  # words ASR heard that the transcript lacks
+    missing: int  # transcript words ASR did not hear
+    changed: int
+    # (equal | missing | extra | changed, transcript part, ASR part) stretches
+    diff: list[tuple[str, str, str]]
+
+
 class ClipDetailOut(ClipRowOut):
     aligner: str | None
     words: list[WordOut]  # empty when not checked, or checked before word timings were saved
+    heard: HeardOut | None  # when the check compared with ASR
 
 
 class ClipPageOut(BaseModel):
@@ -152,6 +178,7 @@ class ClipPageOut(BaseModel):
     rows: list[ClipRowOut]
     # Alignment checks over the whole dataset; None when it was never checked.
     checks: dict | None
+    dropped: int  # clips dropped in review, whole dataset
 
 
 class JobOut(BaseModel):
@@ -421,8 +448,13 @@ def create_app(
 
         return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
 
-    def checker(kind: str) -> checks.Checker:
-        return checks.make_checker(lambda wavs, texts: align.align(wavs, texts, kind), kind)
+    def checker(kind: str, compare_asr: bool = False) -> checks.Checker:
+        def heard_texts(wavs: list) -> list[str]:
+            return [r.text for r in asr.transcribe(wavs)]
+
+        return checks.make_checker(
+            lambda wavs, texts: align.align(wavs, texts, kind), kind, transcribe=heard_texts if compare_asr else None
+        )
 
     def refuse_if_busy(gpu: bool) -> None:
         """One preparation job at a time; GPU stages wait for training on their GPU."""
@@ -455,13 +487,37 @@ def create_app(
             return checks.check_dataset(
                 manifest,
                 manifests.legacy_root(settings.data_dir),
-                checker(body.aligner),
+                checker(body.aligner, body.compare_asr),
                 body.aligner,
                 load_audio,
                 job.progress,
             )
 
         return JobOut(**jobs.start("check", f"Check {body.id}", run).public())
+
+    @app.post("/api/dataset-clip/text")
+    def set_clip_text(body: ClipTextIn) -> ClipDetailOut:
+        """Change one clip's transcript. When the dataset has checks, the clip is
+        checked again right away (with the dataset's aligner, compared with ASR
+        if its last check was); otherwise its old check just goes stale."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        refuse_if_busy(gpu=False)
+        root = manifests.legacy_root(settings.data_dir)
+        _checked(manifests.set_text, manifest, body.index, body.text)
+        saved = manifests.read_sidecar(manifest.parent / manifests.ALIGN_FILE)
+        gpu_free = not (training.active_run and _cuda_index(asr.device) == (settings.train_gpu or 0))
+        if saved.get("aligner") in ("qwen3", "ctc") and gpu_free:
+            kind = saved["aligner"]
+            compared = any("asr" in c and c["asr"] for c in saved.get("clips", {}).values())
+            checks.check_one(manifest, root, body.index, checker(kind, compared), kind, load_audio)
+        return dataset_clip(body.index, id=body.id)
+
+    @app.post("/api/dataset-clip/drop")
+    def drop_clip(body: ClipDropIn) -> dict:
+        """Leave one clip out of training (``dropped``), or bring it back."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        _found(manifests.set_dropped, manifest, manifests.legacy_root(settings.data_dir), body.index, body.dropped)
+        return {"index": body.index, "dropped": body.dropped}
 
     def review_manifest(id: str | None, run: str | None) -> Path:
         """A dataset by manifest id (e.g. "speaker/train.jsonl"), or the one a run trains on."""
@@ -483,17 +539,20 @@ def create_app(
         offset: int = 0,
         limit: int = Query(50, ge=1, le=500),
         q: str = "",
-        flagged: bool = False,
+        flag: str | None = None,
         order: Literal["file", "worst"] = "file",
     ) -> ClipPageOut:
-        """A page of a dataset's clips for review; ``flagged`` keeps clips the
-        alignment check flagged, ``order=worst`` puts the lowest scores first."""
+        """A page of a dataset's clips for review. ``flag``: a check flag, "any"
+        flag, or "dropped" clips; ``order=worst`` puts the lowest scores first."""
         path = review_manifest(id, run)
         page = manifests.read_rows(
-            path, manifests.legacy_root(settings.data_dir), max(0, offset), limit, q, flagged, order == "worst"
+            path, manifests.legacy_root(settings.data_dir), max(0, offset), limit, q, flag or None, order == "worst"
         )
         return ClipPageOut(
-            total=page.total, rows=[ClipRowOut(**dataclasses.asdict(r)) for r in page.rows], checks=page.checks
+            total=page.total,
+            rows=[ClipRowOut(**dataclasses.asdict(r)) for r in page.rows],
+            checks=page.checks,
+            dropped=page.dropped,
         )
 
     @app.get("/api/dataset-clip")
@@ -506,6 +565,15 @@ def create_app(
             **dataclasses.asdict(detail.row),
             aligner=detail.aligner,
             words=[WordOut(text=t, start=s, end=e, confidence=c, weak=c < weak_below) for t, s, e, c in detail.words],
+            heard=HeardOut(
+                text=detail.asr["text"],
+                extra=detail.asr["extra"],
+                missing=detail.asr["missing"],
+                changed=detail.asr["changed"],
+                diff=checks.asr_diff(detail.row.text, detail.asr["text"]),
+            )
+            if detail.asr
+            else None,
         )
 
     @app.get("/api/dataset-audio")

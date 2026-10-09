@@ -1347,6 +1347,68 @@ input[type='search']:focus {
   color: var(--accent-text);
 }
 
+/* Review: dropped clips, editing a transcript, what ASR heard */
+.clip-table tr.dropped .clip-text,
+.clip-table tr.dropped .waveform {
+  opacity: 0.45;
+}
+
+.clip-table tr.dropped .clip-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+
+.clip-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clip-edit-text {
+  flex: 1;
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.clip-edit-form {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+}
+
+.clip-edit-form input {
+  flex: 1;
+}
+
+.heard {
+  font-size: 0.85rem;
+  line-height: 1.8;
+}
+
+.heard ins {
+  text-decoration: none;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.heard ins.extra {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.heard ins.changed {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.heard del {
+  color: var(--danger);
+}
+
+.heard button {
+  margin-left: 6px;
+}
+
 .weak-legend {
   color: var(--warn);
   font-weight: 600;

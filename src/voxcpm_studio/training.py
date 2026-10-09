@@ -354,11 +354,12 @@ class TrainingManager:
             if run_dir.exists():
                 raise TrainingConflict(f"A run named '{params.name}' already exists.")
 
-            train, errors = manifests.read_manifest(train_path, root)
+            # Clips dropped in review stay out of the run.
+            train, errors = manifests.training_entries(train_path, root)
             if not train:
                 raise ValueError(f"Dataset '{params.dataset}' has no usable entries. {' '.join(errors[:3])}")
             if val_path:
-                val, _ = manifests.read_manifest(val_path, root)
+                val, _ = manifests.training_entries(val_path, root)
             else:
                 train, val = manifests.split_holdout(train, params.val_holdout)
             model = resolve_model(self.settings.model)

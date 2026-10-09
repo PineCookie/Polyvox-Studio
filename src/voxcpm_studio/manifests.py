@@ -25,6 +25,9 @@ import soundfile as sf
 MANIFEST_GLOB = "*.jsonl"
 ASR_FILE = "asr.json"  # next to a manifest: {"<audio as written>": {"language": ...}} for ASR-made texts
 ALIGN_FILE = "align.json"  # next to a manifest: per-clip alignment checks (checks.py)
+# Next to a manifest: {"clips": ["<audio as written>", ...]} dropped in review. They
+# stay in the manifest (stable indices, easy to restore) but not in training runs.
+EXCLUDED_FILE = "excluded.json"
 MAX_REPORTED = 20  # errors / warnings listed individually
 SHORT_CLIP_S = 0.3
 LONG_CLIP_S = 30.0
@@ -65,6 +68,22 @@ def _resolve_audio(value: str, manifest_dir: Path, root: Path | None) -> str:
     return str(candidates[0].resolve())
 
 
+def _parse_line(line: str) -> tuple[dict | None, str | None]:
+    """(entry, None) for a usable manifest line, (None, why not) otherwise,
+    (None, None) for a blank one. The one rule for what counts as a clip."""
+    if not line.strip():
+        return None, None
+    try:
+        entry = json.loads(line)
+    except json.JSONDecodeError as e:
+        return None, f"invalid JSON ({e.msg})"
+    if not isinstance(entry, dict) or not isinstance(entry.get("audio"), str) or not entry["audio"]:
+        return None, "missing 'audio' path"
+    if not isinstance(entry.get("text"), str) or not entry["text"].strip():
+        return None, "missing 'text'"
+    return entry, None
+
+
 def read_manifest(path: Path, root: Path | None = None) -> tuple[list[dict], list[str]]:
     """Parse a manifest, making audio paths absolute.
 
@@ -74,24 +93,81 @@ def read_manifest(path: Path, root: Path | None = None) -> tuple[list[dict], lis
     manifest_dir = path.resolve().parent
     with path.open("r", encoding="utf-8") as f:
         for lineno, line in enumerate(f, 1):
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError as e:
-                errors.append(f"Line {lineno}: invalid JSON ({e.msg})")
-                continue
-            if not isinstance(entry, dict) or not isinstance(entry.get("audio"), str) or not entry["audio"]:
-                errors.append(f"Line {lineno}: missing 'audio' path")
-                continue
-            if not isinstance(entry.get("text"), str) or not entry["text"].strip():
-                errors.append(f"Line {lineno}: missing 'text'")
+            entry, error = _parse_line(line)
+            if error:
+                errors.append(f"Line {lineno}: {error}")
+            if entry is None:
                 continue
             entry["audio"] = _resolve_audio(entry["audio"], manifest_dir, root)
             if isinstance(entry.get("ref_audio"), str) and entry["ref_audio"]:
                 entry["ref_audio"] = _resolve_audio(entry["ref_audio"], manifest_dir, root)
             entries.append(entry)
     return entries, errors
+
+
+def rewrite_manifest(path: Path, change) -> int:
+    """Apply ``change(entry) -> entry | None`` (None: unchanged) to each usable
+    entry, in place: other lines and keys stay as written. The first time, the
+    original is kept as ``<name>.orig``. Returns the number of entries changed."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    changed = 0
+    for n, line in enumerate(lines):
+        entry, _ = _parse_line(line)
+        if entry is not None and (new := change(entry)) is not None:
+            lines[n] = json.dumps(new, ensure_ascii=False)
+            changed += 1
+    if changed:
+        backup = path.with_name(path.name + ".orig")
+        if not backup.exists():
+            backup.write_bytes(path.read_bytes())
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        tmp.replace(path)
+    return changed
+
+
+def excluded_keys(manifest_dir: Path) -> set[str]:
+    return set(read_sidecar(manifest_dir / EXCLUDED_FILE).get("clips", []))
+
+
+def set_dropped(path: Path, root: Path | None, index: int, dropped: bool) -> None:
+    """Drop the ``index``-th clip from training (or restore it)."""
+    entries = _entries_for_review(path, root)
+    if not 0 <= index < len(entries):
+        raise KeyError(f"No clip {index} in this dataset.")
+    manifest_dir = path.resolve().parent
+    keys = excluded_keys(manifest_dir)
+    key = row_key(entries[index][0], manifest_dir)
+    keys = keys | {key} if dropped else keys - {key}
+    sidecar = manifest_dir / EXCLUDED_FILE
+    tmp = manifest_dir / f".{EXCLUDED_FILE}.tmp"
+    tmp.write_text(json.dumps({"clips": sorted(keys)}, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(sidecar)
+
+
+def training_entries(path: Path, root: Path | None = None) -> tuple[list[dict], list[str]]:
+    """``read_manifest`` without the clips dropped in review."""
+    entries, errors = read_manifest(path, root)
+    manifest_dir = path.resolve().parent
+    excluded = excluded_keys(manifest_dir)
+    return [e for e in entries if row_key(e["audio"], manifest_dir) not in excluded], errors
+
+
+def set_text(path: Path, index: int, text: str) -> None:
+    """Replace the transcript of a manifest's ``index``-th usable entry."""
+    text = text.strip()
+    if not text:
+        raise ValueError("A transcript can't be empty; drop the clip instead.")
+    seen = -1
+
+    def change(entry: dict) -> dict | None:
+        nonlocal seen
+        seen += 1
+        return {**entry, "text": text} if seen == index and entry["text"] != text else None
+
+    rewrite_manifest(path, change)
+    if not 0 <= index <= seen:
+        raise KeyError(f"No clip {index} in this dataset.")
 
 
 def write_manifest(entries: list[dict], path: Path) -> None:
@@ -112,6 +188,7 @@ class ClipRow:
     flags: list[str] = field(default_factory=list)
     speech: tuple[float, float] | None = None  # aligned words' span in seconds, when checked
     peaks: list[float] | None = None  # waveform outline (clip_peaks); None: unreadable
+    dropped: bool = False  # dropped in review: not used for training (excluded.json)
 
 
 @dataclass
@@ -120,6 +197,7 @@ class ClipPage:
     rows: list[ClipRow]
     # Over the whole dataset: {"aligner", "checked", "flagged", "flags": {flag: count}}, or None.
     checks: dict | None = None
+    dropped: int = 0  # clips dropped in review, in the whole dataset
 
 
 def row_key(audio: str, manifest_dir: Path) -> str:
@@ -203,20 +281,22 @@ def read_rows(
     offset: int = 0,
     limit: int = 50,
     query: str = "",
-    flagged: bool = False,
+    flag: str | None = None,
     worst_first: bool = False,
 ) -> ClipPage:
     """One page of a manifest's clips for review.
 
-    ``query`` matches text or file name, case-insensitively; ``flagged`` keeps
-    clips with a check flag; ``worst_first`` orders by alignment score
-    (unchecked clips last).
+    ``query`` matches text or file name, case-insensitively. ``flag`` keeps
+    clips with that check flag, "any" with any flag (both: not dropped), or
+    "dropped" the clips dropped in review. ``worst_first`` orders by alignment
+    score (unchecked clips last). Dropped clips don't count in the summary.
     """
     manifest_dir = path.resolve().parent
     entries = _entries_for_review(path, root)
     asr = read_sidecar(manifest_dir / ASR_FILE)
     aligned = read_sidecar(manifest_dir / ALIGN_FILE)
     checks = aligned.get("clips", {})
+    excluded = excluded_keys(manifest_dir)
 
     def check_of(key: str, text: str) -> dict | None:
         check = checks.get(key)
@@ -225,17 +305,24 @@ def read_rows(
     q = query.strip().lower()
     matches = []
     summary = {"checked": 0, "flagged": 0, "flags": {}}
+    dropped_count = 0
     for i, (audio, text) in enumerate(entries):
         key = row_key(audio, manifest_dir)
         check = check_of(key, text)
-        if check:
+        dropped = key in excluded
+        dropped_count += dropped
+        if check and not dropped:
             summary["checked"] += 1
             summary["flagged"] += bool(check["flags"])
             for f in check["flags"]:
                 summary["flags"][f] = summary["flags"].get(f, 0) + 1
         if q and q not in text.lower() and q not in Path(audio).name.lower():
             continue
-        if flagged and not (check and check["flags"]):
+        if flag == "dropped" and not dropped:
+            continue
+        if flag and flag != "dropped" and (dropped or not check or not check["flags"]):
+            continue
+        if flag not in (None, "any", "dropped") and flag not in check["flags"]:
             continue
         matches.append((i, audio, text, key, check))
     if worst_first:
@@ -252,11 +339,13 @@ def read_rows(
             flags=check["flags"] if check else [],
             speech=(check["start"], check["end"]) if check and "start" in check else None,
             peaks=clip_peaks(audio),
+            dropped=key in excluded,
         )
         for i, audio, text, key, check in matches[offset : offset + limit]
     ]
     has_checks = summary["checked"] > 0
-    return ClipPage(len(matches), rows, {"aligner": aligned.get("aligner"), **summary} if has_checks else None)
+    checks_summary = {"aligner": aligned.get("aligner"), **summary} if has_checks else None
+    return ClipPage(len(matches), rows, checks_summary, dropped_count)
 
 
 DETAIL_BINS = 800
@@ -267,6 +356,7 @@ class ClipDetail:
     row: ClipRow  # with a finer waveform (DETAIL_BINS slices)
     aligner: str | None  # that made `words`
     words: list[list]  # [text, start, end, confidence] from the check; [] when not checked
+    asr: dict | None = None  # what ASR heard (checks.compare_asr), when the check compared
 
 
 def clip_detail(path: Path, root: Path | None, index: int) -> ClipDetail:
@@ -291,8 +381,14 @@ def clip_detail(path: Path, root: Path | None, index: int) -> ClipDetail:
         flags=check["flags"] if check else [],
         speech=(check["start"], check["end"]) if check and "start" in check else None,
         peaks=clip_peaks(audio, DETAIL_BINS),
+        dropped=key in excluded_keys(manifest_dir),
     )
-    return ClipDetail(row, aligned.get("aligner") if check else None, check.get("words", []) if check else [])
+    return ClipDetail(
+        row,
+        aligned.get("aligner") if check else None,
+        check.get("words", []) if check else [],
+        check.get("asr") if check else None,
+    )
 
 
 def clip_audio(path: Path, root: Path | None, index: int) -> Path:
@@ -316,7 +412,8 @@ def split_holdout(entries: list[dict], count: int, seed: int = 0) -> tuple[list[
 
 @dataclass
 class DatasetReport:
-    samples: int = 0  # well-formed lines
+    samples: int = 0  # well-formed lines (dropped clips not counted)
+    dropped: int = 0  # clips dropped in review: not in training, nor in the numbers below
     valid: int = 0  # well-formed lines whose audio is readable
     total_seconds: float = 0.0
     min_seconds: float | None = None
@@ -335,8 +432,9 @@ def _capped(messages: list[str], total: int, what: str) -> list[str]:
 
 
 def inspect(path: Path, root: Path | None = None) -> DatasetReport:
-    entries, line_errors = read_manifest(path, root)
-    report = DatasetReport(samples=len(entries))
+    all_entries, line_errors = read_manifest(path, root)
+    entries, _ = training_entries(path, root)
+    report = DatasetReport(samples=len(entries), dropped=len(all_entries) - len(entries))
     durations: list[float] = []
     rates: Counter[int] = Counter()
     # Malformed lines are left out of a run's manifest copy, so they only warn;

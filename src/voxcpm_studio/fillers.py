@@ -9,9 +9,7 @@ laugh, 呵呵 a "he he", 嗯 and 嗯嗯 mean different things.
 
 from __future__ import annotations
 
-import json
 import re
-import shutil
 from pathlib import Path
 
 # Non-lexical syllables: laughs, hesitations, interjections.
@@ -32,27 +30,12 @@ def tidy(text: str) -> str:
 
 
 def tidy_manifest(path: Path) -> int:
-    """Tidy the ``text`` of every entry of a manifest in place, keeping all
-    else (paths, other keys) as written; the first time, the original is kept
-    as ``<name>.orig``. Returns the number of entries changed."""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    out, changed = [], 0
-    for line in lines:
-        try:
-            entry = json.loads(line) if line.strip() else None
-        except json.JSONDecodeError:
-            entry = None
-        if isinstance(entry, dict) and isinstance(entry.get("text"), str):
-            text = tidy(entry["text"])
-            if text != entry["text"]:
-                entry["text"], changed = text, changed + 1
-                line = json.dumps(entry, ensure_ascii=False)
-        out.append(line)
-    if changed:
-        backup = path.with_name(path.name + ".orig")
-        if not backup.exists():
-            shutil.copy2(path, backup)
-        tmp = path.with_name(f".{path.name}.tmp")
-        tmp.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
-        tmp.replace(path)
-    return changed
+    """Tidy the ``text`` of every entry of a manifest in place (see
+    manifests.rewrite_manifest). Returns the number of entries changed."""
+    from .manifests import rewrite_manifest
+
+    def change(entry: dict) -> dict | None:
+        text = tidy(entry["text"])
+        return {**entry, "text": text} if text != entry["text"] else None
+
+    return rewrite_manifest(path, change)

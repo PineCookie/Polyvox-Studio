@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { getDatasetClip } from '../api'
-import type { ClipDetail, DatasetSource } from '../api'
+import { getDatasetClip, setClipDropped, setClipText } from '../api'
+import type { ClipDetail, DatasetSource, Heard } from '../api'
 import { ALIGNER_LABEL } from '../format'
 import { Waveform } from './Waveform'
 
@@ -10,14 +10,46 @@ interface Props {
   // The player, while it plays this clip.
   audio: HTMLAudioElement | null
   onSeek: (seconds: number) => void
+  // After the text was edited or the clip dropped / restored.
+  onChanged?: () => void
 }
 
-/** A closer look at one clip: a larger waveform with each checked word where the aligner put it. */
-export function ClipView({ source, index, audio, onSeek }: Props) {
+/** A closer look at one clip: a larger waveform with each checked word where the aligner put it,
+ * what ASR heard, and (for a dataset, not a run's copy) editing its text or dropping it. */
+export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
   const sourceKey = JSON.stringify(source)
   const [clip, setClip] = useState<ClipDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [draft, setDraft] = useState<string | null>(null) // the text being edited
+  const [saving, setSaving] = useState(false)
   const track = useRef<HTMLDivElement>(null)
+  const datasetId = 'id' in source ? source.id : null // a run's copy is read-only
+
+  async function save(text: string) {
+    if (!datasetId) return
+    setSaving(true)
+    setError(null)
+    try {
+      setClip(await setClipText(datasetId, index, text))
+      setDraft(null)
+      onChanged?.()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function drop(dropped: boolean) {
+    if (!datasetId || !clip) return
+    try {
+      await setClipDropped(datasetId, index, dropped)
+      setClip({ ...clip, dropped })
+      onChanged?.()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -58,7 +90,7 @@ export function ClipView({ source, index, audio, onSeek }: Props) {
     }
   }, [audio, words])
 
-  if (error) return <p className="field-error">{error}</p>
+  if (!clip && error) return <p className="field-error">{error}</p>
   if (!clip) return <p className="muted hint">Loading…</p>
   if (!clip.peaks || clip.seconds === null) return <p className="muted hint">The audio file can't be read.</p>
   const seconds = clip.seconds
@@ -66,6 +98,39 @@ export function ClipView({ source, index, audio, onSeek }: Props) {
 
   return (
     <div className="clip-view">
+      {datasetId && (
+        <div className="clip-edit">
+          {draft === null ? (
+            <>
+              <p className="clip-edit-text">{clip.text}</p>
+              <button type="button" className="ghost small" onClick={() => setDraft(clip.text)}>
+                Edit
+              </button>
+              <button type="button" className="ghost small" onClick={() => drop(!clip.dropped)}>
+                {clip.dropped ? 'Restore' : 'Drop'}
+              </button>
+            </>
+          ) : (
+            <form
+              className="clip-edit-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                save(draft)
+              }}
+            >
+              <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Transcript" autoFocus />
+              <button type="submit" className="primary small" disabled={saving || !draft.trim()}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              <button type="button" className="ghost small" onClick={() => setDraft(null)} disabled={saving}>
+                Cancel
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+      {clip.dropped && <p className="muted hint">Dropped: left out of training runs started from now on.</p>}
+      {error && <p className="field-error">{error}</p>}
       <Waveform
         peaks={clip.peaks}
         seconds={seconds}
@@ -108,6 +173,39 @@ export function ClipView({ source, index, audio, onSeek }: Props) {
           'Not checked yet: check the dataset to see where each word is.'
         )}
       </p>
+      {clip.heard && <HeardLine heard={clip.heard} onUse={datasetId ? () => setDraft(clip.heard!.text) : undefined} />}
+    </div>
+  )
+}
+
+/** What ASR heard, with the stretches that differ from the transcript marked. */
+function HeardLine({ heard, onUse }: { heard: Heard; onUse?: () => void }) {
+  const same = heard.diff.every(([op]) => op === 'equal')
+  return (
+    <div className="heard">
+      <span className="muted">ASR heard:</span>{' '}
+      {heard.diff.map(([op, mine, theirs], i) =>
+        op === 'equal' ? (
+          <span key={i}>{theirs} </span>
+        ) : op === 'missing' ? (
+          <del key={i} title="In the transcript, not heard">
+            {mine}{' '}
+          </del>
+        ) : (
+          <ins key={i} className={op} title={op === 'extra' ? 'Heard, not in the transcript' : `Transcript: ${mine}`}>
+            {theirs}{' '}
+          </ins>
+        ),
+      )}
+      {same ? (
+        <span className="muted">(same as the transcript)</span>
+      ) : (
+        onUse && (
+          <button type="button" className="ghost small" onClick={onUse} title="Put ASR's text in the editor">
+            Use ASR text
+          </button>
+        )
+      )}
     </div>
   )
 }

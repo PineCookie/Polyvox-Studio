@@ -193,9 +193,22 @@ it to play from that point. Expanding a row (its length) shows a larger
 waveform with every word where the aligner placed it; words it is unsure of,
 usually not what was said, are marked in orange on both.
 
-Mostly not caught: a transcript that leaves out a few words. The aligner spreads
-the remaining words over the audio; comparing with ASR output (planned) will find
-those.
+A transcript that leaves out a few words is mostly not caught by alignment (the
+aligner spreads the remaining words over the audio). **Compare with ASR**, an
+option of Check clips, transcribes each clip again and flags **Missing words?**
+where ASR hears words the transcript lacks; the clip view shows what ASR heard,
+with the differences marked. Texts made by ASR are not compared with themselves.
+
+### Reviewing clips
+
+Filter the clips table by flag, worst match first, and open a clip:
+
+- **Edit** its transcript (or **Use ASR text**); saving checks that clip again.
+- **Drop** it: it stays in the table, dimmed, but training runs started from then
+  on leave it out (listed in `data/<name>/excluded.json`); **Restore** brings it
+  back. The manifest itself keeps every clip.
+
+In a filtered list, a fixed clip leaves the list and the next one opens.
 
 ## Sharing LoRAs
 
@@ -221,8 +234,7 @@ cd web; npm run lint            # ESLint + Prettier check; `npm run format` fixe
 
 ## Roadmap
 
-- Preprocessing: a per-clip audit table (ASR disagreement, speaker outliers,
-  edit / drop clips), loudness normalization, optional vocal separation.
+- Preprocessing: singing detection, speaker outliers, loudness normalization.
 - Training speed: batch size / token budget, cuDNN attention.
 - VoxCPM 1.5 as a second base model.
 - Streaming synthesis via `VoxCPM.generate_streaming`.

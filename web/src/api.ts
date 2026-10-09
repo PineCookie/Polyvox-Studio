@@ -128,6 +128,7 @@ export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
 export interface DatasetReport {
   id: string
   samples: number
+  dropped: number // dropped in review: not in training, nor in the numbers here
   valid: number
   total_seconds: number
   min_seconds: number | null
@@ -246,7 +247,7 @@ export type CleanupOption = 'separate' | 'dereverb' | 'denoise'
 // Forced aligners (src/voxcpm_studio/aligner.py).
 export type Aligner = 'qwen3' | 'ctc'
 
-export type CheckFlag = 'mismatch' | 'filler' | 'extra_speech' | 'cut_edge' | 'long_silence'
+export type CheckFlag = 'mismatch' | 'asr_more' | 'filler' | 'extra_speech' | 'cut_edge' | 'long_silence'
 
 // Alignment checks over a whole dataset (checks.summarize).
 export interface CheckSummary {
@@ -313,8 +314,8 @@ export async function tidyFillers(id: string): Promise<{ changed: number }> {
   return (await postJson('/api/datasets/tidy-fillers', { id })).json()
 }
 
-export async function checkDataset(id: string, aligner: Aligner): Promise<CheckJob> {
-  return (await postJson('/api/datasets/check', { id, aligner })).json()
+export async function checkDataset(id: string, aligner: Aligner, compareAsr: boolean): Promise<CheckJob> {
+  return (await postJson('/api/datasets/check', { id, aligner, compare_asr: compareAsr })).json()
 }
 
 export async function getJob<J extends Job>(id: string): Promise<J> {
@@ -335,6 +336,7 @@ export interface ClipRow {
   flags: CheckFlag[]
   speech: [number, number] | null // aligned words' span in seconds, when checked
   peaks: number[] | null // waveform outline: peak level 0..1 per equal slice
+  dropped: boolean // dropped in review: left out of training runs
 }
 
 export interface AlignedWord {
@@ -345,9 +347,29 @@ export interface AlignedWord {
   weak: boolean // unsure enough that it is likely not what was said
 }
 
+// What ASR heard, compared with the transcript (checks.compare_asr).
+export interface Heard {
+  text: string
+  extra: number // words ASR heard that the transcript lacks
+  missing: number
+  changed: number
+  diff: ['equal' | 'missing' | 'extra' | 'changed', string, string][] // (op, transcript part, ASR part)
+}
+
 export interface ClipDetail extends ClipRow {
   aligner: Aligner | null
   words: AlignedWord[] // empty when not checked (or checked before word timings were kept)
+  heard: Heard | null // when the check compared with ASR
+}
+
+/** Change a clip's transcript; it is checked again when the dataset has checks. */
+export async function setClipText(id: string, index: number, text: string): Promise<ClipDetail> {
+  return (await postJson('/api/dataset-clip/text', { id, index, text })).json()
+}
+
+/** Leave a clip out of training, or bring it back. */
+export async function setClipDropped(id: string, index: number, dropped: boolean): Promise<void> {
+  await postJson('/api/dataset-clip/drop', { id, index, dropped })
 }
 
 export async function getDatasetClip(source: DatasetSource, index: number): Promise<ClipDetail> {
@@ -358,6 +380,7 @@ export interface ClipPage {
   total: number // clips matching the search / filter
   rows: ClipRow[]
   checks: CheckSummary | null // over the whole dataset; null: never checked
+  dropped: number // clips dropped in review, whole dataset
 }
 
 // A dataset in the data dir, or the copy a training run trains on.
@@ -367,9 +390,12 @@ export async function getDatasetReport(source: DatasetSource): Promise<DatasetRe
   return (await request(`/api/dataset-report?${new URLSearchParams(source)}`)).json()
 }
 
+// '' = all clips, 'any' = any check flag, 'dropped', or one flag.
+export type FlagFilter = '' | 'any' | 'dropped' | CheckFlag
+
 export interface ClipFilter {
   query: string
-  flagged: boolean // only clips the alignment check flagged
+  flag: FlagFilter
   worstFirst: boolean // lowest alignment scores first
 }
 
@@ -384,7 +410,7 @@ export async function getDatasetRows(
     offset: String(offset),
     limit: String(limit),
     q: filter.query,
-    flagged: String(filter.flagged),
+    flag: filter.flag,
     order: filter.worstFirst ? 'worst' : 'file',
   })
   return (await request(`/api/dataset-rows?${q}`)).json()

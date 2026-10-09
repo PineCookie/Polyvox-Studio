@@ -10,6 +10,7 @@ export function DatasetSummary({ report, error }: { report: DatasetReport | null
       <p>
         <strong>{report.valid}</strong>
         {report.valid !== report.samples && <span className="muted"> of {report.samples}</span>} clips
+        {report.dropped > 0 && <span className="muted"> ({report.dropped} dropped, not counted)</span>}
         {report.valid > 0 && (
           <>
             {' · '}

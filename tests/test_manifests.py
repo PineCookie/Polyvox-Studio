@@ -133,7 +133,7 @@ def test_read_rows_shows_checks_for_the_text_they_were_made_for(data_dir):
         "flags": {"mismatch": 1, "cut_edge": 1, "long_silence": 1},
     }
 
-    flagged = manifests.read_rows(manifest, flagged=True)
+    flagged = manifests.read_rows(manifest, flag="any")
     assert flagged.total == 2 and [r.index for r in flagged.rows] == [1, 3]
     worst = manifests.read_rows(manifest, worst_first=True)
     assert [r.index for r in worst.rows] == [1, 3, 0, 2, 4]  # unchecked last
