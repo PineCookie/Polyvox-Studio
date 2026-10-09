@@ -29,6 +29,7 @@ const LANGUAGES: [string, string][] = [
 
 const PHASE_LABEL: Record<string, string> = {
   scanning: 'Scanning',
+  slicing: 'Slicing recordings',
   transcribing: 'Transcribing',
   copying: 'Copying audio',
 }
@@ -49,6 +50,9 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [transcribe, setTranscribe] = useState(true)
   const [language, setLanguage] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [slice, setSlice] = useState(true)
+  const [sliceMin, setSliceMin] = useState(2)
+  const [sliceMax, setSliceMax] = useState(15)
   const [scanning, setScanning] = useState(false)
   const [job, setJob] = useState<ImportJob | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -97,7 +101,21 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   async function runImport() {
     setError(null)
     try {
-      setJob(await importDataset({ source, audioDir, name, copyAudio, transcribe, language, prompt }))
+      // Slices are new files without text: they need copying and transcription.
+      setJob(
+        await importDataset({
+          source,
+          audioDir,
+          name,
+          copyAudio: copyAudio || willSlice,
+          transcribe: transcribe || willSlice,
+          language,
+          prompt,
+          slice: willSlice,
+          sliceMin,
+          sliceMax,
+        }),
+      )
     } catch (err) {
       setError((err as Error).message)
     }
@@ -119,9 +137,11 @@ export function ImportForm({ datasetNames, onImported }: Props) {
       : datasetNames.includes(name)
         ? 'A dataset with this name exists.'
         : null
-  const willTranscribe = !!preview && transcribe && preview.untranscribed > 0
+  const willSlice = !!preview && slice && preview.long_recordings > 0
+  const willTranscribe = !!preview && (willSlice || (transcribe && preview.untranscribed > 0))
   const importCount = preview ? preview.found + (willTranscribe ? preview.untranscribed : 0) : 0
   const withAudio = preview ? preview.found + preview.untranscribed : 0
+  const sliceRangeOk = sliceMin > 0 && sliceMax > sliceMin
 
   return (
     <section className="panel">
@@ -227,13 +247,60 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                 </table>
               )}
 
-              {preview.untranscribed > 0 && (
+              {preview.long_recordings > 0 && (
                 <fieldset className="field asr-options" disabled={running}>
                   <label className="check">
-                    <input type="checkbox" checked={transcribe} onChange={(e) => setTranscribe(e.target.checked)} />{' '}
-                    Transcribe the {preview.untranscribed} clips without text (Qwen3-ASR)
+                    <input type="checkbox" checked={slice} onChange={(e) => setSlice(e.target.checked)} /> Slice the{' '}
+                    {preview.long_recordings} long recordings into clips at pauses
                   </label>
-                  {transcribe && (
+                  {slice ? (
+                    <>
+                      <div className="inline-field">
+                        <span className="muted hint">Clips from</span>
+                        <input
+                          type="number"
+                          min={0.5}
+                          step={0.5}
+                          value={sliceMin}
+                          onChange={(e) => setSliceMin(e.target.valueAsNumber)}
+                          aria-label="Minimum clip length (seconds)"
+                        />
+                        <span className="muted hint">to</span>
+                        <input
+                          type="number"
+                          min={3}
+                          step={1}
+                          value={sliceMax}
+                          onChange={(e) => setSliceMax(e.target.valueAsNumber)}
+                          aria-label="Maximum clip length (seconds)"
+                        />
+                        <span className="muted hint">seconds</span>
+                        {!sliceRangeOk && <span className="field-error">min must be below max</span>}
+                      </div>
+                      <p className="muted hint">
+                        Clips are transcribed with ASR; any transcript of a whole recording is not kept.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="muted hint">Long recordings are imported as they are (too long to train well).</p>
+                  )}
+                </fieldset>
+              )}
+
+              {(preview.untranscribed > 0 || willSlice) && (
+                <fieldset className="field asr-options" disabled={running}>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={transcribe || willSlice}
+                      disabled={willSlice}
+                      onChange={(e) => setTranscribe(e.target.checked)}
+                    />{' '}
+                    {willSlice
+                      ? 'Transcribe the slices and clips without text (Qwen3-ASR)'
+                      : `Transcribe the ${preview.untranscribed} clips without text (Qwen3-ASR)`}
+                  </label>
+                  {(transcribe || willSlice) && (
                     <div className="form-grid">
                       <label className="field">
                         <span>Language</span>
@@ -257,7 +324,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                       </label>
                     </div>
                   )}
-                  {!transcribe && <p className="muted hint">Those clips will be left out.</p>}
+                  {!transcribe && !willSlice && <p className="muted hint">Those clips will be left out.</p>}
                 </fieldset>
               )}
 
@@ -270,9 +337,9 @@ export function ImportForm({ datasetNames, onImported }: Props) {
               <label className="check">
                 <input
                   type="checkbox"
-                  checked={copyAudio}
+                  checked={copyAudio || willSlice}
                   onChange={(e) => setCopyAudio(e.target.checked)}
-                  disabled={running}
+                  disabled={running || willSlice}
                 />{' '}
                 Copy audio into <code>data/{name || '…'}/wavs</code> (self-contained; otherwise the files stay where
                 they are)
@@ -307,9 +374,9 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                   type="button"
                   className="primary"
                   onClick={runImport}
-                  disabled={!!nameError || running || importCount === 0}
+                  disabled={!!nameError || running || (importCount === 0 && !willSlice) || (willSlice && !sliceRangeOk)}
                 >
-                  {running ? 'Importing…' : `Import ${importCount} clips`}
+                  {running ? 'Importing…' : willSlice ? 'Slice and import' : `Import ${importCount} clips`}
                 </button>
               </div>
             </>

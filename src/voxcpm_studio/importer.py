@@ -12,8 +12,9 @@ one is looked up as written, then relative to the list (and its ``wavs/``
 folder), then by file name inside an optional audio folder. Rows whose audio
 cannot be found are skipped: lists shared by other people often come without it.
 
-Clips that have audio but no transcript can be transcribed with ASR during the
-import; those are listed in ``<name>/asr.json`` for later review.
+Long recordings can be sliced into clips at pauses (slicer.py), and clips that
+have audio but no transcript can be transcribed with ASR during the import;
+ASR-made texts are listed in ``<name>/asr.json`` for later review.
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ from typing import Callable
 
 import soundfile as sf
 
+from . import slicer
 from .manifests import legacy_root, write_manifest
+from .slicer import SliceOptions, Vad
 
 AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a"}
 TRANSCRIPT_EXTENSIONS = (".lab", ".txt")
@@ -39,6 +42,7 @@ ASR_FILE = "asr.json"
 EXAMPLES = 5
 MISSING_EXAMPLES = 2  # sliced file names are long
 TRANSCRIBE_CHUNK = 32  # clips per ASR call; progress and cancel granularity
+LONG_RECORDING_S = 20.0  # longer audio counts as a recording to slice, not a clip
 
 # Audio files -> (text, detected language) per file.
 Transcriber = Callable[[list[Path]], list[tuple[str, str | None]]]
@@ -51,6 +55,7 @@ class Row:
     ref: str  # audio path or file name as written in the source
     text: str  # empty when the source has no transcript for it
     audio: Path | None = None  # resolved file
+    seconds: float = 0.0
 
 
 @dataclass
@@ -63,6 +68,7 @@ class ImportPreview:
     missing: int = 0  # no audio
     duplicates: int = 0
     unreadable: int = 0
+    long_recordings: int = 0  # longer than a training clip should be: slice them
     total_seconds: float = 0.0  # of found + untranscribed clips
     median_seconds: float | None = None
     sample_rates: dict[int, int] = field(default_factory=dict)
@@ -76,6 +82,7 @@ class ImportResult:
     id: str
     imported: int
     transcribed: int  # of `imported`, texts made by ASR
+    sliced: int  # long recordings cut into clips
     preview: ImportPreview
 
 
@@ -192,9 +199,11 @@ def _scan(source: Path, audio_dir: Path | None, data_dir: Path) -> tuple[ImportP
             preview.unreadable += 1
             continue
         seen.add(row.audio)
+        row.seconds = info.duration
         keep.append(row)
         durations.append(info.duration)
         rates[info.samplerate] += 1
+        preview.long_recordings += info.duration > LONG_RECORDING_S
         if row.text:
             preview.found += 1
             if len(preview.examples) < EXAMPLES:
@@ -248,6 +257,25 @@ def _transcribe(rows: list[Row], transcriber: Transcriber, progress: Progress) -
     return languages
 
 
+def _slice(rows: list[Row], out_dir: Path, opts: SliceOptions, vad: Vad, progress: Progress) -> tuple[list[Row], int]:
+    """Replace recordings longer than LONG_RECORDING_S by their clips (without
+    text: a recording's transcript cannot be split without alignment).
+    Returns the new rows and the number of recordings sliced."""
+    long_rows = [row for row in rows if row.seconds > LONG_RECORDING_S]
+    out: list[Row] = []
+    done = 0
+    for row in rows:
+        if row.seconds <= LONG_RECORDING_S:
+            out.append(row)
+            continue
+        progress("slicing", done, len(long_rows))
+        for clip in slicer.slice_recording(row.audio, out_dir / f"{done:05d}", opts, vad):
+            out.append(Row(ref=str(clip), text="", audio=clip, seconds=sf.info(str(clip)).duration))
+        done += 1
+    progress("slicing", done, len(long_rows))
+    return out, done
+
+
 def import_dataset(
     source: str,
     audio_dir: str | None,
@@ -256,38 +284,52 @@ def import_dataset(
     copy: bool = True,
     transcriber: Transcriber | None = None,
     progress: Progress | None = None,
+    slicing: SliceOptions | None = None,
+    vad: Vad = slicer.silero_vad,
 ) -> ImportResult:
     """Write ``data_dir/<name>/train.jsonl``.
 
     With ``copy``, audio goes to ``<name>/wavs/`` and the manifest uses relative
     paths, so the folder is self-contained; otherwise it references the files.
-    With a ``transcriber``, clips without a transcript get one from ASR;
-    otherwise they are left out. ``progress`` may raise to cancel; nothing is
-    left behind then.
+    With ``slicing``, recordings longer than LONG_RECORDING_S are cut into clips
+    at pauses (needs ``copy`` and a ``transcriber``: the clips are new files
+    without text). With a ``transcriber``, clips without a transcript get one
+    from ASR; otherwise they are left out. ``progress`` may raise to cancel;
+    nothing is left behind then.
     """
     progress = progress or (lambda phase, done, total: None)
+    if slicing and not (copy and transcriber):
+        raise ValueError("Slicing writes new clips without text: it needs copying and transcription.")
     check_name(name, data_dir)
     data_dir = data_dir.resolve()
     target = data_dir / name
 
     progress("scanning", 0, 0)
     preview, rows = _scan(clean_path(source), clean_path(audio_dir) if audio_dir else None, data_dir)
-    languages = _transcribe(rows, transcriber, progress) if transcriber else {}
-    rows_kept = [(i, row) for i, row in enumerate(rows) if row.text]
-    if not rows_kept:
-        raise ValueError("No clips with both audio and a transcript; nothing to import.")
 
     # Build next to the target and rename, so a failure leaves nothing half-written.
     staging = data_dir / f".import-{name}"
     shutil.rmtree(staging, ignore_errors=True)
     try:
+        sliced = 0
+        if slicing:
+            rows, sliced = _slice(rows, staging / "_slices", slicing, vad, progress)
+        languages = _transcribe(rows, transcriber, progress) if transcriber else {}
+        rows_kept = [(i, row) for i, row in enumerate(rows) if row.text]
+        if not rows_kept:
+            raise ValueError("No clips with both audio and a transcript; nothing to import.")
+
         if copy:
-            (staging / "wavs").mkdir(parents=True)
+            (staging / "wavs").mkdir(parents=True, exist_ok=True)
             files = _unique_names([row.audio for _, row in rows_kept])
             for n, ((_, row), file) in enumerate(zip(rows_kept, files)):
                 if n % 50 == 0:
                     progress("copying", n, len(rows_kept))
-                shutil.copy2(row.audio, staging / "wavs" / file)
+                if row.audio.is_relative_to(staging):
+                    row.audio.replace(staging / "wavs" / file)  # a fresh slice: move, don't copy
+                else:
+                    shutil.copy2(row.audio, staging / "wavs" / file)
+            shutil.rmtree(staging / "_slices", ignore_errors=True)
             paths = [f"wavs/{file}" for file in files]
         else:
             paths = [str(row.audio) for _, row in rows_kept]
@@ -299,4 +341,6 @@ def import_dataset(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    return ImportResult(id=f"{name}/train.jsonl", imported=len(rows_kept), transcribed=len(asr_rows), preview=preview)
+    return ImportResult(
+        id=f"{name}/train.jsonl", imported=len(rows_kept), transcribed=len(asr_rows), sliced=sliced, preview=preview
+    )

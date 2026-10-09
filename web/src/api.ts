@@ -210,6 +210,7 @@ export interface ImportPreview {
   missing: number
   duplicates: number
   unreadable: number
+  long_recordings: number // too long for a training clip: slice them
   total_seconds: number
   median_seconds: number | null
   sample_rates: Record<string, number>
@@ -242,9 +243,12 @@ export interface ImportOptions {
   transcribe: boolean
   language: string // '' = detect per clip
   prompt: string // names / terms for ASR
+  slice: boolean // cut long recordings into clips at pauses
+  sliceMin: number
+  sliceMax: number
 }
 
-export type ImportJob = Job<{ id: string; imported: number; transcribed: number }>
+export type ImportJob = Job<{ id: string; imported: number; transcribed: number; sliced: number }>
 
 export async function importDataset(o: ImportOptions): Promise<ImportJob> {
   const body = {
@@ -255,6 +259,9 @@ export async function importDataset(o: ImportOptions): Promise<ImportJob> {
     transcribe: o.transcribe,
     language: o.language || null,
     prompt: o.prompt.trim() || null,
+    slice: o.slice,
+    slice_min_seconds: o.sliceMin,
+    slice_max_seconds: o.sliceMax,
   }
   return (await postJson('/api/datasets/import', body)).json()
 }

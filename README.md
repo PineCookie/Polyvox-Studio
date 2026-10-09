@@ -21,6 +21,7 @@ src/voxcpm_studio/
   inference.py     model cache, LoRA hot-swap, synthesis
   manifests.py     training manifests: discovery, path fixes, inspection
   importer.py      dataset import from GPT-SoVITS lists, CSV, JSONL, folders
+  slicer.py        long recordings -> clips at pauses (Silero VAD)
   asr.py           speech recognition (Qwen3-ASR, transformers-native)
   jobs.py          in-process background jobs with progress and cancel
   training.py      training runs: config, job control, metrics
@@ -106,8 +107,13 @@ before anything is written; rows without audio are skipped. The import writes
 `data/<name>/train.jsonl` with paths relative to it and, by default, copies the
 audio into `data/<name>/wavs/` so the folder is self-contained.
 
-Clips that have audio but no transcript (a folder of bare recordings, or empty
-text in a list) can be transcribed with Qwen3-ASR during the import, optionally
+Long recordings (over 20 s) can be sliced into clips during the import: voice
+activity detection (Silero VAD) finds the speech, and cuts are chosen at the
+longest pauses so clips stay within a length range (2-15 s by default) and end
+between sentences rather than mid-word.
+
+Clips that have audio but no transcript (a folder of bare recordings, slices,
+or empty text in a list) can be transcribed with Qwen3-ASR during the import, optionally
 with a fixed language and names / terms to spell right. Imports run in the
 background with progress and can be cancelled. Transcribed clips are listed in
 `data/<name>/asr.json` so they can be reviewed.
@@ -132,8 +138,8 @@ cd web; npm run dev             # UI on :5173, proxies /api to :8808
 
 ## Roadmap
 
-- Preprocessing pipeline: VAD slicing, forced alignment (Qwen3-ForcedAligner), a
-  per-clip audit table, loudness normalization, optional vocal separation.
+- Preprocessing: forced alignment (Qwen3-ForcedAligner), a per-clip audit table,
+  loudness normalization, optional vocal separation.
 - Training speed: batch size / token budget, cuDNN attention.
 - VoxCPM 1.5 as a second base model.
 - Streaming synthesis via `VoxCPM.generate_streaming`.

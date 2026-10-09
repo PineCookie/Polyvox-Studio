@@ -1137,6 +1137,12 @@ input[type='search']:focus {
   margin: 0;
 }
 
+/* The box is surface-2 already; inputs need contrast to read as fields. */
+.asr-options input:not([type='checkbox']),
+.asr-options select {
+  background: var(--surface);
+}
+
 .job-progress {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

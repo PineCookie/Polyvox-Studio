@@ -213,7 +213,7 @@ def test_import_job_endpoints(service, training, asr_service, data_dir, tmp_path
     assert resp.status_code == 202 and resp.json()["kind"] == "import"
     job = wait_job(client, resp.json()["id"])
     assert job["state"] == "done", job
-    assert job["result"] == {"id": "speaker_a/train.jsonl", "imported": 3, "transcribed": 1}
+    assert job["result"] == {"id": "speaker_a/train.jsonl", "imported": 3, "transcribed": 1, "sliced": 0}
     first = json.loads((data_dir / "speaker_a" / "train.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert first["text"] == "clip of 16000 samples"  # the fake ASR; 1 s at 16 kHz
     assert asr_service._processor.requests[-1]["language"] == "en"
@@ -226,6 +226,8 @@ def test_import_job_endpoints(service, training, asr_service, data_dir, tmp_path
     assert client.post("/api/datasets/import", json={"source": str(tmp_path / "x.mp4"), "name": "x"}).status_code == 422
     assert client.post("/api/datasets/import/preview", json={"source": str(tmp_path / "x.mp4")}).status_code == 422
     assert client.get("/api/jobs/nope").status_code == 404
+    no_asr = {"source": str(lst), "name": "other", "slice": True, "transcribe": False}
+    assert client.post("/api/datasets/import", json=no_asr).status_code == 422
 
 
 def test_transcribing_import_refused_while_training_shares_the_gpu(

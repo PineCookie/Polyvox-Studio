@@ -23,6 +23,7 @@ from .asr import AsrService, load_audio
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .jobs import Job, JobRunner
+from .slicer import SliceOptions
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -75,6 +76,10 @@ class ImportIn(ImportSourceIn):
     transcribe: bool = False
     language: str | None = None  # e.g. "zh"; None = detect per clip
     prompt: str | None = None  # names / terms the recognizer should prefer
+    # Cut long recordings into clips at pauses (needs copy_audio and transcribe).
+    slice: bool = False
+    slice_min_seconds: float = Field(2.0, ge=0.5, le=30)
+    slice_max_seconds: float = Field(15.0, ge=3, le=60)
 
 
 class ImportPreviewOut(BaseModel):
@@ -86,6 +91,7 @@ class ImportPreviewOut(BaseModel):
     missing: int
     duplicates: int
     unreadable: int
+    long_recordings: int
     total_seconds: float
     median_seconds: float | None
     sample_rates: dict[int, int]
@@ -270,9 +276,13 @@ def create_app(
     @app.post("/api/datasets/import", status_code=202)
     def import_dataset(body: ImportIn) -> JobOut:
         """Start an import job; poll /api/jobs/{id}. The job's result is
-        {"id", "imported", "transcribed"}."""
+        {"id", "imported", "transcribed", "sliced"}."""
         # Fail fast on what can be checked now.
         try:
+            if body.slice and not (body.copy_audio and body.transcribe):
+                raise ValueError("Slicing makes new clips without text: it needs copying and transcription.")
+            if body.slice and body.slice_min_seconds >= body.slice_max_seconds:
+                raise ValueError("The minimum clip length must be below the maximum.")
             importer.check_name(body.name, settings.data_dir)
             importer.detect(importer.clean_path(body.source))
         except FileExistsError as e:
@@ -302,8 +312,22 @@ def create_app(
                 copy=body.copy_audio,
                 transcriber=transcriber if body.transcribe else None,
                 progress=job.progress,
+                slicing=(
+                    SliceOptions(
+                        min_seconds=body.slice_min_seconds,
+                        max_seconds=body.slice_max_seconds,
+                        target_seconds=(body.slice_min_seconds + body.slice_max_seconds) / 2,
+                    )
+                    if body.slice
+                    else None
+                ),
             )
-            return {"id": result.id, "imported": result.imported, "transcribed": result.transcribed}
+            return {
+                "id": result.id,
+                "imported": result.imported,
+                "transcribed": result.transcribed,
+                "sliced": result.sliced,
+            }
 
         return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
 

@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "pyyaml",
     "soundfile",
+    "silero-vad>=6.2.3",
 ]
 
 [project.scripts]
