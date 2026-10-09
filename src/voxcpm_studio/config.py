@@ -32,8 +32,12 @@ class Settings:
     train_gpu: int | None = None
     # Speech recognition (transformers-native Qwen3-ASR): local dir or Hugging Face id.
     asr_model: str = "Qwen/Qwen3-ASR-1.7B-hf"
-    # "auto" = the inference device.
+    # "auto" = the inference device; forced aligners run there too.
     asr_device: str = "auto"
+    # Forced aligners (aligner.py): Qwen3-ForcedAligner, and a wav2vec2 CTC model
+    # with a character vocabulary for the transcripts' language.
+    align_model: str = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
+    ctc_align_model: str = "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -49,4 +53,6 @@ class Settings:
             train_gpu=int(train_gpu) if train_gpu else None,
             asr_model=_env("ASR_MODEL", cls.asr_model),
             asr_device=_env("ASR_DEVICE", cls.asr_device),
+            align_model=_env("ALIGN_MODEL", cls.align_model),
+            ctc_align_model=_env("CTC_ALIGN_MODEL", cls.ctc_align_model),
         )

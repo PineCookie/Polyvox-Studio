@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { cancelJob, getJob, importDataset, previewImport } from '../api'
-import type { ImportJob, ImportPreview } from '../api'
-import { formatDuration, formatRates } from '../format'
-import { ProgressBar } from './RunList'
+import { importDataset, previewImport } from '../api'
+import type { Aligner, ImportJob, ImportPreview } from '../api'
+import { ALIGNER_LABEL, formatDuration, formatRates } from '../format'
+import { useJob } from '../useJob'
+import { JobProgress } from './JobProgress'
 
 interface Props {
   datasetNames: string[]
@@ -27,15 +28,6 @@ const LANGUAGES: [string, string][] = [
   ['ko', 'Korean'],
 ]
 
-const PHASE_LABEL: Record<string, string> = {
-  scanning: 'Scanning',
-  slicing: 'Slicing recordings',
-  transcribing: 'Transcribing',
-  copying: 'Copying audio',
-}
-
-const JOB_POLL_MS = 700
-
 // Matches importer.DATASET_NAME.
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 
@@ -53,32 +45,17 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [slice, setSlice] = useState(true)
   const [sliceMin, setSliceMin] = useState(2)
   const [sliceMax, setSliceMax] = useState(15)
+  const [check, setCheck] = useState(true)
+  const [aligner, setAligner] = useState<Aligner>('qwen3')
+  const [trim, setTrim] = useState(true)
   const [scanning, setScanning] = useState(false)
-  const [job, setJob] = useState<ImportJob | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  const running = job?.state === 'running'
-  const onImportedRef = useRef(onImported)
-  useEffect(() => {
-    onImportedRef.current = onImported
+  const [job, setJob] = useJob<ImportJob>((j) => {
+    if (j.state === 'done') onImported(j.result)
+    else if (j.state === 'failed') setError(j.error ?? 'Import failed.')
   })
 
-  // Follow the import job until it ends.
-  useEffect(() => {
-    if (!job || job.state !== 'running') return
-    const timer = setTimeout(async () => {
-      try {
-        const next = await getJob<ImportJob>(job.id)
-        setJob(next)
-        if (next.state === 'done') onImportedRef.current(next.result)
-        else if (next.state === 'failed') setError(next.error ?? 'Import failed.')
-      } catch (e) {
-        setError((e as Error).message)
-        setJob(null)
-      }
-    }, JOB_POLL_MS)
-    return () => clearTimeout(timer)
-  }, [job])
+  const running = job?.state === 'running'
 
   async function scan(e: FormEvent) {
     e.preventDefault()
@@ -114,6 +91,10 @@ export function ImportForm({ datasetNames, onImported }: Props) {
           slice: willSlice,
           sliceMin,
           sliceMax,
+          check,
+          aligner,
+          // Trimming rewrites the copies; files imported in place stay as they are.
+          trim: check && trim && (copyAudio || willSlice),
         }),
       )
     } catch (err) {
@@ -328,6 +309,44 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                 </fieldset>
               )}
 
+              <fieldset className="field asr-options" disabled={running}>
+                <label className="check">
+                  <input type="checkbox" checked={check} onChange={(e) => setCheck(e.target.checked)} /> Check each clip
+                  against its text (forced alignment)
+                </label>
+                {check && (
+                  <>
+                    <div className="inline-field">
+                      <span className="muted hint">Aligner</span>
+                      <select
+                        value={aligner}
+                        onChange={(e) => setAligner(e.target.value as Aligner)}
+                        aria-label="Aligner"
+                      >
+                        {(Object.keys(ALIGNER_LABEL) as Aligner[]).map((a) => (
+                          <option key={a} value={a}>
+                            {ALIGNER_LABEL[a]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={trim && (copyAudio || willSlice)}
+                        disabled={!(copyAudio || willSlice)}
+                        onChange={(e) => setTrim(e.target.checked)}
+                      />{' '}
+                      Trim long silence at the clip edges (keeps 0.15 s; never cuts into speech)
+                    </label>
+                    <p className="muted hint">
+                      Flags clips whose text does not match, with untranscribed speech, cut at the edge or with long
+                      silence, for review after the import.
+                    </p>
+                  </>
+                )}
+              </fieldset>
+
               <label className="field">
                 <span>Dataset name {nameError && !running && <span className="field-error">{nameError}</span>}</span>
                 <input value={name} onChange={(e) => setName(e.target.value)} disabled={running} />
@@ -343,29 +362,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                 they are)
               </label>
 
-              {job && job.state !== 'done' ? (
-                <div className="job-progress">
-                  {job.state === 'running' ? (
-                    <>
-                      <span>
-                        {PHASE_LABEL[job.phase] ?? 'Starting'}
-                        {job.total > 0 && (
-                          <span className="muted">
-                            {' '}
-                            {job.done} / {job.total}
-                          </span>
-                        )}
-                      </span>
-                      <ProgressBar value={job.done} max={job.total || 1} />
-                      <button type="button" className="ghost small" onClick={() => cancelJob(job.id)}>
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <span className="muted">{job.state === 'cancelled' ? 'Import cancelled.' : 'Import failed.'}</span>
-                  )}
-                </div>
-              ) : null}
+              {job && <JobProgress job={job} what="Import" />}
 
               <div className="actions">
                 <button

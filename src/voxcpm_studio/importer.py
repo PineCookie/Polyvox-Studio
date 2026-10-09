@@ -14,7 +14,9 @@ cannot be found are skipped: lists shared by other people often come without it.
 
 Long recordings can be sliced into clips at pauses (slicer.py), and clips that
 have audio but no transcript can be transcribed with ASR during the import;
-ASR-made texts are listed in ``<name>/asr.json`` for later review.
+ASR-made texts are listed in ``<name>/asr.json`` for later review. Finally each
+clip can be checked against its text by forced alignment (checks.py), and its
+silent edges trimmed while it is copied.
 """
 
 from __future__ import annotations
@@ -30,7 +32,8 @@ from pathlib import Path, PureWindowsPath
 
 import soundfile as sf
 
-from . import slicer
+from . import checks, slicer
+from .checks import Checker, ClipCheck
 from .manifests import ASR_FILE, legacy_root, write_manifest
 from .slicer import SliceOptions, Vad
 
@@ -83,6 +86,8 @@ class ImportResult:
     transcribed: int  # of `imported`, texts made by ASR
     sliced: int  # long recordings cut into clips
     preview: ImportPreview
+    trimmed: int = 0  # clips whose silent edges were cut
+    checks: dict | None = None  # checks.summarize() of the alignment checks
 
 
 def clean_path(value: str) -> Path:
@@ -277,6 +282,24 @@ def _slice(rows: list[Row], out_dir: Path, opts: SliceOptions, vad: Vad, progres
     return out, done
 
 
+def _check(rows: list[Row], checker: Checker, progress: Progress) -> list[ClipCheck]:
+    """Alignment checks of rows (all with text), in order."""
+    from .asr import load_audio
+
+    out: list[ClipCheck] = []
+    for start in range(0, len(rows), checks.CHECK_CHUNK):
+        progress("aligning", start, len(rows))
+        chunk = rows[start : start + checks.CHECK_CHUNK]
+        out += checker([load_audio(row.audio) for row in chunk], [row.text for row in chunk])
+    progress("aligning", len(rows), len(rows))
+    return out
+
+
+def _write_trimmed(source: Path, target: Path, start: float, end: float) -> None:
+    audio, rate = slicer._read_native(source)
+    sf.write(target, audio[int(start * rate) : int(end * rate)], rate, subtype="PCM_16")
+
+
 def import_dataset(
     source: str,
     audio_dir: str | None,
@@ -287,6 +310,9 @@ def import_dataset(
     progress: Progress | None = None,
     slicing: SliceOptions | None = None,
     vad: Vad = slicer.silero_vad,
+    checker: Checker | None = None,
+    aligner: str = "qwen3",
+    trim: bool = False,
 ) -> ImportResult:
     """Write ``data_dir/<name>/train.jsonl``.
 
@@ -295,12 +321,17 @@ def import_dataset(
     With ``slicing``, recordings longer than LONG_RECORDING_S are cut into clips
     at pauses (needs ``copy`` and a ``transcriber``: the clips are new files
     without text). With a ``transcriber``, clips without a transcript get one
-    from ASR; otherwise they are left out. ``progress`` may raise to cancel;
-    nothing is left behind then.
+    from ASR; otherwise they are left out. With a ``checker`` (made for the
+    ``aligner`` named), every clip is checked against its text and the results
+    saved as align.json; ``trim`` then cuts long silent edges from the copies
+    (needs ``copy``; trimmed clips are written as PCM16 WAV). ``progress`` may
+    raise to cancel; nothing is left behind then.
     """
     progress = progress or (lambda phase, done, total: None)
     if slicing and not (copy and transcriber):
         raise ValueError("Slicing writes new clips without text: it needs copying and transcription.")
+    if trim and not (copy and checker):
+        raise ValueError("Trimming rewrites the copied clips at their checked edges: it needs copying and checking.")
     check_name(name, data_dir)
     data_dir = data_dir.resolve()
     target = data_dir / name
@@ -319,14 +350,24 @@ def import_dataset(
         rows_kept = [(i, row) for i, row in enumerate(rows) if row.text]
         if not rows_kept:
             raise ValueError("No clips with both audio and a transcript; nothing to import.")
+        clip_checks = _check([row for _, row in rows_kept], checker, progress) if checker else []
+        # (start, end) to keep per clip, for those worth trimming.
+        cuts = [c.trim_range() for c in clip_checks] if trim else [None] * len(rows_kept)
 
         if copy:
             (staging / "wavs").mkdir(parents=True, exist_ok=True)
-            files = _unique_names([row.audio for _, row in rows_kept])
-            for n, ((_, row), file) in enumerate(zip(rows_kept, files, strict=True)):
+            # Trimmed clips are rewritten as WAV, whatever the source format.
+            names = [
+                r.audio.with_suffix(".wav") if cut else r.audio for (_, r), cut in zip(rows_kept, cuts, strict=True)
+            ]
+            files = _unique_names(names)
+            for n, ((_, row), file, cut) in enumerate(zip(rows_kept, files, cuts, strict=True)):
                 if n % 50 == 0:
                     progress("copying", n, len(rows_kept))
-                if row.audio.is_relative_to(staging):
+                if cut:
+                    _write_trimmed(row.audio, staging / "wavs" / file, *cut)
+                    clip_checks[n] = clip_checks[n].trimmed(*cut)
+                elif row.audio.is_relative_to(staging):
                     row.audio.replace(staging / "wavs" / file)  # a fresh slice: move, don't copy
                 else:
                     shutil.copy2(row.audio, staging / "wavs" / file)
@@ -339,10 +380,22 @@ def import_dataset(
         asr_rows = {p: {"language": languages[i]} for p, (i, _) in pairs if i in languages}
         if asr_rows:
             (staging / ASR_FILE).write_text(json.dumps(asr_rows, ensure_ascii=False, indent=1), encoding="utf-8")
+        if clip_checks:
+            checks.write_checks(
+                staging,
+                aligner,
+                {p: (row.text, c) for (p, (_, row)), c in zip(pairs, clip_checks, strict=True)},
+            )
         staging.rename(target)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
     return ImportResult(
-        id=f"{name}/train.jsonl", imported=len(rows_kept), transcribed=len(asr_rows), sliced=sliced, preview=preview
+        id=f"{name}/train.jsonl",
+        imported=len(rows_kept),
+        transcribed=len(asr_rows),
+        sliced=sliced,
+        preview=preview,
+        trimmed=sum(cut is not None for cut in cuts),
+        checks=checks.summarize(clip_checks) if clip_checks else None,
     )

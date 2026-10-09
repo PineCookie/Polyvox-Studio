@@ -13,6 +13,7 @@ from safetensors.torch import save_file
 from torch import nn
 from voxcpm.modules.layers.lora import apply_lora_to_named_linear_modules
 
+from voxcpm_studio.aligner import Alignment, AlignService, Word
 from voxcpm_studio.asr import AsrService
 from voxcpm_studio.config import Settings
 from voxcpm_studio.inference import InferenceService
@@ -145,6 +146,41 @@ class FakeAsrLoader:
         return processor, FakeAsrModel(processor)
 
 
+class FakeAligner:
+    """Spreads the words evenly over the clip's non-silent part; a word "错"
+    ("wrong") anywhere makes the score low, as a mismatched text would."""
+
+    def __init__(self, kind):
+        self.kind = kind
+        self.calls = []
+
+    def align(self, audios, words):
+        self.calls.append(len(audios))
+        out = []
+        for audio, ws in zip(audios, words, strict=True):
+            loud = np.nonzero(np.abs(audio) > 0.01)[0]
+            lo, hi = (loud[0], loud[-1] + 1) if len(loud) else (0, len(audio))
+            step = (hi - lo) / len(ws) / 16000
+            out.append(
+                Alignment(
+                    [Word(w, lo / 16000 + k * step, lo / 16000 + (k + 1) * step, 0.9) for k, w in enumerate(ws)],
+                    0.1 if "错" in ws else 0.9,
+                )
+            )
+        return out
+
+
+class FakeAlignLoader:
+    def __init__(self):
+        self.loaded: list[str] = []
+        self.backends: list[FakeAligner] = []
+
+    def __call__(self, kind, model, device):
+        self.loaded.append(kind)
+        self.backends.append(FakeAligner(kind))
+        return self.backends[-1]
+
+
 class FakeLoader:
     def __init__(self):
         self.models: list[FakeModel] = []
@@ -227,6 +263,16 @@ def asr_loader():
 @pytest.fixture
 def asr_service(settings, asr_loader):
     return AsrService(settings, loader=asr_loader)
+
+
+@pytest.fixture
+def align_loader():
+    return FakeAlignLoader()
+
+
+@pytest.fixture
+def align_service(settings, align_loader):
+    return AlignService(settings, loader=align_loader)
 
 
 @pytest.fixture

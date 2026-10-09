@@ -28,6 +28,7 @@ export interface Status {
   model_id: string | null
   loaded: boolean
   asr_loaded: boolean
+  aligner_loaded: boolean
   lora_rank: number | null
   active_lora: string | null
 }
@@ -224,7 +225,7 @@ export async function previewImport(source: string, audioDir: string): Promise<I
   return (await postJson('/api/datasets/import/preview', { source, audio_dir: audioDir || null })).json()
 }
 
-export interface Job<R = Record<string, unknown>> {
+export interface Job<R = unknown> {
   id: string
   kind: string
   title: string
@@ -234,6 +235,19 @@ export interface Job<R = Record<string, unknown>> {
   total: number
   error: string | null
   result: R
+}
+
+// Forced aligners (src/voxcpm_studio/aligner.py).
+export type Aligner = 'qwen3' | 'ctc'
+
+export type CheckFlag = 'mismatch' | 'extra_speech' | 'cut_edge' | 'long_silence'
+
+// Alignment checks over a whole dataset (checks.summarize).
+export interface CheckSummary {
+  aligner: Aligner | null
+  checked: number
+  flagged: number
+  flags: Partial<Record<CheckFlag, number>>
 }
 
 export interface ImportOptions {
@@ -247,9 +261,19 @@ export interface ImportOptions {
   slice: boolean // cut long recordings into clips at pauses
   sliceMin: number
   sliceMax: number
+  check: boolean // check each clip against its text by forced alignment
+  aligner: Aligner
+  trim: boolean // cut long silent edges from the copies
 }
 
-export type ImportJob = Job<{ id: string; imported: number; transcribed: number; sliced: number }>
+export type ImportJob = Job<{
+  id: string
+  imported: number
+  transcribed: number
+  sliced: number
+  trimmed: number
+  checks: CheckSummary | null
+}>
 
 export async function importDataset(o: ImportOptions): Promise<ImportJob> {
   const body = {
@@ -263,8 +287,17 @@ export async function importDataset(o: ImportOptions): Promise<ImportJob> {
     slice: o.slice,
     slice_min_seconds: o.sliceMin,
     slice_max_seconds: o.sliceMax,
+    check: o.check,
+    aligner: o.aligner,
+    trim: o.trim,
   }
   return (await postJson('/api/datasets/import', body)).json()
+}
+
+export type CheckJob = Job<CheckSummary>
+
+export async function checkDataset(id: string, aligner: Aligner): Promise<CheckJob> {
+  return (await postJson('/api/datasets/check', { id, aligner })).json()
 }
 
 export async function getJob<J extends Job>(id: string): Promise<J> {
@@ -281,6 +314,14 @@ export interface ClipRow {
   text: string
   seconds: number | null // null: unreadable or missing
   asr: boolean // transcript made by ASR
+  score: number | null // alignment check; null: not checked (for this text)
+  flags: CheckFlag[]
+}
+
+export interface ClipPage {
+  total: number // clips matching the search / filter
+  rows: ClipRow[]
+  checks: CheckSummary | null // over the whole dataset; null: never checked
 }
 
 // A dataset in the data dir, or the copy a training run trains on.
@@ -290,13 +331,26 @@ export async function getDatasetReport(source: DatasetSource): Promise<DatasetRe
   return (await request(`/api/dataset-report?${new URLSearchParams(source)}`)).json()
 }
 
+export interface ClipFilter {
+  query: string
+  flagged: boolean // only clips the alignment check flagged
+  worstFirst: boolean // lowest alignment scores first
+}
+
 export async function getDatasetRows(
   source: DatasetSource,
   offset: number,
   limit: number,
-  query: string,
-): Promise<{ total: number; rows: ClipRow[] }> {
-  const q = new URLSearchParams({ ...source, offset: String(offset), limit: String(limit), q: query })
+  filter: ClipFilter,
+): Promise<ClipPage> {
+  const q = new URLSearchParams({
+    ...source,
+    offset: String(offset),
+    limit: String(limit),
+    q: filter.query,
+    flagged: String(filter.flagged),
+    order: filter.worstFirst ? 'worst' : 'file',
+  })
   return (await request(`/api/dataset-rows?${q}`)).json()
 }
 

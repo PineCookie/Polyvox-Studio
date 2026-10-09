@@ -23,6 +23,8 @@ src/voxcpm_studio/
   importer.py      dataset import from GPT-SoVITS lists, CSV, JSONL, folders
   slicer.py        long recordings -> clips at pauses (Silero VAD)
   asr.py           speech recognition (Qwen3-ASR, transformers-native)
+  aligner.py       forced alignment (Qwen3-ForcedAligner or a wav2vec2 CTC model)
+  checks.py        per-clip checks from alignment: mismatch, cut edges, silence
   jobs.py          in-process background jobs with progress and cancel
   training.py      training runs: config, job control, metrics
   train_worker.py  training subprocess around the vendored script
@@ -56,7 +58,9 @@ Open http://127.0.0.1:8808. The first generation after a model load takes about
 | `VOXCPM_STUDIO_DEVICE` | `auto` | inference device: `cuda`, `cuda:1`, `cpu`, ... |
 | `VOXCPM_STUDIO_TRAIN_GPU` | | CUDA index for training jobs (default: the first GPU) |
 | `VOXCPM_STUDIO_ASR_MODEL` | `Qwen/Qwen3-ASR-1.7B-hf` | speech recognition model (dir or Hugging Face id) |
-| `VOXCPM_STUDIO_ASR_DEVICE` | `auto` | ASR device; `auto` = the inference device |
+| `VOXCPM_STUDIO_ASR_DEVICE` | `auto` | ASR and aligner device; `auto` = the inference device |
+| `VOXCPM_STUDIO_ALIGN_MODEL` | `Qwen/Qwen3-ForcedAligner-0.6B-hf` | forced aligner |
+| `VOXCPM_STUDIO_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (character vocabulary, one language) |
 | `VOXCPM_STUDIO_OPTIMIZE` | `auto` | Triton `torch.compile`; `auto` = on for CUDA |
 | `VOXCPM_STUDIO_DENOISER` | `1` | load the ZipEnhancer denoiser |
 
@@ -66,6 +70,8 @@ Open http://127.0.0.1:8808. The first generation after a model load takes about
 ```powershell
 hf download openbmb/VoxCPM2 --local-dir models/openbmb__VoxCPM2
 hf download Qwen/Qwen3-ASR-1.7B-hf --local-dir models/Qwen__Qwen3-ASR-1.7B-hf  # optional
+hf download Qwen/Qwen3-ForcedAligner-0.6B-hf --local-dir models/Qwen__Qwen3-ForcedAligner-0.6B-hf  # optional
+hf download jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn --local-dir models/jonatasgrosman__wav2vec2-large-xlsr-53-chinese-zh-cn  # optional
 ```
 
 Speech recognition (the **Transcribe** button for reference audio) uses
@@ -121,6 +127,32 @@ with a fixed language and names / terms to spell right. Imports run in the
 background with progress and can be cancelled. Transcribed clips are listed in
 `data/<name>/asr.json` so they can be reviewed.
 
+### Checking clips against their text
+
+Forced alignment places each word of a transcript in its audio. The import (and
+**Check clips** on any dataset) uses it to flag clips for review:
+
+| Flag | Meaning |
+|---|---|
+| Mismatch | part of the text does not match the audio (low confidence over a few words) |
+| Untranscribed | voice activity outside the aligned words: the text may miss something |
+| Cut edge | the sound is still loud at the start or end of the file: a word may be cut |
+| Long silence | over 1 s of silence before or after the speech |
+
+Two aligners, both running in this environment: **Qwen3-ForcedAligner** (11
+languages, mixed scripts) and a **wav2vec2 CTC** model with a character
+vocabulary (sharper on single wrong words; Chinese by default, set
+`VOXCPM_STUDIO_CTC_ALIGN_MODEL` for another language). The import can also trim
+long silent edges from the copied clips, keeping 0.15 s and never cutting into
+anything voice activity detection hears. Results are saved in
+`data/<name>/align.json` and shown in the clips table, which can show only
+flagged clips and sort them worst match first. A check made for a transcript
+that was edited since is ignored.
+
+Mostly not caught: a transcript that leaves out a few words (about 1 in 7 is
+flagged). The aligner spreads the remaining words over the audio; comparing with
+ASR output (planned) will find those.
+
 ## Sharing LoRAs
 
 Select a checkpoint in the Voice panel and choose **Export for sharing**. The zip
@@ -145,8 +177,8 @@ cd web; npm run lint            # ESLint + Prettier check; `npm run format` fixe
 
 ## Roadmap
 
-- Preprocessing: forced alignment (Qwen3-ForcedAligner), a per-clip audit table,
-  loudness normalization, optional vocal separation.
+- Preprocessing: a per-clip audit table (ASR disagreement, speaker outliers,
+  edit / drop clips), loudness normalization, optional vocal separation.
 - Training speed: batch size / token budget, cuDNN attention.
 - VoxCPM 1.5 as a second base model.
 - Streaming synthesis via `VoxCPM.generate_streaming`.

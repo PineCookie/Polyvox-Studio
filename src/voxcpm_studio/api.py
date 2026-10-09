@@ -9,7 +9,7 @@ import shutil
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import soundfile as sf
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -18,7 +18,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import importer, lora_library, manifests, sharing
+from . import checks, importer, lora_library, manifests, sharing
+from .aligner import AlignService
 from .asr import AsrService, load_audio
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
@@ -80,6 +81,16 @@ class ImportIn(ImportSourceIn):
     slice: bool = False
     slice_min_seconds: float = Field(2.0, ge=0.5, le=30)
     slice_max_seconds: float = Field(15.0, ge=3, le=60)
+    # Check each clip against its text by forced alignment (align.json).
+    check: bool = False
+    aligner: Literal["qwen3", "ctc"] = "qwen3"
+    # Cut long silent edges from the copied clips (needs copy_audio and check).
+    trim: bool = False
+
+
+class CheckIn(BaseModel):
+    id: str  # dataset manifest id
+    aligner: Literal["qwen3", "ctc"] = "qwen3"
 
 
 class ImportPreviewOut(BaseModel):
@@ -106,11 +117,15 @@ class ClipRowOut(BaseModel):
     text: str
     seconds: float | None
     asr: bool
+    score: float | None
+    flags: list[str]
 
 
 class ClipPageOut(BaseModel):
     total: int
     rows: list[ClipRowOut]
+    # Alignment checks over the whole dataset; None when it was never checked.
+    checks: dict | None
 
 
 class JobOut(BaseModel):
@@ -138,12 +153,15 @@ def _cuda_index(device: str) -> int | None:
     return int(index) if index else 0
 
 
-def free_gpu_for_training(service: InferenceService, train_gpu: int | None, asr: AsrService | None = None) -> None:
+def free_gpu_for_training(
+    service: InferenceService, train_gpu: int | None, *helpers: AsrService | AlignService
+) -> None:
     """Unload the models that sit on the GPU a training job will use."""
     if _cuda_index(service.device) == (train_gpu or 0):
         service.unload()
-    if asr is not None and asr.loaded and _cuda_index(asr.device) == (train_gpu or 0):
-        asr.unload()
+    for helper in helpers:
+        if helper.loaded and _cuda_index(helper.device) == (train_gpu or 0):
+            helper.unload()
 
 
 def create_app(
@@ -152,13 +170,15 @@ def create_app(
     training: TrainingManager | None = None,
     asr: AsrService | None = None,
     jobs: JobRunner | None = None,
+    align: AlignService | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     service = service or InferenceService(settings)
     asr = asr or AsrService(settings)
+    align = align or AlignService(settings)
     jobs = jobs or JobRunner()
     training = training or TrainingManager(
-        settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr)
+        settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr, align)
     )
 
     @asynccontextmanager
@@ -174,7 +194,12 @@ def create_app(
 
     def status_with_model_id() -> dict:
         # The hub id lets the UI flag LoRAs trained on a different base model.
-        return {**service.status(), "model_id": sharing.hub_id(settings.model), "asr_loaded": asr.loaded}
+        return {
+            **service.status(),
+            "model_id": sharing.hub_id(settings.model),
+            "asr_loaded": asr.loaded,
+            "aligner_loaded": align.loaded,
+        }
 
     @app.get("/api/status")
     def status() -> dict:
@@ -257,9 +282,10 @@ def create_app(
 
     @app.post("/api/model/unload")
     def unload() -> dict:
-        # Frees all GPU memory the server holds: TTS and ASR.
+        # Frees all GPU memory the server holds: TTS, ASR and the aligner.
         service.unload()
         asr.unload()
+        align.unload()
         return status_with_model_id()
 
     @app.post("/api/asr")
@@ -296,20 +322,15 @@ def create_app(
                 raise ValueError("Slicing makes new clips without text: it needs copying and transcription.")
             if body.slice and body.slice_min_seconds >= body.slice_max_seconds:
                 raise ValueError("The minimum clip length must be below the maximum.")
+            if body.trim and not (body.copy_audio and body.check):
+                raise ValueError("Trimming rewrites the copied clips: it needs copying and checking.")
             importer.check_name(body.name, settings.data_dir)
             importer.detect(importer.clean_path(body.source))
         except FileExistsError as e:
             raise HTTPException(409, str(e)) from e
         except (ValueError, OSError) as e:
             raise HTTPException(422, str(e)) from e
-        if running := jobs.running("import"):
-            raise HTTPException(409, f"Another import is running: {running.title}")
-        if body.transcribe and training.active_run and _cuda_index(asr.device) == (settings.train_gpu or 0):
-            raise HTTPException(
-                409,
-                f"Run '{training.active_run}' is training on the GPU ASR would use. Wait for it, or set "
-                "VOXCPM_STUDIO_ASR_DEVICE to another GPU.",
-            )
+        refuse_if_busy(gpu=body.transcribe or body.check)
 
         def transcriber(paths: list[Path]) -> list[tuple[str, str | None]]:
             results = asr.transcribe([load_audio(p) for p in paths], language=body.language, prompt=body.prompt)
@@ -334,15 +355,54 @@ def create_app(
                     if body.slice
                     else None
                 ),
+                checker=checker(body.aligner) if body.check else None,
+                aligner=body.aligner,
+                trim=body.trim,
             )
             return {
                 "id": result.id,
                 "imported": result.imported,
                 "transcribed": result.transcribed,
                 "sliced": result.sliced,
+                "trimmed": result.trimmed,
+                "checks": result.checks,
             }
 
         return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
+
+    def checker(kind: str) -> checks.Checker:
+        return checks.make_checker(lambda wavs, texts: align.align(wavs, texts, kind), kind)
+
+    def refuse_if_busy(gpu: bool) -> None:
+        """One preparation job at a time; GPU stages wait for training on their GPU."""
+        if running := jobs.running("import") or jobs.running("check"):
+            raise HTTPException(409, f"Wait for “{running.title}” to finish.")
+        if gpu and training.active_run and _cuda_index(asr.device) == (settings.train_gpu or 0):
+            raise HTTPException(
+                409,
+                f"Run '{training.active_run}' is training on the GPU that ASR and alignment use. Wait for it, or "
+                "set VOXCPM_STUDIO_ASR_DEVICE to another GPU.",
+            )
+
+    @app.post("/api/datasets/check", status_code=202)
+    def check_dataset(body: CheckIn) -> JobOut:
+        """Check every clip of a dataset against its text (forced alignment) and
+        save the results as align.json. The job's result is the summary
+        {"aligner", "checked", "flagged", "flags": {flag: count}}."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        refuse_if_busy(gpu=True)
+
+        def run(job: Job) -> dict:
+            return checks.check_dataset(
+                manifest,
+                manifests.legacy_root(settings.data_dir),
+                checker(body.aligner),
+                body.aligner,
+                load_audio,
+                job.progress,
+            )
+
+        return JobOut(**jobs.start("check", f"Check {body.id}", run).public())
 
     def review_manifest(id: str | None, run: str | None) -> Path:
         """A dataset by manifest id (e.g. "speaker/train.jsonl"), or the one a run trains on."""
@@ -364,11 +424,18 @@ def create_app(
         offset: int = 0,
         limit: int = Query(50, ge=1, le=500),
         q: str = "",
+        flagged: bool = False,
+        order: Literal["file", "worst"] = "file",
     ) -> ClipPageOut:
-        """A page of a dataset's clips for review."""
+        """A page of a dataset's clips for review; ``flagged`` keeps clips the
+        alignment check flagged, ``order=worst`` puts the lowest scores first."""
         path = review_manifest(id, run)
-        total, rows = manifests.read_rows(path, manifests.legacy_root(settings.data_dir), max(0, offset), limit, q)
-        return ClipPageOut(total=total, rows=[ClipRowOut(**dataclasses.asdict(r)) for r in rows])
+        page = manifests.read_rows(
+            path, manifests.legacy_root(settings.data_dir), max(0, offset), limit, q, flagged, order == "worst"
+        )
+        return ClipPageOut(
+            total=page.total, rows=[ClipRowOut(**dataclasses.asdict(r)) for r in page.rows], checks=page.checks
+        )
 
     @app.get("/api/dataset-audio")
     def dataset_audio(index: int, id: str | None = None, run: str | None = None) -> FileResponse:

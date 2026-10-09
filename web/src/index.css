@@ -12,6 +12,8 @@
   --danger-soft: #fdecea;
   --ok: #2f9e5f;
   --ok-soft: #e6f5ec;
+  --warn: #9a5b00;
+  --warn-soft: #fcf0dc;
   /* Chart series (validated categorical slots 1-2 for this surface). */
   --series-1: #2a78d6;
   --series-2: #eb6834;
@@ -49,6 +51,8 @@
     --danger-soft: #3a1f1d;
     --ok: #5fcf8f;
     --ok-soft: #1c3326;
+    --warn: #e8b05a;
+    --warn-soft: #382c16;
     --series-1: #3987e5;
     --series-2: #d95926;
     --shadow: none;
@@ -977,6 +981,7 @@ input[type='search']:focus {
 
 .voice-panel .voice-list {
   gap: 2px;
+  align-content: start;
   overflow-y: auto;
   min-height: 120px;
   margin: 0 -8px;
@@ -1208,6 +1213,53 @@ input[type='search']:focus {
   margin-left: 8px;
 }
 
+.clip-table .clip-text .tag + .tag {
+  margin-left: 4px;
+}
+
+.tag.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.72rem;
+  cursor: help;
+}
+
+/* Alignment check summary and review filters above the clips table */
+.check-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.88rem;
+}
+
+.check-bar p {
+  margin: 0;
+}
+
+.check-action {
+  flex-wrap: wrap;
+}
+
+.check-action button {
+  white-space: nowrap;
+}
+
+.check-action select {
+  width: auto;
+}
+
+.check-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
 .clip-table .clip-seconds {
   width: 70px;
   text-align: right;
@@ -1231,19 +1283,6 @@ input[type='search']:focus {
 }
 
 /* Prepare: dataset ready banner */
-
-.prepared {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
-}
-
-.prepared p {
-  margin: 0;
-}
 
 /* Run page: sub-tabs and parameters */
 

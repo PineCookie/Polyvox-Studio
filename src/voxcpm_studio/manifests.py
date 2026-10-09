@@ -11,6 +11,7 @@ their manifests with absolute paths, so both layouts train correctly.
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import random
 import statistics
@@ -22,6 +23,7 @@ import soundfile as sf
 
 MANIFEST_GLOB = "*.jsonl"
 ASR_FILE = "asr.json"  # next to a manifest: {"<audio as written>": {"language": ...}} for ASR-made texts
+ALIGN_FILE = "align.json"  # next to a manifest: per-clip alignment checks (checks.py)
 MAX_REPORTED = 20  # errors / warnings listed individually
 SHORT_CLIP_S = 0.3
 LONG_CLIP_S = 30.0
@@ -105,11 +107,40 @@ class ClipRow:
     text: str
     seconds: float | None  # None: unreadable or missing
     asr: bool  # text made by ASR (listed in asr.json)
+    score: float | None = None  # alignment check (align.json); None: not checked for this text
+    flags: list[str] = field(default_factory=list)
 
 
-def _row_key(audio: str, manifest_dir: Path) -> str:
+@dataclass
+class ClipPage:
+    total: int  # clips matching the search / filter
+    rows: list[ClipRow]
+    # Over the whole dataset: {"aligner", "checked", "flagged", "flags": {flag: count}}, or None.
+    checks: dict | None = None
+
+
+def row_key(audio: str, manifest_dir: Path) -> str:
+    """A clip's key in the sidecar files: its path relative to the manifest, else as is."""
     path = Path(audio)
     return path.relative_to(manifest_dir).as_posix() if path.is_relative_to(manifest_dir) else audio
+
+
+def text_key(text: str) -> str:
+    """Identifies the transcript a check was made for."""
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+
+
+@functools.lru_cache(maxsize=32)
+def _sidecar(path: str, mtime_ns: int) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def read_sidecar(path: Path) -> dict:
+    """A JSON file next to a manifest ({} if absent), cached until it changes."""
+    try:
+        return _sidecar(str(path), path.stat().st_mtime_ns)
+    except FileNotFoundError:
+        return {}
 
 
 @functools.lru_cache(maxsize=16)
@@ -137,27 +168,63 @@ def _clip_seconds(audio: str) -> float | None:
 
 
 def read_rows(
-    path: Path, root: Path | None = None, offset: int = 0, limit: int = 50, query: str = ""
-) -> tuple[int, list[ClipRow]]:
-    """One page of a manifest's clips for review: (matching total, rows).
+    path: Path,
+    root: Path | None = None,
+    offset: int = 0,
+    limit: int = 50,
+    query: str = "",
+    flagged: bool = False,
+    worst_first: bool = False,
+) -> ClipPage:
+    """One page of a manifest's clips for review.
 
-    ``query`` matches text or file name, case-insensitively.
+    ``query`` matches text or file name, case-insensitively; ``flagged`` keeps
+    clips with a check flag; ``worst_first`` orders by alignment score
+    (unchecked clips last).
     """
     manifest_dir = path.resolve().parent
     entries = _entries_for_review(path, root)
-    asr_file = manifest_dir / ASR_FILE
-    asr = set(json.loads(asr_file.read_text(encoding="utf-8"))) if asr_file.is_file() else set()
+    asr = read_sidecar(manifest_dir / ASR_FILE)
+    aligned = read_sidecar(manifest_dir / ALIGN_FILE)
+    checks = aligned.get("clips", {})
+
+    def check_of(key: str, text: str) -> dict | None:
+        check = checks.get(key)
+        return check if check and check.get("text") == text_key(text) else None
+
     q = query.strip().lower()
-    matches = [
-        (i, audio, text)
-        for i, (audio, text) in enumerate(entries)
-        if not q or q in text.lower() or q in Path(audio).name.lower()
+    matches = []
+    summary = {"checked": 0, "flagged": 0, "flags": {}}
+    for i, (audio, text) in enumerate(entries):
+        key = row_key(audio, manifest_dir)
+        check = check_of(key, text)
+        if check:
+            summary["checked"] += 1
+            summary["flagged"] += bool(check["flags"])
+            for f in check["flags"]:
+                summary["flags"][f] = summary["flags"].get(f, 0) + 1
+        if q and q not in text.lower() and q not in Path(audio).name.lower():
+            continue
+        if flagged and not (check and check["flags"]):
+            continue
+        matches.append((i, audio, text, key, check))
+    if worst_first:
+        matches.sort(key=lambda m: (m[4] is None, m[4]["score"] if m[4] else 0.0, m[0]))
+
+    rows = [
+        ClipRow(
+            index=i,
+            file=key,
+            text=text,
+            seconds=_clip_seconds(audio),
+            asr=key in asr,
+            score=check["score"] if check else None,
+            flags=check["flags"] if check else [],
+        )
+        for i, audio, text, key, check in matches[offset : offset + limit]
     ]
-    rows = []
-    for i, audio, text in matches[offset : offset + limit]:
-        key = _row_key(audio, manifest_dir)
-        rows.append(ClipRow(index=i, file=key, text=text, seconds=_clip_seconds(audio), asr=key in asr))
-    return len(matches), rows
+    has_checks = summary["checked"] > 0
+    return ClipPage(len(matches), rows, {"aligner": aligned.get("aligner"), **summary} if has_checks else None)
 
 
 def clip_audio(path: Path, root: Path | None, index: int) -> Path:

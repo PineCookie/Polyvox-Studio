@@ -5,4 +5,6 @@ if not defined VOXCPM_STUDIO_MODEL set VOXCPM_STUDIO_MODEL=%~dp0models\openbmb__
 if not defined VOXCPM_STUDIO_LORA_DIR set VOXCPM_STUDIO_LORA_DIR=%~dp0lora
 if not defined VOXCPM_STUDIO_DATA_DIR set VOXCPM_STUDIO_DATA_DIR=%~dp0data
 if not defined VOXCPM_STUDIO_ASR_MODEL if exist "%~dp0models\Qwen__Qwen3-ASR-1.7B-hf" set VOXCPM_STUDIO_ASR_MODEL=%~dp0models\Qwen__Qwen3-ASR-1.7B-hf
+if not defined VOXCPM_STUDIO_ALIGN_MODEL if exist "%~dp0models\Qwen__Qwen3-ForcedAligner-0.6B-hf" set VOXCPM_STUDIO_ALIGN_MODEL=%~dp0models\Qwen__Qwen3-ForcedAligner-0.6B-hf
+if not defined VOXCPM_STUDIO_CTC_ALIGN_MODEL if exist "%~dp0models\jonatasgrosman__wav2vec2-large-xlsr-53-chinese-zh-cn" set VOXCPM_STUDIO_CTC_ALIGN_MODEL=%~dp0models\jonatasgrosman__wav2vec2-large-xlsr-53-chinese-zh-cn
 uv run --project "%~dp0." voxcpm-studio %*

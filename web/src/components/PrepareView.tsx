@@ -2,18 +2,22 @@ import { useCallback, useEffect, useState } from 'react'
 import { listDatasets } from '../api'
 import type { ImportJob } from '../api'
 import { datasetName } from '../format'
+import { DatasetPage } from './DatasetPage'
 import { ImportForm } from './ImportForm'
 
 interface Props {
   onError: (message: string) => void
-  // Opens the Train tab with this dataset selected for review.
+  // Opens the Train tab with this dataset selected for a new run.
   onTrain: (datasetId: string) => void
 }
 
-/** Raw recordings and lists in, datasets out (import, slice, transcribe; later align and audit). */
+const IMPORT = '\0import'
+
+/** Raw recordings and lists in, checked datasets out: import (slice, transcribe, align), then review. */
 export function PrepareView({ onError, onTrain }: Props) {
   const [datasets, setDatasets] = useState<string[] | null>(null)
-  const [prepared, setPrepared] = useState<ImportJob['result'] | null>(null)
+  const [selected, setSelected] = useState(IMPORT)
+  const [imported, setImported] = useState<ImportJob['result'] | null>(null)
   const [formKey, setFormKey] = useState(0)
 
   const refresh = useCallback(async () => {
@@ -28,60 +32,55 @@ export function PrepareView({ onError, onTrain }: Props) {
     refresh()
   }, [refresh])
 
-  async function imported(result: ImportJob['result']) {
-    setPrepared(result)
+  async function done(result: ImportJob['result']) {
     await refresh()
+    setImported(result)
+    setSelected(result.id)
+    setFormKey((k) => k + 1) // a fresh form for the next import
   }
 
   return (
     <main className="layout">
       <div className="main-col">
-        {prepared && (
-          <section className="panel prepared">
-            <p>
-              <strong>{datasetName(prepared.id)}</strong> is ready: {prepared.imported.toLocaleString()} clips
-              {prepared.sliced > 0 && `, sliced from ${prepared.sliced} recordings`}
-              {prepared.transcribed > 0 && `, ${prepared.transcribed.toLocaleString()} transcribed by ASR`}.
-            </p>
-            <div className="run-actions">
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => {
-                  setPrepared(null)
-                  setFormKey((k) => k + 1)
-                }}
-              >
-                Prepare another
-              </button>
-              <button type="button" className="primary" onClick={() => onTrain(prepared.id)}>
-                Review and train
-              </button>
-            </div>
-          </section>
+        {/* Stays mounted while a dataset is open, so a running import keeps its progress. */}
+        <div hidden={selected !== IMPORT}>
+          <ImportForm key={formKey} datasetNames={(datasets ?? []).map(datasetName)} onImported={done} />
+        </div>
+        {selected !== IMPORT && (
+          <DatasetPage
+            key={selected}
+            id={selected}
+            imported={imported?.id === selected ? imported : null}
+            onTrain={onTrain}
+          />
         )}
-        <ImportForm key={formKey} datasetNames={(datasets ?? []).map(datasetName)} onImported={imported} />
       </div>
 
       <aside className="side-col">
         <section className="panel voice-panel">
           <header className="panel-head">
             <h2>Datasets</h2>
+            <button
+              type="button"
+              className={`small ${selected === IMPORT ? 'primary' : 'ghost'}`}
+              onClick={() => setSelected(IMPORT)}
+            >
+              Import
+            </button>
           </header>
           <div className="voice-list">
             {(datasets ?? []).map((id) => (
               <button
                 key={id}
                 type="button"
-                className="voice-row"
-                onClick={() => onTrain(id)}
-                title="Review in the Train tab"
+                className={`voice-row ${id === selected ? 'active' : ''}`}
+                onClick={() => setSelected(id)}
+                aria-current={id === selected}
               >
                 <span className="voice-row-name">{datasetName(id)}</span>
-                <span className="muted">review →</span>
               </button>
             ))}
-            {datasets?.length === 0 && <p className="muted empty">None yet. Prepare one here.</p>}
+            {datasets?.length === 0 && <p className="muted empty">None yet. Import one.</p>}
           </div>
         </section>
       </aside>
