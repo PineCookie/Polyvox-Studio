@@ -97,6 +97,16 @@ def test_trim_keeps_padding_around_all_speech():
     assert after.trim_range() is None  # nothing left worth cutting
 
 
+def test_trailing_silence_is_flagged_sooner_than_leading():
+    def flags(lead, trail):
+        wav = tone([(lead, lead + 1.0)], lead + 1.0 + trail)
+        return checks.check_clip(wav, aligned(lead, lead + 1.0), "qwen3", [(lead, lead + 1.0)]).flags
+
+    assert flags(0.8, 0.3) == []
+    assert flags(0.3, 0.8) == ["long_silence"]
+    assert flags(1.2, 0.3) == ["long_silence"]
+
+
 def write_dataset(data_dir, texts):
     folder = data_dir / "speaker_a"
     (folder / "wavs").mkdir(parents=True)

@@ -13,7 +13,10 @@ export const FLAG_LABEL: Record<CheckFlag, [string, string]> = {
   filler: ['Filler?', 'A filler or laugh (嗯, 哈哈, 呵呵, ...) may not be in the audio, or not as written'],
   extra_speech: ['Untranscribed', 'Speech outside the transcribed words: the text may miss something'],
   cut_edge: ['Cut edge', 'The sound runs into the start or end of the file: a word may be cut'],
-  long_silence: ['Long silence', 'Over 1 s of silence before or after the speech'],
+  long_silence: [
+    'Long silence',
+    'Over 0.5 s of silence after the speech (the model learns when to stop from it), or over 1 s before it',
+  ],
 }
 
 export function formatDuration(seconds: number): string {

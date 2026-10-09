@@ -14,7 +14,8 @@ For each clip with a transcript:
   CUT_EDGE_DB of the speech); a word may be cut. Measured on the waveform:
   Silero VAD keeps a segment open to the end of a clip that ends shortly after
   speech.
-- ``long_silence``: over LONG_SILENCE_S of silence before or after the speech.
+- ``long_silence``: over LEAD_SILENCE_S of silence before the speech, or over
+  TRAIL_SILENCE_S after it.
 
 ``align.json`` (manifests.ALIGN_FILE) holds the results by audio path as in
 the manifest, with a hash of the text each was made for, so editing a
@@ -47,7 +48,10 @@ MISMATCH_BELOW = {"qwen3": 0.45, "ctc": 1e-5}
 WEAK_WORD_BELOW = {"qwen3": 0.55, "ctc": 6e-5}
 EXTRA_SPEECH_S = 0.3
 EXTRA_MARGIN_S = 0.25  # voice this close to the aligned words is theirs (breath, release)
-LONG_SILENCE_S = 1.0
+LEAD_SILENCE_S = 1.0
+# VoxCPM's fine-tuning guide asks for less than this after the speech: the model
+# learns when to stop from where the clips end.
+TRAIL_SILENCE_S = 0.5
 # A loud edge counts as cut only within this many dB of the clip's speech:
 # background music and room noise sit lower and are not a cut word.
 CUT_EDGE_DB = 20.0
@@ -118,7 +122,7 @@ class ClipCheck:
         flags = [f for f in self.flags if f not in ("long_silence", "extra_speech")]
         if unaligned >= EXTRA_SPEECH_S:
             flags.append("extra_speech")
-        if max(lead, trail) > LONG_SILENCE_S:
+        if _long_silence(lead, trail):
             flags.append("long_silence")
         return replace(
             self,
@@ -171,6 +175,10 @@ def compare_asr(text: str, heard: str) -> dict:
 
 def _hears_more(asr: dict) -> bool:
     return asr["extra"] >= max(ASR_MORE_MIN, ASR_MORE_SHARE * asr["words"])
+
+
+def _long_silence(lead: float, trail: float) -> bool:
+    return lead > LEAD_SILENCE_S or trail > TRAIL_SILENCE_S
 
 
 def _shift(sound: tuple[float, float] | None, by: float) -> tuple[float, float] | None:
@@ -243,7 +251,7 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
     first, last = edge_levels(wav)
     if (loud[0] and first > -CUT_EDGE_DB) or (loud[-1] and last > -CUT_EDGE_DB):
         flags.append("cut_edge")
-    if max(lead, trail) > LONG_SILENCE_S:
+    if _long_silence(lead, trail):
         flags.append("long_silence")
     return ClipCheck(
         sound_before=sound_before,

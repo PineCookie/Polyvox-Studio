@@ -168,7 +168,7 @@ Forced alignment places each word of a transcript in its audio. The import (and
 | Filler? | a filler or laugh (嗯, 哈哈, 呵呵, ...) the audio seems to lack, e.g. one 呵 too many |
 | Untranscribed | voice activity outside the aligned words: the text may miss something |
 | Cut edge | the sound is still loud at the start or end of the file: a word may be cut |
-| Long silence | over 1 s of silence before or after the speech |
+| Long silence | over 0.5 s of silence after the speech (VoxCPM's guide: the model learns when to stop from it), or over 1 s before it |
 
 Two aligners, both running in this environment: **Qwen3-ForcedAligner** (11
 languages, mixed scripts) and a **wav2vec2 CTC** model with a character
