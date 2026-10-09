@@ -1,0 +1,39 @@
+name: Release
+
+# Push a tag like v0.2.0 to publish a GitHub release whose archives include the
+# built web UI, so running the studio needs only uv (no Node.js).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the web UI
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Package
+        run: |
+          name="voxcpm-studio-${GITHUB_REF_NAME}"
+          # The tracked files (line endings per .gitattributes), plus the built UI.
+          git archive --format=tar --prefix="$name/" HEAD | tar -x
+          mkdir -p "$name/web/dist"
+          cp -r web/dist/. "$name/web/dist/"
+          zip -qr "$name.zip" "$name"
+          tar -czf "$name.tar.gz" "$name"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="voxcpm-studio-${GITHUB_REF_NAME}"
+          gh release create "$GITHUB_REF_NAME" "$name.zip" "$name.tar.gz" --title "$GITHUB_REF_NAME" --generate-notes

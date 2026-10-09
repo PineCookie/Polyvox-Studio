@@ -40,16 +40,19 @@ tests/             run without a GPU (fake model loader and training worker)
 
 ## Setup
 
-Requires an NVIDIA GPU (driver for CUDA 13), Windows or Linux (x86_64 or
-aarch64), [uv](https://docs.astral.sh/uv/) and Node 20+. uv installs Python 3.13
-and the CUDA build of PyTorch itself.
+Requires an NVIDIA GPU (driver for CUDA 13) on Windows or Linux (x86_64 or
+aarch64), and [uv](https://docs.astral.sh/uv/), which installs Python 3.13, the
+CUDA build of PyTorch and everything else on the first run:
 
 ```powershell
-uv sync
-cd web; npm install; npm run build; cd ..
-.\run.bat          # Windows
-./run.sh           # Linux
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
+curl -LsSf https://astral.sh/uv/install.sh | sh                                       # Linux
 ```
+
+Download the `.zip` (Windows) or `.tar.gz` (Linux) of the latest release and run
+`run.bat` / `./run.sh` in its folder. Release archives include the built web UI.
+From a git checkout instead, the first run also builds the UI, which needs
+Node.js 20+.
 
 On Linux, Triton (used to compile the model) needs a C compiler (`gcc`), and
 long recordings in m4a / mp3 are decoded with FFmpeg's shared libraries
@@ -270,6 +273,10 @@ cd web; npm run lint            # ESLint + Prettier check; `npm run format` fixe
 ```
 
 `src/voxcpm_studio/vendor/` is excluded from Ruff: it stays byte-identical to upstream.
+
+GitHub Actions run the tests, linters and web build on Ubuntu and Windows for
+every push. Pushing a tag like `v0.2.0` publishes a release whose `.zip` and
+`.tar.gz` include the built web UI.
 
 ## Roadmap
 
