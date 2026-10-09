@@ -268,6 +268,11 @@ def test_trim_and_hear_endpoints(service, training, asr_service, align_service, 
     too_short = {"id": ds, "index": 0, "start": 0.1, "end": 0.2}
     assert client.post("/api/dataset-clip/trim", json=too_short).status_code == 422
 
+    # Check one clip again on request, also asking ASR (the dataset's checks didn't).
+    rechecked = client.post("/api/dataset-clip/check", json={"id": ds, "index": 0, "compare_asr": True}).json()
+    assert rechecked["heard"]["text"].startswith("clip of") and rechecked["words"]
+    assert client.post("/api/dataset-clip/check", json={"id": ds, "index": 9}).status_code == 404
+
     result = client.post("/api/datasets/trim-flagged", json={"id": ds, "flag": "edge_sound"}).json()
     assert result == {"trimmed": 1, "skipped": 0, "review": 0}
     assert client.post("/api/datasets/trim-flagged", json={"id": ds, "flag": "mismatch"}).status_code == 422

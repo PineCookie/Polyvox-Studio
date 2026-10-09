@@ -212,7 +212,10 @@ with the differences marked. Texts made by ASR are not compared with themselves.
 
 Filter the clips table by flag, worst match first, and open a clip:
 
-- **Edit** its transcript (or **Use ASR text**); saving checks that clip again.
+- **Edit** its transcript (or **Use ASR text**); saving checks that clip again
+  (and so does trimming it).
+- **Check again** aligns it now; **Ask ASR** transcribes it and compares with the
+  text, also in a dataset checked without ASR.
 - **Drop** it: it stays in the table, dimmed, but training runs started from then
   on leave it out (listed in `data/<name>/excluded.json`); **Restore** brings it
   back. The manifest itself keeps every clip.
@@ -224,7 +227,8 @@ Singing is detected with an AudioSet audio tagger (AST, run through
 transformers; `VOXCPM_STUDIO_SINGING_MODEL`) by its singing scores together
 with a low speech score, so talk over background music is not taken for
 singing. It also works on separated vocals; very short sing-song exclamations
-can be flagged too.
+can be flagged too. It is off by default (it slows checks down, and most
+datasets have no songs).
 
 ```powershell
 hf download MIT/ast-finetuned-audioset-10-10-0.4593 --local-dir models/MIT__ast-finetuned-audioset-10-10-0.4593

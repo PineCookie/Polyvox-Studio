@@ -57,7 +57,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [aligner, setAligner] = useState<Aligner>('qwen3')
   const [trim, setTrim] = useState(true)
   const [tidy, setTidy] = useState(true)
-  const [detectSinging, setDetectSinging] = useState(true)
+  const [detectSinging, setDetectSinging] = useState(false)
   // Optional clean-up, off by default; which ones have a model installed.
   const [cleanup, setCleanup] = useState<CleanupOption[]>([])
   const [available, setAvailable] = useState<CleanupOption[]>([])

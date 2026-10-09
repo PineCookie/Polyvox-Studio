@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getDatasetClip, hearClipPart, setClipDropped, setClipText, TRIMMABLE_FLAGS, trimClip } from '../api'
+import { checkClip, getDatasetClip, hearClipPart, setClipDropped, setClipText, TRIMMABLE_FLAGS, trimClip } from '../api'
 import type { ClipDetail, DatasetSource, Heard } from '../api'
 import { ALIGNER_LABEL } from '../format'
 import { Waveform } from './Waveform'
@@ -31,7 +31,7 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | null>(null) // the text being edited
   const [saving, setSaving] = useState(false)
-  const [busy, setBusy] = useState<'trim' | Edge['side'] | null>(null)
+  const [busy, setBusy] = useState<'trim' | 'check' | 'asr' | Edge['side'] | null>(null)
   // What trimming keeps (the handles on the waveform), while trimming is open.
   const [keep, setKeep] = useState<[number, number] | null>(null)
   const track = useRef<HTMLDivElement>(null)
@@ -88,6 +88,21 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
       const heard = (await hearClipPart(datasetId, index, edge.start, edge.end)).trim()
       if (!heard) setError('ASR heard nothing there; type it in, or trim it off.')
       else setDraft(edge.side === 'before' ? heard + clip.text : clip.text + heard)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Align the clip again; with `withAsr`, also compare it with what ASR hears.
+  async function recheck(withAsr: boolean) {
+    if (!datasetId) return
+    setBusy(withAsr ? 'asr' : 'check')
+    setError(null)
+    try {
+      show(await checkClip(datasetId, index, withAsr))
+      onChanged?.()
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -318,6 +333,28 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
         </div>
       )}
       {clip.heard && <HeardLine heard={clip.heard} onUse={datasetId ? () => setDraft(clip.heard!.text) : undefined} />}
+      {datasetId && (
+        <div className="edge-sound">
+          <button
+            type="button"
+            className="ghost small"
+            onClick={() => recheck(false)}
+            disabled={busy !== null}
+            title="Align this clip's text again (after an edit, this happens by itself in a checked dataset)"
+          >
+            {busy === 'check' ? 'Checking…' : clip.words.length > 0 ? 'Check again' : 'Check'}
+          </button>
+          <button
+            type="button"
+            className="ghost small"
+            onClick={() => recheck(true)}
+            disabled={busy !== null}
+            title="Transcribe this clip and compare with its text"
+          >
+            {busy === 'asr' ? 'Listening…' : clip.heard ? 'Ask ASR again' : 'Ask ASR'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -415,18 +415,26 @@ def check_dataset(
 
 
 def check_one(
-    manifest: Path, root: Path | None, index: int, checker: Checker, kind: str, load: Callable[[Path], np.ndarray]
+    manifest: Path,
+    root: Path | None,
+    index: int,
+    checker: Checker,
+    kind: str,
+    load: Callable[[Path], np.ndarray],
+    compare: bool | None = None,
 ) -> ClipCheck:
-    """Check one clip again (after its text was edited) and update its entry
-    in align.json; the other entries stay. Uses ``kind`` for the whole file
-    only when there were no checks yet."""
+    """Check one clip again (after its text was edited or it was trimmed) and
+    update its entry in align.json; the other entries stay. Uses ``kind`` for
+    the whole file only when there were no checks yet. ``compare`` with ASR
+    (when the checker can): by default unless ASR made the text."""
     entries, _ = read_manifest(manifest, root)
     if not 0 <= index < len(entries):
         raise KeyError(f"No clip {index} in this dataset.")
     entry = entries[index]
     manifest_dir = manifest.resolve().parent
     key = row_key(entry["audio"], manifest_dir)
-    compare = key not in set(read_sidecar(manifest_dir / ASR_FILE))
+    if compare is None:
+        compare = key not in set(read_sidecar(manifest_dir / ASR_FILE))
     (check,) = checker([load(Path(entry["audio"]))], [entry["text"]], [compare])
     saved = read_sidecar(manifest_dir / ALIGN_FILE)
     clips = dict(saved.get("clips", {}))

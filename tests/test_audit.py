@@ -75,7 +75,8 @@ def test_sung_clips_are_flagged_and_can_be_dropped_at_once(client, data_dir):
     manifest = write_dataset(data_dir, ["第一句", "第二句", "第三句"])
     sf.write(manifest.parent / "wavs" / "1.wav", tone([(0.0, 2.0)], 2.0), 16000)  # held throughout: "sung"
 
-    assert wait_job(client, client.post("/api/datasets/check", json={"id": ID}).json()["id"])["state"] == "done"
+    sing = {"id": ID, "detect_singing": True}
+    assert wait_job(client, client.post("/api/datasets/check", json=sing).json()["id"])["state"] == "done"
     rows = client.get("/api/dataset-rows", params={"id": ID, "flag": "singing"}).json()["rows"]
     assert [r["index"] for r in rows] == [1]
 
@@ -83,8 +84,8 @@ def test_sung_clips_are_flagged_and_can_be_dropped_at_once(client, data_dir):
     assert client.post("/api/datasets/drop-flagged", json={"id": ID, "flag": "singing"}).json() == {"dropped": 0}
     assert client.get("/api/dataset-rows", params={"id": ID}).json()["dropped"] == 1
     assert client.post("/api/datasets/drop-flagged", json={"id": ID, "flag": "nope"}).status_code == 422
-    # Without detection asked for, nothing is flagged as sung.
-    body = {"id": ID, "detect_singing": False}
+    # Without detection asked for (the default), nothing is flagged as sung.
+    body = {"id": ID}
     assert (
         wait_job(client, client.post("/api/datasets/check", json=body).json()["id"])["result"]["flags"]["singing"] == 0
     )

@@ -402,6 +402,11 @@ export async function trimClip(id: string, index: number, keep?: [number, number
   return (await postJson('/api/dataset-clip/trim', { id, index, ...range })).json()
 }
 
+/** Check one clip again (alignment; `compareAsr`: also what ASR hears). */
+export async function checkClip(id: string, index: number, compareAsr = false): Promise<ClipDetail> {
+  return (await postJson('/api/dataset-clip/check', { id, index, compare_asr: compareAsr })).json()
+}
+
 /** What ASR hears in part of a clip. */
 export async function hearClipPart(id: string, index: number, start: number, end: number): Promise<string> {
   return (await (await postJson('/api/dataset-clip/hear', { id, index, start, end })).json()).text

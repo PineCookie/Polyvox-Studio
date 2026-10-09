@@ -90,7 +90,7 @@ class ImportIn(ImportSourceIn):
     aligner: Literal["qwen3", "ctc"] = "qwen3"
     # Cut long silent edges from the copied clips (needs copy_audio and check).
     trim: bool = False
-    detect_singing: bool = True  # with check: flag sung clips
+    detect_singing: bool = False  # with check: flag sung clips (slow; few datasets have songs)
     # Clean-up before anything else (needs copy_audio and the model configured):
     separate: bool = False  # keep only the voice (remove music / background)
     dereverb: bool = False
@@ -108,8 +108,8 @@ class CheckIn(BaseModel):
     aligner: Literal["qwen3", "ctc"] = "qwen3"
     # Also transcribe each clip and flag those where ASR hears words the text lacks.
     compare_asr: bool = False
-    # Flag sung clips (karaoke, covers): not wanted in TTS training data.
-    detect_singing: bool = True
+    # Flag sung clips (karaoke, covers): not wanted in TTS training data. Slow; few datasets have songs.
+    detect_singing: bool = False
 
 
 class ClipTextIn(BaseModel):
@@ -138,6 +138,12 @@ class ClipTrimIn(BaseModel):
 
 
 MIN_KEPT_S = 0.3  # a trimmed clip keeps at least this much
+
+
+class ClipCheckIn(BaseModel):
+    id: str
+    index: int
+    compare_asr: bool = False  # also compare with what ASR hears (otherwise as the dataset's checks did)
 
 
 class ClipRangeIn(BaseModel):
@@ -546,16 +552,37 @@ def create_app(
         if its last check was); otherwise its old check just goes stale."""
         manifest = _found(manifests.resolve, settings.data_dir, body.id)
         refuse_if_busy(gpu=False)
-        root = manifests.legacy_root(settings.data_dir)
         _checked(manifests.set_text, manifest, body.index, body.text)
+        if has_checks(manifest) and gpu_free():
+            check_clip_again(manifest, body.index)
+        return dataset_clip(body.index, id=body.id)
+
+    def has_checks(manifest: Path) -> bool:
+        return manifests.read_sidecar(manifest.parent / manifests.ALIGN_FILE).get("aligner") in ("qwen3", "ctc")
+
+    def gpu_free() -> bool:
+        """ASR and alignment can run: no training on their GPU."""
+        return not (training.active_run and _cuda_index(asr.device) == (settings.train_gpu or 0))
+
+    def check_clip_again(manifest: Path, index: int, compare_asr: bool | None = None) -> None:
+        """Check one clip with the dataset's aligner (Qwen3 when never checked).
+        ``compare_asr`` None: compare with ASR if the dataset's checks did; True
+        also compares a text ASR made. Flags sung clips if the checks did."""
         saved = manifests.read_sidecar(manifest.parent / manifests.ALIGN_FILE)
-        gpu_free = not (training.active_run and _cuda_index(asr.device) == (settings.train_gpu or 0))
-        if saved.get("aligner") in ("qwen3", "ctc") and gpu_free:
-            kind = saved["aligner"]
-            clips = saved.get("clips", {}).values()
-            compared = any(c.get("asr") for c in clips)
-            sang = any(c.get("singing") for c in clips)
-            checks.check_one(manifest, root, body.index, checker(kind, compared, sang), kind, load_audio)
+        kind = saved.get("aligner") if saved.get("aligner") in ("qwen3", "ctc") else "qwen3"
+        clips = saved.get("clips", {}).values()
+        compared = any(c.get("asr") for c in clips) if compare_asr is None else compare_asr
+        sang = any(c.get("singing") for c in clips)
+        root = manifests.legacy_root(settings.data_dir)
+        checker_ = checker(kind, compared, sang)
+        checks.check_one(manifest, root, index, checker_, kind, load_audio, compare=True if compare_asr else None)
+
+    @app.post("/api/dataset-clip/check")
+    def check_clip(body: ClipCheckIn) -> ClipDetailOut:
+        """Check one clip again now (alignment; with ``compare_asr``, also what ASR hears)."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        refuse_if_busy(gpu=True)
+        _found(check_clip_again, manifest, body.index, body.compare_asr or None)
         return dataset_clip(body.index, id=body.id)
 
     @app.post("/api/datasets/drop-flagged")
@@ -606,6 +633,9 @@ def create_app(
             )
         if not result["trimmed"]:
             raise HTTPException(409, "Nothing to trim: check the clip first.")
+        # Align the trimmed clip afresh rather than keep the shifted old check.
+        if has_checks(manifest) and gpu_free():
+            check_clip_again(manifest, body.index)
         return dataset_clip(body.index, id=body.id)
 
     @app.post("/api/dataset-clip/hear")

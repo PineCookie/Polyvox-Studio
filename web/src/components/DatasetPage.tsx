@@ -17,7 +17,7 @@ interface Props {
 export function DatasetPage({ id, imported, onTrain }: Props) {
   const [aligner, setAligner] = useState<Aligner>('qwen3')
   const [compareAsr, setCompareAsr] = useState(true)
-  const [detectSinging, setDetectSinging] = useState(true)
+  const [detectSinging, setDetectSinging] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Bumped when a check finishes, so the review reloads the results.
   const [version, setVersion] = useState(0)
