@@ -25,6 +25,7 @@ from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .jobs import Job, JobRunner
 from .separation import SeparationService
+from .singing import SingingService
 from .slicer import SliceOptions
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
 
@@ -88,6 +89,7 @@ class ImportIn(ImportSourceIn):
     aligner: Literal["qwen3", "ctc"] = "qwen3"
     # Cut long silent edges from the copied clips (needs copy_audio and check).
     trim: bool = False
+    detect_singing: bool = True  # with check: flag sung clips
     # Clean-up before anything else (needs copy_audio and the model configured):
     separate: bool = False  # keep only the voice (remove music / background)
     dereverb: bool = False
@@ -105,12 +107,19 @@ class CheckIn(BaseModel):
     aligner: Literal["qwen3", "ctc"] = "qwen3"
     # Also transcribe each clip and flag those where ASR hears words the text lacks.
     compare_asr: bool = False
+    # Flag sung clips (karaoke, covers): not wanted in TTS training data.
+    detect_singing: bool = True
 
 
 class ClipTextIn(BaseModel):
     id: str
     index: int
     text: str
+
+
+class DropFlaggedIn(BaseModel):
+    id: str
+    flag: str  # a check flag, e.g. "singing"
 
 
 class ClipDropIn(BaseModel):
@@ -207,7 +216,9 @@ def _cuda_index(device: str) -> int | None:
 
 
 def free_gpu_for_training(
-    service: InferenceService, train_gpu: int | None, *helpers: AsrService | AlignService | SeparationService
+    service: InferenceService,
+    train_gpu: int | None,
+    *helpers: AsrService | AlignService | SeparationService | SingingService,
 ) -> None:
     """Unload the models that sit on the GPU a training job will use."""
     if _cuda_index(service.device) == (train_gpu or 0):
@@ -225,12 +236,14 @@ def create_app(
     jobs: JobRunner | None = None,
     align: AlignService | None = None,
     separation: SeparationService | None = None,
+    singing: SingingService | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     service = service or InferenceService(settings)
     asr = asr or AsrService(settings)
     align = align or AlignService(settings)
     separation = separation or SeparationService(lambda: asr.device)
+    singing = singing or SingingService(settings, lambda: asr.device)
     cleanup_models = {
         "separate": settings.vocals_model,
         "dereverb": settings.dereverb_model,
@@ -238,7 +251,8 @@ def create_app(
     }
     jobs = jobs or JobRunner()
     training = training or TrainingManager(
-        settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr, align, separation)
+        settings,
+        before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr, align, separation, singing),
     )
 
     @asynccontextmanager
@@ -260,6 +274,7 @@ def create_app(
             "asr_loaded": asr.loaded,
             "aligner_loaded": align.loaded,
             "separation_loaded": separation.loaded,
+            "singing_loaded": singing.loaded,
             # Import clean-up options whose model is configured.
             "cleanup": [k for k, v in cleanup_models.items() if v],
         }
@@ -350,6 +365,7 @@ def create_app(
         asr.unload()
         align.unload()
         separation.unload()
+        singing.unload()
         return status_with_model_id()
 
     @app.post("/api/asr")
@@ -428,7 +444,7 @@ def create_app(
                     if body.slice
                     else None
                 ),
-                checker=checker(body.aligner) if body.check else None,
+                checker=checker(body.aligner, detect_singing=body.detect_singing) if body.check else None,
                 aligner=body.aligner,
                 trim=body.trim,
                 guide=slicer.Guide(transcribe=heard, align=lambda wavs, texts: align.align(wavs, texts, body.aligner))
@@ -448,12 +464,15 @@ def create_app(
 
         return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
 
-    def checker(kind: str, compare_asr: bool = False) -> checks.Checker:
+    def checker(kind: str, compare_asr: bool = False, detect_singing: bool = False) -> checks.Checker:
         def heard_texts(wavs: list) -> list[str]:
             return [r.text for r in asr.transcribe(wavs)]
 
         return checks.make_checker(
-            lambda wavs, texts: align.align(wavs, texts, kind), kind, transcribe=heard_texts if compare_asr else None
+            lambda wavs, texts: align.align(wavs, texts, kind),
+            kind,
+            transcribe=heard_texts if compare_asr else None,
+            singing=singing.scores if detect_singing else None,
         )
 
     def refuse_if_busy(gpu: bool) -> None:
@@ -487,7 +506,7 @@ def create_app(
             return checks.check_dataset(
                 manifest,
                 manifests.legacy_root(settings.data_dir),
-                checker(body.aligner, body.compare_asr),
+                checker(body.aligner, body.compare_asr, body.detect_singing),
                 body.aligner,
                 load_audio,
                 job.progress,
@@ -508,9 +527,19 @@ def create_app(
         gpu_free = not (training.active_run and _cuda_index(asr.device) == (settings.train_gpu or 0))
         if saved.get("aligner") in ("qwen3", "ctc") and gpu_free:
             kind = saved["aligner"]
-            compared = any("asr" in c and c["asr"] for c in saved.get("clips", {}).values())
-            checks.check_one(manifest, root, body.index, checker(kind, compared), kind, load_audio)
+            clips = saved.get("clips", {}).values()
+            compared = any(c.get("asr") for c in clips)
+            sang = any(c.get("singing") for c in clips)
+            checks.check_one(manifest, root, body.index, checker(kind, compared, sang), kind, load_audio)
         return dataset_clip(body.index, id=body.id)
+
+    @app.post("/api/datasets/drop-flagged")
+    def drop_flagged(body: DropFlaggedIn) -> dict:
+        """Drop every clip whose check has ``flag`` (e.g. all sung clips)."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        if body.flag not in checks.FLAGS:
+            raise HTTPException(422, f"Unknown flag '{body.flag}'.")
+        return {"dropped": manifests.drop_flagged(manifest, manifests.legacy_root(settings.data_dir), body.flag)}
 
     @app.post("/api/dataset-clip/drop")
     def drop_clip(body: ClipDropIn) -> dict:

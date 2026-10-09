@@ -163,6 +163,7 @@ Forced alignment places each word of a transcript in its audio. The import (and
 
 | Flag | Meaning |
 |---|---|
+| Singing | a sung clip (karaoke, a cover): not wanted in training data |
 | Mismatch | part of the text does not match the audio (low confidence over a few words; fillers not counted) |
 | Filler? | a filler or laugh (嗯, 哈哈, 呵呵, ...) the audio seems to lack, e.g. one 呵 too many |
 | Untranscribed | voice activity outside the aligned words: the text may miss something |
@@ -208,7 +209,18 @@ Filter the clips table by flag, worst match first, and open a clip:
   on leave it out (listed in `data/<name>/excluded.json`); **Restore** brings it
   back. The manifest itself keeps every clip.
 
-In a filtered list, a fixed clip leaves the list and the next one opens.
+In a filtered list, a fixed clip leaves the list and the next one opens. With one
+flag shown, **Drop all** drops every clip that has it, e.g. all sung clips.
+
+Singing is detected with an AudioSet audio tagger (AST, run through
+transformers; `VOXCPM_STUDIO_SINGING_MODEL`) by its singing scores together
+with a low speech score, so talk over background music is not taken for
+singing. It also works on separated vocals; very short sing-song exclamations
+can be flagged too.
+
+```powershell
+hf download MIT/ast-finetuned-audioset-10-10-0.4593 --local-dir models/MIT__ast-finetuned-audioset-10-10-0.4593
+```
 
 ## Sharing LoRAs
 
@@ -234,7 +246,7 @@ cd web; npm run lint            # ESLint + Prettier check; `npm run format` fixe
 
 ## Roadmap
 
-- Preprocessing: singing detection, speaker outliers, loudness normalization.
+- Preprocessing: speaker outliers, loudness normalization.
 - Training speed: batch size / token budget, cuDNN attention.
 - VoxCPM 1.5 as a second base model.
 - Streaming synthesis via `VoxCPM.generate_streaming`.

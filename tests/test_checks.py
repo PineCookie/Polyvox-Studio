@@ -123,7 +123,15 @@ def test_check_dataset_writes_results_the_review_shows(data_dir, align_service):
         "aligner": "qwen3",
         "checked": 3,
         "flagged": 1,
-        "flags": {"mismatch": 1, "asr_more": 0, "filler": 0, "extra_speech": 0, "cut_edge": 0, "long_silence": 0},
+        "flags": {
+            "singing": 0,
+            "mismatch": 1,
+            "asr_more": 0,
+            "filler": 0,
+            "extra_speech": 0,
+            "cut_edge": 0,
+            "long_silence": 0,
+        },
     }
     assert phases[-1] == ("aligning", 3, 3)
     page = manifests.read_rows(manifest, flag="any")

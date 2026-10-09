@@ -221,6 +221,36 @@ def wait_for(path: Path, text: str, timeout: float = 30) -> None:
         time.sleep(0.05)
 
 
+class FakeSingingModel:
+    """Stands in for the AudioSet tagger: a clip "is sung" when it is loud
+    throughout (a held tone), else it is speech."""
+
+    device = "cpu"
+
+    def __call__(self, input_values):
+        logits = torch.full((input_values.shape[0], 527), -20.0)
+        for i, x in enumerate(input_values):
+            sung = float((x.abs() > 0.01).float().mean()) > 0.9
+            logits[i, 27] = 0.0 if sung else -20.0  # Singing
+            logits[i, 0] = -20.0 if sung else 3.0  # Speech
+        return type("Out", (), {"logits": logits})()
+
+
+@pytest.fixture(autouse=True)
+def fake_singing_detector(monkeypatch):
+    """No test downloads or runs the real tagger."""
+    from voxcpm_studio import singing
+
+    def extractor(wavs, sampling_rate, return_tensors):
+        n = max(len(w) for w in wavs)
+        x = torch.zeros(len(wavs), n)
+        for i, w in enumerate(wavs):
+            x[i, : len(w)] = torch.from_numpy(np.asarray(w, dtype=np.float32))
+        return type("Features", (), {"input_values": x})()
+
+    monkeypatch.setattr(singing, "load_ast", lambda model, device: (extractor, FakeSingingModel()))
+
+
 @pytest.fixture
 def lora_dir(tmp_path):
     d = tmp_path / "lora"

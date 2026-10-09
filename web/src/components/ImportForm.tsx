@@ -57,6 +57,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [aligner, setAligner] = useState<Aligner>('qwen3')
   const [trim, setTrim] = useState(true)
   const [tidy, setTidy] = useState(true)
+  const [detectSinging, setDetectSinging] = useState(true)
   // Optional clean-up, off by default; which ones have a model installed.
   const [cleanup, setCleanup] = useState<CleanupOption[]>([])
   const [available, setAvailable] = useState<CleanupOption[]>([])
@@ -115,6 +116,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
           trim: check && trim && (copyAudio || willSlice),
           cleanup: copyAudio || willSlice ? cleanup : [],
           tidyFillers: tidy,
+          detectSinging: check && detectSinging,
         }),
       )
     } catch (err) {
@@ -385,6 +387,14 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                       />{' '}
                       Trim the clip edges: long silence, and untranscribed sounds (a laugh, 嗯) a pause separates from
                       the words; keeps 0.15 s
+                    </label>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={detectSinging}
+                        onChange={(e) => setDetectSinging(e.target.checked)}
+                      />{' '}
+                      Flag sung clips (karaoke, covers): drop them in review with one click
                     </label>
                     <p className="muted hint">
                       Flags clips whose text does not match, with untranscribed speech, cut at the edge or with long

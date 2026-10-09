@@ -17,6 +17,7 @@ interface Props {
 export function DatasetPage({ id, imported, onTrain }: Props) {
   const [aligner, setAligner] = useState<Aligner>('qwen3')
   const [compareAsr, setCompareAsr] = useState(true)
+  const [detectSinging, setDetectSinging] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // Bumped when a check finishes, so the review reloads the results.
   const [version, setVersion] = useState(0)
@@ -30,7 +31,7 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
   async function check() {
     setError(null)
     try {
-      setJob(await checkDataset(id, aligner, compareAsr))
+      setJob(await checkDataset(id, aligner, compareAsr, detectSinging))
     } catch (e) {
       setError((e as Error).message)
     }
@@ -91,6 +92,15 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
               disabled={running}
             />{' '}
             and compare with ASR
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={detectSinging}
+              onChange={(e) => setDetectSinging(e.target.checked)}
+              disabled={running}
+            />{' '}
+            detect singing
           </label>
         </div>
         <p className="muted hint">

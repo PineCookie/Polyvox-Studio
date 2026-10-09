@@ -41,6 +41,8 @@ class Settings:
     # RoFormer checkpoints (separation.py) for the import's optional clean-up:
     # "model.ckpt" (config: same-stem or only .yaml beside it) or "model.ckpt|config.yaml".
     # Empty = that option is unavailable.
+    # AudioSet tagger for singing detection (singing.py): local dir or Hugging Face id.
+    singing_model: str = "MIT/ast-finetuned-audioset-10-10-0.4593"
     vocals_model: str = ""
     dereverb_model: str = ""
     denoise_model: str = ""
@@ -61,6 +63,7 @@ class Settings:
             asr_device=_env("ASR_DEVICE", cls.asr_device),
             align_model=_env("ALIGN_MODEL", cls.align_model),
             ctc_align_model=_env("CTC_ALIGN_MODEL", cls.ctc_align_model),
+            singing_model=_env("SINGING_MODEL", cls.singing_model),
             vocals_model=_env("VOCALS_MODEL", cls.vocals_model),
             dereverb_model=_env("DEREVERB_MODEL", cls.dereverb_model),
             denoise_model=_env("DENOISE_MODEL", cls.denoise_model),

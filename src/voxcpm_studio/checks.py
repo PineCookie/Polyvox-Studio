@@ -36,6 +36,7 @@ from . import slicer
 from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges, split_words, words_score
 from .fillers import is_filler
 from .manifests import ALIGN_FILE, ASR_FILE, read_manifest, read_sidecar, row_key, text_key
+from .singing import is_sung
 from .slicer import Vad
 
 # Set to flag a few percent of correct transcripts while catching most with
@@ -64,7 +65,7 @@ FILLER_LOUD_SHARE = 0.3
 # while rarely flagging a correct transcript.
 ASR_MORE_MIN = 2
 ASR_MORE_SHARE = 0.1
-FLAGS = ("mismatch", "asr_more", "filler", "extra_speech", "cut_edge", "long_silence")
+FLAGS = ("singing", "mismatch", "asr_more", "filler", "extra_speech", "cut_edge", "long_silence")
 
 
 @dataclass
@@ -85,6 +86,8 @@ class ClipCheck:
     sound_after: tuple[float, float] | None = None
     # compare_asr(): what ASR heard, when the check compared with it.
     asr: dict | None = None
+    # (sung, speech) scores of the singing detector, when the check ran it.
+    singing: tuple[float, float] | None = None
 
     def trim_range(self, pad: float = TRIM_PAD_S) -> tuple[float, float] | None:
         """(start, end) to keep: ``pad`` of silence around the speech, and
@@ -274,13 +277,22 @@ Checker = Callable[..., list[ClipCheck]]
 AlignFn = Callable[[list[np.ndarray], list[str]], list[Alignment]]
 # 16 kHz clips -> what ASR hears in each
 Transcribe = Callable[[list[np.ndarray]], list[str]]
+# 16 kHz clips -> (sung, speech) scores each (singing.SingingService.scores)
+SingingScores = Callable[[list[np.ndarray]], list[tuple[float, float]]]
 
 
-def make_checker(align: AlignFn, kind: str, vad: Vad | None = None, transcribe: Transcribe | None = None) -> Checker:
+def make_checker(
+    align: AlignFn,
+    kind: str,
+    vad: Vad | None = None,
+    transcribe: Transcribe | None = None,
+    singing: SingingScores | None = None,
+) -> Checker:
     """``vad`` defaults to Silero VAD, batched over the clips (looked up per
     call). With ``transcribe``, clips are also compared with what ASR hears,
     except where ``compare`` (third argument, per clip) is False: a text made
-    by the same ASR would only agree with itself."""
+    by the same ASR would only agree with itself. With `singing`, sung clips
+    are flagged (singing.is_sung)."""
 
     def check(wavs: list[np.ndarray], texts: list[str], compare: list[bool] | None = None) -> list[ClipCheck]:
         alignments = align(wavs, texts)
@@ -291,6 +303,12 @@ def make_checker(align: AlignFn, kind: str, vad: Vad | None = None, transcribe: 
             heard = transcribe([wavs[i] for i in todo]) if todo else []
             for i, h in zip(todo, heard, strict=True):
                 out[i] = with_asr(out[i], texts[i], h)
+        if singing:
+            for i, (sung, speech) in enumerate(singing(wavs)):
+                flags = set(out[i].flags) | ({"singing"} if is_sung(sung, speech) else set())
+                out[i] = replace(
+                    out[i], singing=(round(sung, 4), round(speech, 4)), flags=[f for f in FLAGS if f in flags]
+                )
         return out
 
     return check

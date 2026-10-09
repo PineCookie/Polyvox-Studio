@@ -3,11 +3,13 @@
 import json
 
 import pytest
+import soundfile as sf
 from fastapi.testclient import TestClient
+from test_aligner import tone
 from test_checks import write_dataset
 from test_importer import wait_job
 
-from voxcpm_studio import checks, manifests, slicer
+from voxcpm_studio import checks, manifests, singing, slicer
 from voxcpm_studio.api import create_app
 from voxcpm_studio.training import TrainParams
 
@@ -67,6 +69,31 @@ def test_dropped_clips_stay_listed_but_leave_training_and_stats(client, training
     client.post("/api/dataset-clip/drop", json={"id": ID, "index": 1, "dropped": False})
     assert client.get("/api/dataset-rows", params={"id": ID}).json()["dropped"] == 0
     assert client.post("/api/dataset-clip/drop", json={"id": ID, "index": 9}).status_code == 404
+
+
+def test_sung_clips_are_flagged_and_can_be_dropped_at_once(client, data_dir):
+    manifest = write_dataset(data_dir, ["第一句", "第二句", "第三句"])
+    sf.write(manifest.parent / "wavs" / "1.wav", tone([(0.0, 2.0)], 2.0), 16000)  # held throughout: "sung"
+
+    assert wait_job(client, client.post("/api/datasets/check", json={"id": ID}).json()["id"])["state"] == "done"
+    rows = client.get("/api/dataset-rows", params={"id": ID, "flag": "singing"}).json()["rows"]
+    assert [r["index"] for r in rows] == [1]
+
+    assert client.post("/api/datasets/drop-flagged", json={"id": ID, "flag": "singing"}).json() == {"dropped": 1}
+    assert client.post("/api/datasets/drop-flagged", json={"id": ID, "flag": "singing"}).json() == {"dropped": 0}
+    assert client.get("/api/dataset-rows", params={"id": ID}).json()["dropped"] == 1
+    assert client.post("/api/datasets/drop-flagged", json={"id": ID, "flag": "nope"}).status_code == 422
+    # Without detection asked for, nothing is flagged as sung.
+    body = {"id": ID, "detect_singing": False}
+    assert (
+        wait_job(client, client.post("/api/datasets/check", json=body).json()["id"])["result"]["flags"]["singing"] == 0
+    )
+
+
+def test_singing_rule_needs_little_speech():
+    assert singing.is_sung(0.05, 0.1)
+    assert not singing.is_sung(0.05, 0.6)  # talk over music lifts the singing score
+    assert not singing.is_sung(0.001, 0.0)
 
 
 def test_compare_asr_counts_what_the_transcript_lacks():

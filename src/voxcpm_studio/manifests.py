@@ -138,11 +138,30 @@ def set_dropped(path: Path, root: Path | None, index: int, dropped: bool) -> Non
     manifest_dir = path.resolve().parent
     keys = excluded_keys(manifest_dir)
     key = row_key(entries[index][0], manifest_dir)
-    keys = keys | {key} if dropped else keys - {key}
-    sidecar = manifest_dir / EXCLUDED_FILE
+    _write_excluded(manifest_dir, keys | {key} if dropped else keys - {key})
+
+
+def drop_flagged(path: Path, root: Path | None, flag: str) -> int:
+    """Drop every clip whose current check has ``flag``; returns how many were
+    newly dropped."""
+    manifest_dir = path.resolve().parent
+    checks = read_sidecar(manifest_dir / ALIGN_FILE).get("clips", {})
+    keys = excluded_keys(manifest_dir)
+    new = set()
+    for audio, text in _entries_for_review(path, root):
+        key = row_key(audio, manifest_dir)
+        check = checks.get(key)
+        if check and check.get("text") == text_key(text) and flag in check["flags"] and key not in keys:
+            new.add(key)
+    if new:
+        _write_excluded(manifest_dir, keys | new)
+    return len(new)
+
+
+def _write_excluded(manifest_dir: Path, keys: set[str]) -> None:
     tmp = manifest_dir / f".{EXCLUDED_FILE}.tmp"
     tmp.write_text(json.dumps({"clips": sorted(keys)}, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(sidecar)
+    tmp.replace(manifest_dir / EXCLUDED_FILE)
 
 
 def training_entries(path: Path, root: Path | None = None) -> tuple[list[dict], list[str]]:

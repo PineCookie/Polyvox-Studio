@@ -30,6 +30,7 @@ export interface Status {
   asr_loaded: boolean
   aligner_loaded: boolean
   separation_loaded: boolean
+  singing_loaded: boolean
   // Import clean-up options whose model is configured.
   cleanup: CleanupOption[]
   lora_rank: number | null
@@ -247,7 +248,7 @@ export type CleanupOption = 'separate' | 'dereverb' | 'denoise'
 // Forced aligners (src/voxcpm_studio/aligner.py).
 export type Aligner = 'qwen3' | 'ctc'
 
-export type CheckFlag = 'mismatch' | 'asr_more' | 'filler' | 'extra_speech' | 'cut_edge' | 'long_silence'
+export type CheckFlag = 'singing' | 'mismatch' | 'asr_more' | 'filler' | 'extra_speech' | 'cut_edge' | 'long_silence'
 
 // Alignment checks over a whole dataset (checks.summarize).
 export interface CheckSummary {
@@ -273,6 +274,7 @@ export interface ImportOptions {
   trim: boolean // cut long silent edges from the copies
   cleanup: CleanupOption[] // applied first, in this order: separate, dereverb, denoise
   tidyFillers: boolean // 哈哈哈哈 -> 哈哈 in every transcript
+  detectSinging: boolean // with check: flag sung clips
 }
 
 export type ImportJob = Job<{
@@ -303,6 +305,7 @@ export async function importDataset(o: ImportOptions): Promise<ImportJob> {
     dereverb: o.cleanup.includes('dereverb'),
     denoise: o.cleanup.includes('denoise'),
     tidy_fillers: o.tidyFillers,
+    detect_singing: o.detectSinging,
   }
   return (await postJson('/api/datasets/import', body)).json()
 }
@@ -314,8 +317,19 @@ export async function tidyFillers(id: string): Promise<{ changed: number }> {
   return (await postJson('/api/datasets/tidy-fillers', { id })).json()
 }
 
-export async function checkDataset(id: string, aligner: Aligner, compareAsr: boolean): Promise<CheckJob> {
-  return (await postJson('/api/datasets/check', { id, aligner, compare_asr: compareAsr })).json()
+export async function checkDataset(
+  id: string,
+  aligner: Aligner,
+  compareAsr: boolean,
+  detectSinging: boolean,
+): Promise<CheckJob> {
+  const body = { id, aligner, compare_asr: compareAsr, detect_singing: detectSinging }
+  return (await postJson('/api/datasets/check', body)).json()
+}
+
+/** Drop every clip whose check has the flag (e.g. all sung clips); returns how many were newly dropped. */
+export async function dropFlagged(id: string, flag: CheckFlag): Promise<number> {
+  return (await (await postJson('/api/datasets/drop-flagged', { id, flag })).json()).dropped
 }
 
 export async function getJob<J extends Job>(id: string): Promise<J> {

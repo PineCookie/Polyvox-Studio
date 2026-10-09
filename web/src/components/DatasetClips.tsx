@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { datasetAudioUrl, getDatasetRows } from '../api'
+import { datasetAudioUrl, dropFlagged, getDatasetRows } from '../api'
 import type { CheckFlag, CheckSummary, ClipPage, DatasetSource, FlagFilter } from '../api'
 import { ALIGNER_LABEL, FLAG_LABEL } from '../format'
 import { ClipView } from './ClipView'
@@ -78,6 +78,19 @@ export function DatasetClips({ source }: Props) {
     )
   }
 
+  async function dropAll(f: CheckFlag, count: number) {
+    if (!('id' in source)) return
+    const label = FLAG_LABEL[f][0]
+    if (!window.confirm(`Drop all ${count} clips flagged “${label}”? They stay listed and can be restored one by one.`))
+      return
+    try {
+      await dropFlagged(source.id, f)
+      setVersion((v) => v + 1)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   function toggle(index: number) {
     openPos.current = page?.rows.findIndex((r) => r.index === index) ?? 0
     setOpen((o) => (o === index ? null : index))
@@ -101,6 +114,7 @@ export function DatasetClips({ source }: Props) {
           worstFirst={worstFirst}
           onFlag={(v) => filter(() => setFlag(v))}
           onWorstFirst={(v) => filter(() => setWorstFirst(v))}
+          onDropAll={'id' in source ? dropAll : undefined}
         />
       )}
       <div className="clips-head">
@@ -243,11 +257,15 @@ interface CheckBarProps {
   worstFirst: boolean
   onFlag: (value: FlagFilter) => void
   onWorstFirst: (value: boolean) => void
+  // Drop every clip with one flag (a dataset, not a run's copy).
+  onDropAll?: (flag: CheckFlag, count: number) => void
 }
 
 /** What the alignment check found, with the review filters. */
-function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst }: CheckBarProps) {
+function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst, onDropAll }: CheckBarProps) {
   const counts = checks ? (Object.keys(FLAG_LABEL) as CheckFlag[]).filter((f) => checks.flags[f]) : []
+  const one = flag !== '' && flag !== 'any' && flag !== 'dropped' ? flag : null // a single flag shown
+  const oneCount = one ? (checks?.flags[one] ?? 0) : 0
   return (
     <div className="check-bar">
       <p>
@@ -278,6 +296,11 @@ function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst }: C
             <input type="checkbox" checked={worstFirst} onChange={(e) => onWorstFirst(e.target.checked)} /> Worst match
             first
           </label>
+        )}
+        {one && onDropAll && oneCount > 0 && (
+          <button type="button" className="ghost small" onClick={() => onDropAll(one, oneCount)}>
+            Drop all {oneCount.toLocaleString()}
+          </button>
         )}
       </div>
     </div>

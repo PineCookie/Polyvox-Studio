@@ -17,7 +17,12 @@ export function StatusBar({ status, onUnload }: Props) {
       {status.asr_loaded && <span className="muted">ASR loaded</span>}
       {status.aligner_loaded && <span className="muted">Aligner loaded</span>}
       {status.separation_loaded && <span className="muted">Separation loaded</span>}
-      {(status.loaded || status.asr_loaded || status.aligner_loaded || status.separation_loaded) && (
+      {status.singing_loaded && <span className="muted">Singing detector loaded</span>}
+      {(status.loaded ||
+        status.asr_loaded ||
+        status.aligner_loaded ||
+        status.separation_loaded ||
+        status.singing_loaded) && (
         <button
           type="button"
           className="ghost small"
