@@ -299,7 +299,7 @@ class AlignService:
     def model_for(self, kind: str) -> str:
         if kind not in ALIGNERS:
             raise ValueError(f"Unknown aligner '{kind}' (use {', '.join(ALIGNERS)}).")
-        return self.settings.align_model if kind == "qwen3" else self.settings.ctc_align_model
+        return self.settings.model_path("align_model" if kind == "qwen3" else "ctc_align_model")
 
     def align(self, audios: list[np.ndarray], texts: list[str], kind: str = "qwen3") -> list[Alignment]:
         """Align 16 kHz mono clips with their transcripts."""

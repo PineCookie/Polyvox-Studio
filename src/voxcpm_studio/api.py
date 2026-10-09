@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import checks, fillers, importer, lora_library, manifests, sharing, slicer
+from . import checks, fillers, importer, lora_library, manifests, models, sharing, slicer
 from .aligner import AlignService
 from .asr import SAMPLE_RATE as ASR_RATE
 from .asr import AsrService, language_of, load_audio
@@ -235,6 +235,35 @@ class JobOut(BaseModel):
     finished: float | None
 
 
+class ModelOut(BaseModel):
+    setting: str
+    name: str
+    purpose: str
+    repo: str
+    hub: str  # huggingface | modelscope
+    size_mb: int
+    license: str
+    required: bool
+    # downloaded: complete in the models folder; custom: configured explicitly;
+    # missing: not downloaded (a Hugging Face model would then download to its cache on first use).
+    state: Literal["downloaded", "custom", "missing"]
+    path: str  # what the setting resolves to
+    # When missing, loading still works: from the hub's cache (else the feature is unavailable).
+    fallback: bool
+
+
+class ModelsOut(BaseModel):
+    models_dir: str
+    endpoint: str  # the server's default download source ("" = huggingface.co)
+    models: list[ModelOut]
+
+
+class DownloadIn(BaseModel):
+    settings: list[str] = Field(min_length=1)
+    # Hugging Face or a mirror, e.g. https://hf-mirror.com; None = the server's default.
+    endpoint: str | None = None
+
+
 class ResumeIn(BaseModel):
     num_iters: int | None = Field(None, ge=1, le=1_000_000)
 
@@ -275,11 +304,6 @@ def create_app(
     align = align or AlignService(settings)
     separation = separation or SeparationService(lambda: asr.device)
     singing = singing or SingingService(settings, lambda: asr.device)
-    cleanup_models = {
-        "separate": settings.vocals_model,
-        "dereverb": settings.dereverb_model,
-        "denoise": settings.denoise_model,
-    }
     jobs = jobs or JobRunner()
     training = training or TrainingManager(
         settings,
@@ -297,17 +321,32 @@ def create_app(
     def conflict(request: Request, exc: TrainingConflict) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
+    def cleanup_models() -> dict[str, str]:
+        """Import clean-up option -> its RoFormer checkpoint ("" = not available). Looked up
+        each time: a model downloaded meanwhile is used."""
+        return {
+            "separate": settings.model_path("vocals_model"),
+            "dereverb": settings.model_path("dereverb_model"),
+            "denoise": settings.model_path("denoise_model"),
+        }
+
     def status_with_model_id() -> dict:
         # The hub id lets the UI flag LoRAs trained on a different base model.
         return {
             **service.status(),
-            "model_id": sharing.hub_id(settings.model),
+            "model_id": sharing.hub_id(settings.model_path("model")),
             "asr_loaded": asr.loaded,
             "aligner_loaded": align.loaded,
             "separation_loaded": separation.loaded,
             "singing_loaded": singing.loaded,
             # Import clean-up options whose model is configured.
-            "cleanup": [k for k, v in cleanup_models.items() if v],
+            "cleanup": [k for k, v in cleanup_models().items() if v],
+            # Not in the models folder (loading would download it to the Hugging Face cache).
+            "missing_required": [
+                s.name
+                for s in models.MODELS
+                if s.required and not settings.configured(s.setting) and not s.downloaded(settings.models_dir)
+            ],
         }
 
     @app.get("/api/status")
@@ -427,7 +466,8 @@ def create_app(
     def import_dataset(body: ImportIn) -> JobOut:
         """Start an import job; poll /api/jobs/{id}. The job's result is
         {"id", "imported", "transcribed", "sliced"}."""
-        cleanup = [k for k in cleanup_models if getattr(body, k)]
+        available = cleanup_models()
+        cleanup = [k for k in available if getattr(body, k)]
         # Fail fast on what can be checked now.
         try:
             if body.slice and not (body.copy_audio and body.transcribe):
@@ -437,8 +477,8 @@ def create_app(
             if body.trim and not (body.copy_audio and body.check):
                 raise ValueError("Trimming rewrites the copied clips: it needs copying and checking.")
             for option in cleanup:
-                if not cleanup_models[option]:
-                    raise ValueError(f"No model is configured for '{option}' (see README: Configuration).")
+                if not available[option]:
+                    raise ValueError(f"The model for '{option}' is not downloaded (see Models).")
             if cleanup and not body.copy_audio:
                 raise ValueError("Clean-up writes new audio: it needs copying.")
             importer.check_name(body.name, settings.data_dir)
@@ -481,7 +521,7 @@ def create_app(
                 guide=slicer.Guide(transcribe=heard, align=lambda wavs, texts: align.align(wavs, texts, body.aligner))
                 if body.slice
                 else None,
-                separation=separation.chain([cleanup_models[k] for k in cleanup]) if cleanup else None,
+                separation=separation.chain([available[k] for k in cleanup]) if cleanup else None,
                 tidy_fillers=body.tidy_fillers,
             )
             return {
@@ -735,6 +775,59 @@ def create_app(
         """Audio of one clip, by its index in a dataset (never by path)."""
         path = review_manifest(id, run)
         return FileResponse(_found(manifests.clip_audio, path, manifests.legacy_root(settings.data_dir), index))
+
+    @app.get("/api/models")
+    def list_models() -> ModelsOut:
+        out = []
+        for spec in models.MODELS:
+            path = settings.model_path(spec.setting)
+            if settings.configured(spec.setting):
+                state = "custom"
+            else:
+                state = "downloaded" if spec.downloaded(settings.models_dir) else "missing"
+            out.append(
+                ModelOut(
+                    setting=spec.setting,
+                    name=spec.name,
+                    purpose=spec.purpose,
+                    repo=spec.repo,
+                    hub=spec.hub,
+                    size_mb=spec.size_mb,
+                    license=spec.license,
+                    required=spec.required,
+                    state=state,
+                    path=path,
+                    fallback=bool(Settings.__dataclass_fields__[spec.setting].default),
+                )
+            )
+        return ModelsOut(models_dir=str(settings.models_dir.resolve()), endpoint=settings.hf_endpoint, models=out)
+
+    @app.post("/api/models/download", status_code=202)
+    def download_models(body: DownloadIn) -> JobOut:
+        """Download models into the models folder, one after another (job phase:
+        the setting being downloaded; done / total in MB)."""
+        unknown = [s for s in body.settings if s not in models.BY_SETTING]
+        if unknown:
+            raise HTTPException(422, f"Unknown model: {', '.join(unknown)}")
+        endpoint = (settings.hf_endpoint if body.endpoint is None else body.endpoint).strip().rstrip("/")
+        if endpoint and not endpoint.startswith(("http://", "https://")):
+            raise HTTPException(422, "The download source must be an http(s) URL.")
+        if running := jobs.running("download"):
+            raise HTTPException(409, f"Wait for “{running.title}” to finish.")
+        specs = [models.BY_SETTING[s] for s in body.settings]
+
+        def run(job: Job) -> dict:
+            for spec in specs:
+                models.download(
+                    spec,
+                    settings.models_dir,
+                    endpoint or None,
+                    lambda done, total, spec=spec: job.progress(spec.setting, done, total),
+                )
+            return {"downloaded": [s.setting for s in specs]}
+
+        names = ", ".join(s.name for s in specs)
+        return JobOut(**jobs.start("download", f"Download {names}", run).public())
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str) -> JobOut:

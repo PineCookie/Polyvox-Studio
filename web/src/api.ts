@@ -33,6 +33,8 @@ export interface Status {
   singing_loaded: boolean
   // Import clean-up options whose model is configured.
   cleanup: CleanupOption[]
+  // Required models not in the models folder yet (names).
+  missing_required: string[]
   lora_rank: number | null
   active_lora: string | null
 }
@@ -76,6 +78,39 @@ async function request(input: string, init?: RequestInit): Promise<Response> {
 
 export async function getStatus(): Promise<Status> {
   return (await request('/api/status')).json()
+}
+
+// Models the studio uses (src/voxcpm_studio/models.py).
+export interface ModelInfo {
+  setting: string
+  name: string
+  purpose: string
+  repo: string
+  hub: 'huggingface' | 'modelscope'
+  size_mb: number
+  license: string
+  required: boolean
+  // downloaded: in the models folder; custom: configured explicitly; missing: not downloaded.
+  state: 'downloaded' | 'custom' | 'missing'
+  path: string
+  fallback: boolean // when missing, still loads (from the hub's cache); else the feature is unavailable
+}
+
+export interface ModelList {
+  models_dir: string
+  endpoint: string // the server's default download source ("" = huggingface.co)
+  models: ModelInfo[]
+}
+
+export type DownloadJob = Job<{ downloaded: string[] }>
+
+export async function listModels(): Promise<ModelList> {
+  return (await request('/api/models')).json()
+}
+
+/** Download models into the models folder: a job (phase = the setting downloading, done / total in MB). */
+export async function downloadModels(settings: string[], endpoint: string): Promise<DownloadJob> {
+  return (await postJson('/api/models/download', { settings, endpoint })).json()
 }
 
 export async function listLoras(): Promise<Lora[]> {

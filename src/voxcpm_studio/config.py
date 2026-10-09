@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import models
+
 ENV_PREFIX = "VOXCPM_STUDIO_"
 
 
@@ -28,6 +30,8 @@ class Settings:
     # None = compile with Triton whenever running on CUDA.
     optimize: bool | None = None
     load_denoiser: bool = True
+    # VoxCPM's reference-audio denoiser (ZipEnhancer): local dir or ModelScope id.
+    denoiser_model: str = "iic/speech_zipenhancer_ans_multiloss_16k_base"
     # CUDA device index for training jobs; None = the default device.
     train_gpu: int | None = None
     # Speech recognition (transformers-native Qwen3-ASR): local dir or Hugging Face id.
@@ -46,6 +50,26 @@ class Settings:
     vocals_model: str = ""
     dereverb_model: str = ""
     denoise_model: str = ""
+    # Downloaded models (models.py) live here; a model setting left at its
+    # default uses the copy here once it is complete.
+    models_dir: Path = Path("models")
+    # Hugging Face or a mirror of it (e.g. https://hf-mirror.com) for downloads;
+    # "" = huggingface.co.
+    hf_endpoint: str = ""
+
+    def configured(self, setting: str) -> bool:
+        """The setting was changed from its default (e.g. by an environment variable)."""
+        return getattr(self, setting) != Settings.__dataclass_fields__[setting].default
+
+    def model_path(self, setting: str) -> str:
+        """The model a setting names: as configured when set explicitly, else the
+        downloaded copy in models_dir, else the default (a Hugging Face id that
+        loading downloads to its cache; "" = not available)."""
+        value = getattr(self, setting)
+        spec = models.BY_SETTING.get(setting)
+        if spec is None or self.configured(setting):
+            return value
+        return str(spec.path(self.models_dir).resolve()) if spec.downloaded(self.models_dir) else value
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -58,6 +82,7 @@ class Settings:
             device=_env("DEVICE", cls.device),
             optimize=None if optimize == "auto" else _parse_bool(optimize),
             load_denoiser=_parse_bool(_env("DENOISER", "1")),
+            denoiser_model=_env("DENOISER_MODEL", cls.denoiser_model),
             train_gpu=int(train_gpu) if train_gpu else None,
             asr_model=_env("ASR_MODEL", cls.asr_model),
             asr_device=_env("ASR_DEVICE", cls.asr_device),
@@ -67,4 +92,6 @@ class Settings:
             vocals_model=_env("VOCALS_MODEL", cls.vocals_model),
             dereverb_model=_env("DEREVERB_MODEL", cls.dereverb_model),
             denoise_model=_env("DENOISE_MODEL", cls.denoise_model),
+            models_dir=Path(_env("MODELS_DIR", str(cls.models_dir))),
+            hf_endpoint=_env("HF_ENDPOINT", cls.hf_endpoint).rstrip("/"),
         )

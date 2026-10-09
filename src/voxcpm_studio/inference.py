@@ -26,8 +26,9 @@ def load_voxcpm(settings: Settings, device: str, lora_config, optimize: bool):
     import voxcpm
 
     model = voxcpm.VoxCPM.from_pretrained(
-        settings.model,
+        settings.model_path("model"),
         load_denoiser=settings.load_denoiser,
+        zipenhancer_model_id=settings.model_path("denoiser_model"),
         # Compile after loading so a LoRA layout change never reuses an
         # incompatible torch.compile graph.
         optimize=False,
@@ -154,7 +155,7 @@ class InferenceService:
         return {
             "device": self.device,
             "optimize": self.optimize,
-            "model": self.settings.model,
+            "model": self.settings.model_path("model"),
             "loaded": self._model is not None,
             "lora_rank": self._lora_config.r if self._lora_config else None,
             "active_lora": self._loaded_lora[0] if self._loaded_lora and self._lora_active else None,
@@ -203,7 +204,9 @@ class InferenceService:
         target = lora_library.layout_covering(configs + ([needed] if needed else []))
 
         self._release()
-        logger.info("Loading %s (LoRA layout rank %s, optimize=%s)", self.settings.model, target.r, self.optimize)
+        logger.info(
+            "Loading %s (LoRA layout rank %s, optimize=%s)", self.settings.model_path("model"), target.r, self.optimize
+        )
         self._model = self._loader(self.settings, self.device, target, self.optimize)
         self._lora_config = target
         return self._model

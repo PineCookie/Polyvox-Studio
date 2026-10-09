@@ -12,11 +12,12 @@ To develop against a local VoxCPM checkout instead, temporarily set
 ## Layout
 
 ```
-models/            base model weights, e.g. models/openbmb__VoxCPM2 (git-ignored)
+models/            downloaded models, e.g. models/openbmb__VoxCPM2 (git-ignored)
 data/              training datasets: <name>/train.jsonl + audio (git-ignored)
 lora/              training runs and LoRA checkpoints (git-ignored)
 src/voxcpm_studio/
   config.py        settings from VOXCPM_STUDIO_* env vars
+  models.py        the models used, and downloading them (Hugging Face / mirror)
   lora_library.py  checkpoint discovery and metadata
   inference.py     model cache, LoRA hot-swap, synthesis
   manifests.py     training manifests: discovery, path fixes, inspection
@@ -47,13 +48,32 @@ cd web; npm install; npm run build; cd ..
 .\run.bat
 ```
 
-Open http://127.0.0.1:8808. The first generation after a model load takes about
-30 s while Triton compiles; later ones are fast.
+Open http://127.0.0.1:8808 and download the models in the **Models** tab
+(VoxCPM2 is required, about 5 GB; the rest only for preparing datasets). The
+first generation after a model load takes about 30 s while Triton compiles;
+later ones are fast.
+
+## Models
+
+The **Models** tab lists every model the studio uses, with its size, license and
+whether it is downloaded, and downloads the missing ones with progress into the
+models folder (`models/`; `VOXCPM_STUDIO_MODELS_DIR`). Downloads come from
+Hugging Face or a mirror of it (hf-mirror.com, or any URL; the server default is
+`VOXCPM_STUDIO_HF_ENDPOINT`), only the files that are used, and resume when
+interrupted. A model downloaded while the server runs is used from its next
+load, no restart needed.
+
+A Hugging Face model that is not downloaded still works: it is fetched into the
+Hugging Face cache the first time it loads (with no progress shown; the mirror
+setting applies). The import's clean-up models are only used from the models
+folder. A model variable set explicitly (below) always wins.
 
 ## Configuration
 
 | Variable | Default | |
 |---|---|---|
+| `VOXCPM_STUDIO_MODELS_DIR` | `models` | downloaded models (see Models) |
+| `VOXCPM_STUDIO_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` |
 | `VOXCPM_STUDIO_MODEL` | `openbmb/VoxCPM2` | local model dir or Hugging Face id |
 | `VOXCPM_STUDIO_LORA_DIR` | `lora` | LoRA checkpoints and training runs |
 | `VOXCPM_STUDIO_DATA_DIR` | `data` | JSONL training manifests |
@@ -65,16 +85,10 @@ Open http://127.0.0.1:8808. The first generation after a model load takes about
 | `VOXCPM_STUDIO_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (character vocabulary, one language) |
 | `VOXCPM_STUDIO_OPTIMIZE` | `auto` | Triton `torch.compile`; `auto` = on for CUDA |
 | `VOXCPM_STUDIO_DENOISER` | `1` | load the ZipEnhancer denoiser |
+| `VOXCPM_STUDIO_DENOISER_MODEL` | `iic/speech_zipenhancer_ans_multiloss_16k_base` | its dir or ModelScope id |
 
-`run.bat` defaults to the project's own `models/openbmb__VoxCPM2`, `lora/` and
-`data/`; set the variables to use other paths. To fetch the models:
-
-```powershell
-hf download openbmb/VoxCPM2 --local-dir models/openbmb__VoxCPM2
-hf download Qwen/Qwen3-ASR-1.7B-hf --local-dir models/Qwen__Qwen3-ASR-1.7B-hf  # optional
-hf download Qwen/Qwen3-ForcedAligner-0.6B-hf --local-dir models/Qwen__Qwen3-ForcedAligner-0.6B-hf  # optional
-hf download jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn --local-dir models/jonatasgrosman__wav2vec2-large-xlsr-53-chinese-zh-cn  # optional
-```
+`run.bat` uses the project's own `models/`, `lora/` and `data/`; set the
+variables to use other paths.
 
 Speech recognition (the **Transcribe** button for reference audio) uses
 Qwen3-ASR through transformers itself, so it needs no extra packages. It loads
@@ -139,13 +153,8 @@ The import can first clean the audio with the RoFormer models UVR5 and
 MSST-WebUI use (architectures vendored from ZFTurbo's Music-Source-Separation-
 Training, MIT): **separate** the voice from music and background, **remove
 reverb**, **remove noise**. Each is an import option, off by default, and
-available once its model is configured (`run.bat` uses the ones in `models/`):
-
-```powershell
-hf download pcunwa/Kim-Mel-Band-Roformer-FT kimmel_unwa_ft2_bleedless.ckpt config_kimmel_unwa_ft.yaml --local-dir models/pcunwa__Kim-Mel-Band-Roformer-FT
-hf download anvuew/dereverb_mel_band_roformer dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt dereverb_mel_band_roformer_anvuew.yaml --local-dir models/anvuew__dereverb_mel_band_roformer
-hf download poiqazwsx/melband-roformer-denoise denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt model_mel_band_roformer_denoise.yaml --local-dir models/aufr33__melband-roformer-denoise
-```
+available once its model is downloaded (Models tab). The de-reverb weights are
+GPL-3.0.
 
 Any MSST-style checkpoint works: set `VOXCPM_STUDIO_VOCALS_MODEL`,
 `VOXCPM_STUDIO_DEREVERB_MODEL` or `VOXCPM_STUDIO_DENOISE_MODEL` to `model.ckpt`
@@ -230,10 +239,6 @@ with a low speech score, so talk over background music is not taken for
 singing. It also works on separated vocals; very short sing-song exclamations
 can be flagged too. It is off by default (it slows checks down, and most
 datasets have no songs).
-
-```powershell
-hf download MIT/ast-finetuned-audioset-10-10-0.4593 --local-dir models/MIT__ast-finetuned-audioset-10-10-0.4593
-```
 
 ## Sharing LoRAs
 

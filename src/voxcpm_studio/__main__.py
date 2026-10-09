@@ -9,6 +9,10 @@ import sys
 
 # Must be set before tokenizers is imported.
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# A Hugging Face mirror also serves models loaded by id (downloaded to the
+# Hugging Face cache on first use); huggingface_hub reads it when imported.
+if mirror := os.environ.get("VOXCPM_STUDIO_HF_ENDPOINT", "").strip():
+    os.environ.setdefault("HF_ENDPOINT", mirror.rstrip("/"))
 
 
 def main() -> None:

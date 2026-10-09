@@ -155,6 +155,6 @@ class AsrService:
 
     def _ensure_loaded(self):
         if self._model is None:
-            logger.info("Loading ASR model %s on %s", self.settings.asr_model, self.device)
-            self._processor, self._model = self._loader(self.settings.asr_model, self.device)
+            logger.info("Loading ASR model %s on %s", self.settings.model_path("asr_model"), self.device)
+            self._processor, self._model = self._loader(self.settings.model_path("asr_model"), self.device)
         return self._processor, self._model

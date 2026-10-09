@@ -365,7 +365,7 @@ class TrainingManager:
                 val, _ = manifests.training_entries(val_path, root)
             else:
                 train, val = manifests.split_holdout(train, params.val_holdout)
-            model = resolve_model(self.settings.model)
+            model = resolve_model(self.settings.model_path("model"))
 
             run_dir.mkdir(parents=True)
             train_manifest = run_dir / "manifests" / "train.jsonl"

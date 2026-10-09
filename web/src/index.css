@@ -389,6 +389,19 @@ button:focus-visible,
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent);
 }
 
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+}
+
 .error {
   display: flex;
   align-items: center;
@@ -1520,6 +1533,63 @@ input[type='search']:focus {
 .weak-legend {
   color: var(--warn);
   font-weight: 600;
+}
+
+.tag.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-size: 0.72rem;
+}
+
+/* Models tab */
+.models {
+  display: grid;
+  gap: 14px;
+}
+
+.models-table td {
+  vertical-align: top;
+  text-align: left;
+}
+
+.models-table td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.models-table a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.models-table a:hover {
+  text-decoration: underline;
+}
+
+.models-table .tag {
+  margin-left: 0;
+  white-space: nowrap;
+}
+
+.models-table strong + .tag {
+  margin-left: 6px;
+}
+
+.models-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.models-actions .field {
+  min-width: min(100%, 320px);
+}
+
+.models-buttons {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .tag.warn {

@@ -108,7 +108,7 @@ def test_import_endpoint_refuses_clean_up_without_a_model(service, training, asr
 
     assert client.get("/api/status").json()["cleanup"] == []
     resp = client.post("/api/datasets/import", json={"source": str(lst), "name": "x", "separate": True})
-    assert resp.status_code == 422 and "No model" in resp.json()["detail"]
+    assert resp.status_code == 422 and "not downloaded" in resp.json()["detail"]
 
 
 def test_import_endpoint_separates_with_the_configured_chain(

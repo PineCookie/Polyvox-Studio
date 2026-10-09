@@ -3,6 +3,7 @@ import { getStatus, importLora, listLoras, synthesize, unloadModel } from './api
 import type { Lora, Status, SynthesisParams } from './api'
 import { forgetPeaks } from './peaks'
 import { History } from './components/History'
+import { ModelsView } from './components/ModelsView'
 import type { Clip } from './components/History'
 import { PrepareView } from './components/PrepareView'
 import { StatusBar } from './components/StatusBar'
@@ -12,7 +13,7 @@ import { TrainingView } from './components/TrainingView'
 import { VoicePanel } from './components/VoicePanel'
 
 // Workflow order: raw audio -> dataset -> LoRA -> speech.
-const TABS = { synthesize: 'Synthesize', prepare: 'Prepare', train: 'Train' } as const
+const TABS = { synthesize: 'Synthesize', prepare: 'Prepare', train: 'Train', models: 'Models' } as const
 type Tab = keyof typeof TABS
 
 function tabFromHash(): Tab {
@@ -166,6 +167,18 @@ export default function App() {
         </div>
       )}
 
+      {tab !== 'models' && (status?.missing_required.length ?? 0) > 0 && (
+        <div className="notice">
+          <span>
+            {status!.missing_required.join(', ')} is not downloaded yet. Download it in Models (with progress), or it
+            downloads from Hugging Face the first time it is needed.
+          </span>
+          <button type="button" className="ghost small" onClick={() => switchTab('models')}>
+            Open Models
+          </button>
+        </div>
+      )}
+
       {/* Both views stay mounted so form input and clips survive tab switches. */}
       <main className="layout" hidden={tab !== 'synthesize'}>
         <div className="main-col">
@@ -193,6 +206,7 @@ export default function App() {
         </aside>
       </main>
       {tab === 'prepare' && <PrepareView onError={showError} onTrain={trainOn} />}
+      {tab === 'models' && <ModelsView onError={showError} onChanged={refreshStatus} />}
       {tab === 'train' && (
         <TrainingView
           key={trainDataset?.key}

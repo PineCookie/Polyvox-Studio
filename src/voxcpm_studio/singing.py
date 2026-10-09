@@ -71,9 +71,9 @@ class SingingService:
         out: list[tuple[float, float]] = []
         with self._lock:
             if self._model is None:
-                logger.info("Loading singing detector %s on %s", self.settings.singing_model, self.device)
+                logger.info("Loading singing detector %s on %s", self.settings.model_path("singing_model"), self.device)
                 load = self._loader or load_ast  # looked up when first used
-                self._extractor, self._model = load(self.settings.singing_model, self.device)
+                self._extractor, self._model = load(self.settings.model_path("singing_model"), self.device)
             for start in range(0, len(wavs), BATCH_SIZE):
                 batch = wavs[start : start + BATCH_SIZE]
                 x = self._extractor(batch, sampling_rate=SAMPLE_RATE, return_tensors="pt").input_values

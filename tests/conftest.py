@@ -274,8 +274,10 @@ def model_dir(tmp_path):
 
 
 @pytest.fixture
-def settings(lora_dir, data_dir, model_dir):
-    return Settings(model=str(model_dir), lora_dir=lora_dir, data_dir=data_dir, device="cpu")
+def settings(lora_dir, data_dir, model_dir, tmp_path):
+    # An empty models folder: nothing counts as downloaded.
+    models = tmp_path / "models"
+    return Settings(model=str(model_dir), lora_dir=lora_dir, data_dir=data_dir, device="cpu", models_dir=models)
 
 
 @pytest.fixture
