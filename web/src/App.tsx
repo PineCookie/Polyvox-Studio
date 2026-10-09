@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getStatus, importLora, listLoras, synthesize, unloadModel } from './api'
 import type { Lora, Status, SynthesisParams } from './api'
+import { forgetPeaks } from './peaks'
 import { History } from './components/History'
 import type { Clip } from './components/History'
 import { PrepareView } from './components/PrepareView'
@@ -84,7 +85,10 @@ export default function App() {
   function removeClip(id: number) {
     setClips((prev) => {
       const clip = prev.find((c) => c.id === id)
-      if (clip) URL.revokeObjectURL(clip.url)
+      if (clip) {
+        URL.revokeObjectURL(clip.url)
+        forgetPeaks(clip.url)
+      }
       return prev.filter((c) => c.id !== id)
     })
   }

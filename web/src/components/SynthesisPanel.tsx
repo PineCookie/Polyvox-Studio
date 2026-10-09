@@ -1,7 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { transcribe } from '../api'
 import type { SynthesisParams } from '../api'
+import { forgetPeaks } from '../peaks'
+import { AudioPlayer } from './AudioPlayer'
 
 interface Props {
   busy: boolean
@@ -24,6 +26,17 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
   const [denoise, setDenoise] = useState(true)
   const [transcribing, setTranscribing] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  // A playable URL for the chosen reference, released when it changes.
+  const referenceUrl = useMemo(() => (referenceAudio ? URL.createObjectURL(referenceAudio) : null), [referenceAudio])
+  useEffect(
+    () => () => {
+      if (referenceUrl) {
+        URL.revokeObjectURL(referenceUrl)
+        forgetPeaks(referenceUrl)
+      }
+    },
+    [referenceUrl],
+  )
 
   const canSubmit = !busy && text.trim().length > 0
 
@@ -101,6 +114,7 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
             </button>
           )}
         </div>
+        {referenceUrl && <AudioPlayer url={referenceUrl} />}
         {referenceAudio && (
           <div className="file-row">
             <input

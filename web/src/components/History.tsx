@@ -1,3 +1,5 @@
+import { AudioPlayer } from './AudioPlayer'
+
 export interface Clip {
   id: number
   url: string
@@ -42,29 +44,35 @@ export function History({ clips, onUseSeed, onRemove }: Props) {
       </header>
       <ol className="history">
         {clips.map((clip) => (
-          <li key={clip.id} className="clip">
-            <p className="clip-text">{clip.text}</p>
-            <audio controls src={clip.url} preload="metadata" />
-            <div className="clip-meta">
-              <span className="tag">{clip.voice}</span>
-              {clip.seed !== null && <span className="muted">seed {clip.seed}</span>}
-              <span className="muted">{(clip.elapsedMs / 1000).toFixed(1)} s</span>
-              <span className="spacer" />
-              {clip.seed !== null && (
-                <button type="button" className="ghost small" onClick={() => onUseSeed(clip.seed!)}>
-                  Use seed
-                </button>
-              )}
-              <a className="button ghost small" href={clip.url} download={fileName(clip)}>
-                Download
-              </a>
-              <button type="button" className="ghost small" onClick={() => onRemove(clip.id)} aria-label="Remove clip">
-                Remove
-              </button>
-            </div>
-          </li>
+          <HistoryClip key={clip.id} clip={clip} onUseSeed={onUseSeed} onRemove={onRemove} />
         ))}
       </ol>
     </section>
+  )
+}
+
+function HistoryClip({ clip, onUseSeed, onRemove }: { clip: Clip } & Omit<Props, 'clips'>) {
+  return (
+    <li className="clip">
+      <p className="clip-text">{clip.text}</p>
+      <AudioPlayer url={clip.url} />
+      <div className="clip-meta">
+        <span className="tag">{clip.voice}</span>
+        {clip.seed !== null && <span className="muted">seed {clip.seed}</span>}
+        <span className="muted">{(clip.elapsedMs / 1000).toFixed(1)} s</span>
+        <span className="spacer" />
+        {clip.seed !== null && (
+          <button type="button" className="ghost small" onClick={() => onUseSeed(clip.seed!)}>
+            Use seed
+          </button>
+        )}
+        <a className="button ghost small" href={clip.url} download={fileName(clip)}>
+          Download
+        </a>
+        <button type="button" className="ghost small" onClick={() => onRemove(clip.id)} aria-label="Remove clip">
+          Remove
+        </button>
+      </div>
+    </li>
   )
 }
