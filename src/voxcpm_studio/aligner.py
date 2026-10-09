@@ -11,9 +11,7 @@ Two backends, both native to transformers / torchaudio (no extra packages):
   word starts, but CTC marks only a character's onset, so ends are early; the
   energy refinement below fixes the speech edges.
 
-Measured on real clips (two clips joined by a 0.15-0.45 s pause): the cut
-between them landed inside the pause for 92% (qwen3) and 90% (ctc) of pairs
-after refining edges, and most misses were shared, i.e. untranscribed fillers.
+After that refinement both place speech edges about equally well.
 """
 
 from __future__ import annotations
@@ -77,11 +75,8 @@ def worst_window(confidences: list[float], size: int, geometric: bool = False) -
     """Lowest mean confidence over ``size`` consecutive words.
 
     A wrong phrase inside a long, otherwise right transcript barely moves the
-    clip's mean, but sinks the windows over it. Measured with a third of the
-    words replaced, flagging 5% of correct clips: qwen3 caught 40% by mean and
-    74% by 5-word windows; ctc 6% by mean and 86% by 3-word geometric windows
-    (CTC confidences of wrong characters are near zero, so the geometric mean
-    resolves them).
+    clip's mean, but sinks the windows over it. CTC confidences of wrong
+    characters are near zero, so for CTC the geometric mean resolves them.
     """
     if not confidences:
         return 0.0
@@ -203,8 +198,7 @@ class CtcAligner:
             audios, sampling_rate=SAMPLE_RATE, return_tensors="pt", padding=True, return_attention_mask=True
         )
         mask = inputs.attention_mask.to(self.model.device)
-        # fp16 on CUDA: ~1.9x faster; on 656 clips no mismatch flag changed and
-        # 99.8% of word starts were identical to fp32.
+        # fp16 on CUDA: much faster, and the alignments match fp32's.
         cuda = self.model.device.type == "cuda"
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16, enabled=cuda):
             logits = self.model(inputs.input_values.to(self.model.device), attention_mask=mask).logits
@@ -351,7 +345,7 @@ def edge_levels(wav: np.ndarray) -> tuple[float, float]:
 def loud_frames(wav: np.ndarray) -> np.ndarray:
     """Per 10 ms frame: within EDGE_DROP_DB of the clip's loud frames, and at
     least EDGE_FLOOR_DB above its noise floor (recordings with background noise
-    or music have floors only 20-30 dB below the voice)."""
+    or music have a floor not far below the voice)."""
     db = _frame_db(wav)
     loud, floor = np.percentile(db, 95), np.percentile(db, 5)
     threshold = max(loud - EDGE_DROP_DB, min(floor + EDGE_FLOOR_DB, loud - EDGE_FLOOR_DB))

@@ -106,8 +106,8 @@ def silero_vad_many(wavs: list[np.ndarray]) -> list[list[tuple[float, float]]]:
     """``silero_vad`` for many clips at once: the clips' windows go through the
     model as one batch per step (each keeps its own state), then Silero's own
     rules turn each clip's probabilities into segments. Per clip, Silero steps
-    through 32 ms windows one model call at a time; batched, a 656-clip check
-    spent 15 s of its 21 s here."""
+    through 32 ms windows one model call at a time, which made VAD the slowest
+    part of a dataset check."""
     global _vad_model
     import torch
     from silero_vad import load_silero_vad
@@ -374,10 +374,9 @@ def _quiet_edges(db: np.ndarray, start: float, end: float, speech_start: float, 
     """Move clip edges that sit on sound inward to the first quiet 10 ms frame
     (``db`` per frame relative to the loud frames), never past the speech.
 
-    Measured on a live recording: without this, about 1 clip in 5 began or
-    ended in sound: the tail of an earlier word where an ASR chunk began, or an
-    untranscribed filler inside a "pause" that was quiet relative to the chunk
-    but not to the clip.
+    Without this, clips can begin or end in sound: the tail of an earlier word
+    where an ASR chunk began, or an untranscribed filler inside a "pause" that
+    was quiet relative to the chunk but not to the clip.
     """
     f, limit = int(start * 100), int(speech_start * 100)
     while f < min(limit, len(db)) and db[f] > -EDGE_QUIET_DB:
@@ -409,8 +408,8 @@ def word_clips(wav16k: np.ndarray, text: str, alignment, opts: SliceOptions) -> 
     plan = plan_word_clips(times, breaks, opts, [p[0] for p in pauses])
     duration = len(wav16k) / VAD_RATE
     # Cut at the quietest moment of the pause after a clip's last word: a
-    # pause found while the previous word still fades has its middle too early
-    # (measured: clips then opened with that word's tail). Words that run
+    # pause found while the previous word still fades has its middle too early,
+    # and the next clip would open with that word's tail. Words that run
     # together are cut at their quietest moment.
     cuts = [
         _quietest(wav16k, pauses[j][1], pauses[j][2])

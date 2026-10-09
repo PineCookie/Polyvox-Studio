@@ -8,8 +8,9 @@ For each clip with a transcript:
   misses something said (a dropped phrase, an untranscribed filler or laugh).
   The aligner score cannot see this: the remaining words still align well.
 - ``cut_edge``: the sound is still loud at the start or end of the file (within
-  CUT_EDGE_DB of the speech); a word may be cut. (Measured on the waveform: Silero VAD keeps a segment open to the
-  end of a clip whenever the clip ends shortly after speech.)
+  CUT_EDGE_DB of the speech); a word may be cut. Measured on the waveform:
+  Silero VAD keeps a segment open to the end of a clip that ends shortly after
+  speech.
 - ``long_silence``: over LONG_SILENCE_S of silence before or after the speech.
 
 ``align.json`` (manifests.ALIGN_FILE) holds the results by audio path as in
@@ -32,18 +33,17 @@ from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_ed
 from .manifests import ALIGN_FILE, read_manifest, row_key, text_key
 from .slicer import Vad
 
-# Calibrated on ~600 real clips to flag ~4% of correct transcripts, catching
-# ~65% (qwen3) / ~83% (ctc) of transcripts with a third of the words wrong.
+# Set to flag a few percent of correct transcripts while catching most with
+# part of the text wrong. The backends' scores are on different scales.
 MISMATCH_BELOW = {"qwen3": 0.45, "ctc": 1e-5}
-# A single word this unsure is marked in the clip view: 5% of correct words, and
-# 76% (qwen3) / 88% (ctc) of words replaced by wrong ones.
+# A single word this unsure is marked in the clip view: rarely a correct word,
+# mostly words that are not what was said.
 WEAK_WORD_BELOW = {"qwen3": 0.55, "ctc": 6e-5}
 EXTRA_SPEECH_S = 0.3
 EXTRA_MARGIN_S = 0.25  # voice this close to the aligned words is theirs (breath, release)
 LONG_SILENCE_S = 1.0
-# A loud edge counts as cut only within this many dB of the clip's speech: in
-# live recordings, background music and room noise sit 20-25 dB down and are
-# not a cut word (cut words measured -1 to -5 dB, word tails -10 to -15 dB).
+# A loud edge counts as cut only within this many dB of the clip's speech:
+# background music and room noise sit lower and are not a cut word.
 CUT_EDGE_DB = 20.0
 TRIM_PAD_S = 0.15  # silence kept around the speech when trimming (as the slicer pads)
 MIN_TRIM_S = 0.1  # trimming less than this is not worth rewriting a file

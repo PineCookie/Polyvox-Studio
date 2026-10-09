@@ -265,8 +265,8 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                   </label>
                 ))}
                 <p className="muted hint">
-                  RoFormer models (as in UVR / MSST-WebUI), about 20× real time on the GPU. Separation keeps the voice
-                  and drops music and background; de-reverb and denoise are for echoey or noisy recordings.
+                  RoFormer models (as in UVR / MSST-WebUI) on the GPU. Separation keeps the voice and drops music and
+                  background; de-reverb and denoise are for echoey or noisy recordings.
                 </p>
               </fieldset>
 

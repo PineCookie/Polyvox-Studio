@@ -151,7 +151,7 @@ Any MSST-style checkpoint works: set `VOXCPM_STUDIO_VOCALS_MODEL`,
 `VOXCPM_STUDIO_DEREVERB_MODEL` or `VOXCPM_STUDIO_DENOISE_MODEL` to `model.ckpt`
 (its config: the same-name or only `.yaml` beside it) or `model.ckpt|config.yaml`.
 The default vocal model is a "bleedless" one: for training data, music left in the
-voice is worse than a slightly thinner voice. It runs at about 20× real time and
+voice is worse than a slightly thinner voice. It adds time to an import and
 leaves small artifacts (alignment scores on clean speech drop a little), so use it
 for recordings with music or background under the voice, not for clean ones.
 Separation does not remove singing.
@@ -183,9 +183,9 @@ it to play from that point. Expanding a row (its length) shows a larger
 waveform with every word where the aligner placed it; words it is unsure of,
 usually not what was said, are marked in orange on both.
 
-Mostly not caught: a transcript that leaves out a few words (about 1 in 7 is
-flagged). The aligner spreads the remaining words over the audio; comparing with
-ASR output (planned) will find those.
+Mostly not caught: a transcript that leaves out a few words. The aligner spreads
+the remaining words over the audio; comparing with ASR output (planned) will find
+those.
 
 ## Sharing LoRAs
 
