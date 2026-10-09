@@ -178,6 +178,7 @@ export interface TrainParams {
   num_iters: number
   batch_size: number
   grad_accum_steps: number
+  max_batch_tokens: number // clips too long for this per-batch budget are left out; 0 = no limit
   learning_rate: number
   weight_decay: number
   warmup_steps: number

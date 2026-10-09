@@ -67,6 +67,8 @@ class TrainParams(BaseModel):
     val_holdout: int = Field(2, ge=0, le=50)
     num_iters: int = Field(5000, ge=1, le=1_000_000)
     batch_size: int = Field(1, ge=1, le=64)
+    # Per-batch token budget: clips too long for it are left out (0 = no limit).
+    max_batch_tokens: int = Field(8192, ge=0)
     grad_accum_steps: int = Field(1, ge=1, le=64)
     learning_rate: float = Field(1e-4, gt=0, le=1)
     weight_decay: float = Field(0.01, ge=0)
@@ -245,6 +247,7 @@ def build_config(
         "sample_rate": sample_rate,
         "out_sample_rate": out_sample_rate,
         "batch_size": params.batch_size,
+        "max_batch_tokens": params.max_batch_tokens,
         "grad_accum_steps": params.grad_accum_steps,
         "num_workers": params.num_workers,
         "num_iters": params.num_iters,

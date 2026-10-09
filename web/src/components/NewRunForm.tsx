@@ -2,8 +2,8 @@ import { useState } from 'react'
 import type { DatasetReport, TrainParams } from '../api'
 import { datasetName, formatStep } from '../format'
 import { DatasetReview } from './DatasetReview'
-import { DEFAULT_PARAMS } from '../trainParams'
-import type { Params } from '../trainParams'
+import { DEFAULT_EPOCHS, DEFAULT_PARAMS, epochsOf, scheduleFor } from '../trainParams'
+import type { Params, Schedule } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { SubTabs } from './SubTabs'
 
@@ -22,6 +22,14 @@ type Tab = 'progress' | 'dataset' | 'parameters'
 // Matches training.RUN_NAME: letters of any language, digits, "." "_" "-".
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 
+const SCHEDULE_KEYS: (keyof Schedule)[] = [
+  'num_iters',
+  'warmup_steps',
+  'save_interval',
+  'valid_interval',
+  'log_interval',
+]
+
 function suggestName(dataset: string, rank: number, taken: string[]): string {
   const base = `${datasetName(dataset).split('/').at(-1)}_r${rank}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
   let name = base
@@ -32,15 +40,27 @@ function suggestName(dataset: string, rank: number, taken: string[]): string {
 /** A run before it starts: the same page as an existing run, with editable sections. */
 export function NewRunForm({ datasets, runNames, activeRun, onStart, initialDataset }: Props) {
   const [tab, setTab] = useState<Tab>('dataset')
-  const [params, setParams] = useState<Params>(DEFAULT_PARAMS)
+  const [base, setBase] = useState<Params>(DEFAULT_PARAMS)
+  const [epochTarget, setEpochTarget] = useState(DEFAULT_EPOCHS)
+  // Schedule values set by hand in Advanced; the rest follow from the epochs.
+  const [overrides, setOverrides] = useState<Partial<Schedule>>({})
   const [dataset, setDataset] = useState(initialDataset ?? '')
   const [customName, setCustomName] = useState<string | null>(null)
   const [useValDataset, setUseValDataset] = useState(false)
   const [report, setReport] = useState<DatasetReport | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(base.val_holdout, report.valid - 1)) : 0
+  const params: Params = {
+    ...base,
+    ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base) : {}),
+    ...overrides,
+  }
   const name = customName ?? (dataset ? suggestName(dataset, params.lora_rank, runNames) : '')
-  const set = <K extends keyof Params>(key: K, value: Params[K]) => setParams((p) => ({ ...p, [key]: value }))
+  const set = <K extends keyof Params>(key: K, value: Params[K]) =>
+    SCHEDULE_KEYS.includes(key as keyof Schedule)
+      ? setOverrides((o) => ({ ...o, [key]: value }))
+      : setBase((p) => ({ ...p, [key]: value }))
 
   const nameError = !name
     ? null
@@ -49,13 +69,14 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       : runNames.includes(name)
         ? 'A run with this name exists.'
         : null
-  const numbersValid = Object.values(params).every((v) => typeof v !== 'number' || Number.isFinite(v))
+  const numbersValid =
+    Number.isFinite(epochTarget) && Object.values(params).every((v) => typeof v !== 'number' || Number.isFinite(v))
   const valValid = !useValDataset || !!params.val_dataset
   // Unreadable clips would crash the job mid-epoch, so they block the start.
   const datasetValid = !!report && report.valid > 0 && report.errors.length === 0
 
-  const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(params.val_holdout, report.valid - 1)) : 0
-  const epochs = trainClips > 0 ? (params.num_iters * params.batch_size * params.grad_accum_steps) / trainClips : null
+  const epochs = epochsOf(params, trainClips)
+  const perStep = params.batch_size * params.grad_accum_steps
 
   // What still blocks the start, in the order the page is filled in.
   const blocker = !dataset
@@ -144,8 +165,10 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
               <span>
                 <strong>{trainClips.toLocaleString()}</strong> training clips from {datasetName(dataset)}
               </span>
-              <span>{formatStep(params.num_iters)} steps</span>
-              {epochs !== null && <span className="muted">≈ {epochs.toFixed(1)} epochs</span>}
+              {epochs !== null && <span>{epochs.toFixed(1)} epochs</span>}
+              <span className="muted">
+                {formatStep(params.num_iters)} steps × {perStep} clips
+              </span>
               <span className="muted">
                 rank {params.lora_rank} · alpha {params.lora_alpha}
               </span>
@@ -205,11 +228,30 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
                 />
               </label>
             }
+            epochs={{
+              value: epochTarget,
+              onChange: (v) => {
+                setEpochTarget(v)
+                // Steps follow the epochs again.
+                setOverrides((o) => {
+                  const rest = { ...o }
+                  delete rest.num_iters
+                  return rest
+                })
+              },
+            }}
             hint={
-              epochs !== null && (
+              trainClips > 0 ? (
                 <p className="muted hint">
-                  ≈ {epochs.toFixed(1)} epochs over {trainClips.toLocaleString()} training clips
+                  = {formatStep(params.num_iters)} steps of {perStep} clips ({params.batch_size} ×{' '}
+                  {params.grad_accum_steps} accumulated) over {trainClips.toLocaleString()} training clips
+                  {epochs !== null && Math.abs(epochs - epochTarget) > 0.05 && ` (≈ ${epochs.toFixed(1)} epochs)`};
+                  checkpoint and validation every {formatStep(params.save_interval)} steps, warmup{' '}
+                  {formatStep(params.warmup_steps)}. VoxCPM recommends 1–3 epochs for one speaker; compare the
+                  checkpoints by listening.
                 </p>
+              ) : (
+                <p className="muted hint">Steps follow from the epochs once a dataset is chosen.</p>
               )
             }
           />

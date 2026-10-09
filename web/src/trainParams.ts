@@ -3,19 +3,28 @@ import type { TrainParams } from './api'
 
 export type Params = Omit<TrainParams, 'name' | 'dataset'>
 
+// Following VoxCPM's fine-tuning guide: an effective batch of 16 (here 4 clips x
+// 4 accumulated, which fits a 16 GB card), max_batch_tokens 8192, and 1-3 epochs
+// for one speaker. Steps, warmup and checkpoint intervals follow from the epochs
+// and the dataset's size (scheduleFor).
+export const DEFAULT_EPOCHS = 2
+export const WARMUP_SHARE = 0.05 // of the steps
+export const CHECKPOINTS_PER_EPOCH = 2
+
 export const DEFAULT_PARAMS: Params = {
   val_dataset: null,
   val_holdout: 2,
-  num_iters: 5000,
-  batch_size: 1,
-  grad_accum_steps: 1,
+  num_iters: 200,
+  batch_size: 4,
+  grad_accum_steps: 4,
+  max_batch_tokens: 8192,
   learning_rate: 1e-4,
   weight_decay: 0.01,
-  warmup_steps: 100,
+  warmup_steps: 10,
   max_grad_norm: 1.0,
-  log_interval: 10,
-  valid_interval: 500,
-  save_interval: 1000,
+  log_interval: 5,
+  valid_interval: 50,
+  save_interval: 50,
   num_workers: 2,
   lora_rank: 32,
   lora_alpha: 32,
@@ -25,7 +34,31 @@ export const DEFAULT_PARAMS: Params = {
   enable_proj: false,
 }
 
-/** The parameters a run was started with, from its train_config.yaml. */
+export type Schedule = Pick<Params, 'num_iters' | 'warmup_steps' | 'save_interval' | 'valid_interval' | 'log_interval'>
+
+/** Steps for `epochs` passes over `clips` at the params' effective batch, and the
+ * warmup, checkpoint / validation and log intervals that go with them. */
+export function scheduleFor(epochs: number, clips: number, params: Params): Schedule {
+  const perStep = Math.max(1, params.batch_size * params.grad_accum_steps)
+  const stepsPerEpoch = Math.max(1, clips / perStep)
+  const steps = Math.max(1, Math.ceil(epochs * stepsPerEpoch))
+  const interval = Math.max(1, Math.round(stepsPerEpoch / CHECKPOINTS_PER_EPOCH))
+  return {
+    num_iters: steps,
+    warmup_steps: Math.max(1, Math.round(steps * WARMUP_SHARE)),
+    save_interval: interval,
+    valid_interval: interval,
+    log_interval: Math.max(1, Math.min(10, Math.round(stepsPerEpoch / 10))),
+  }
+}
+
+/** Passes over the training clips a run makes (num_iters x effective batch / clips). */
+export function epochsOf(params: Params, clips: number): number | null {
+  return clips > 0 ? (params.num_iters * params.batch_size * params.grad_accum_steps) / clips : null
+}
+
+/** The parameters a run was started with, from its train_config.yaml. Runs from
+ * before these defaults keep their own values; missing keys mean the old ones. */
 export function paramsFromConfig(config: Record<string, unknown>): Params {
   const lora = (config.lora ?? {}) as Record<string, unknown>
   const num = (v: unknown, fallback: number) => (typeof v === 'number' ? v : fallback)
@@ -34,8 +67,9 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
   return {
     ...d,
     num_iters: num(config.num_iters, d.num_iters),
-    batch_size: num(config.batch_size, d.batch_size),
-    grad_accum_steps: num(config.grad_accum_steps, d.grad_accum_steps),
+    batch_size: num(config.batch_size, 1),
+    grad_accum_steps: num(config.grad_accum_steps, 1),
+    max_batch_tokens: num(config.max_batch_tokens, 0),
     learning_rate: num(config.learning_rate, d.learning_rate),
     weight_decay: num(config.weight_decay, d.weight_decay),
     warmup_steps: num(config.warmup_steps, d.warmup_steps),

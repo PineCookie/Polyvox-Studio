@@ -15,6 +15,7 @@ On top of the script this adds:
   behind a pending synchronous read on the same pipe.
 - Validation samples. Audio the script logs to TensorBoard is also written as
   WAV files that the UI can play.
+- Frozen base weights in bfloat16 for LoRA runs (``frozen_weights_in_bf16``).
 """
 
 from __future__ import annotations
@@ -67,6 +68,40 @@ def save_samples_to(samples_dir: Path) -> None:
     SummaryWriter.add_audio = add_audio_and_save
 
 
+def frozen_weights_in_bf16() -> None:
+    """For LoRA runs, keep the frozen base weights in bfloat16 instead of float32.
+
+    voxcpm's training mode leaves the whole model in float32, which fills a
+    16 GB card at batch size 1. Training steps run under bfloat16 autocast,
+    which casts those weights to bfloat16 for every matrix product anyway, so
+    storing the frozen matrices that way changes little but halves their memory.
+    LoRA weights (trained), norms and biases (1-D) and the audio VAE stay float32.
+    Set VOXCPM_STUDIO_TRAIN_FP32=1 to keep everything float32.
+    """
+    if os.environ.get("VOXCPM_STUDIO_TRAIN_FP32") == "1":
+        return
+    import torch
+    from voxcpm.model import voxcpm as v1
+    from voxcpm.model import voxcpm2 as v2
+
+    for cls in (v2.VoxCPM2Model, v1.VoxCPMModel):
+        original = cls.from_local.__func__
+
+        def from_local(klass, *args, _original=original, **kwargs):
+            model = _original(klass, *args, **kwargs)
+            if kwargs.get("training") and kwargs.get("lora_config") is not None:
+                converted = 0
+                for name, param in model.named_parameters():
+                    frozen_matrix = not param.requires_grad and param.dim() >= 2 and param.dtype == torch.float32
+                    if frozen_matrix and "audio_vae" not in name:
+                        param.data = param.data.to(torch.bfloat16)
+                        converted += param.numel()
+                print(f"[studio] Frozen weights in bfloat16: {converted / 1e9:.2f}B parameters.", file=sys.stderr)
+            return model
+
+        cls.from_local = classmethod(from_local)
+
+
 def process_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import _winapi
@@ -107,6 +142,7 @@ def main() -> None:
     args = parser.parse_args()
 
     save_samples_to(args.samples_dir)
+    frozen_weights_in_bf16()
     threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid), daemon=True).start()
     sys.argv = [str(SCRIPT), "--config_path", str(args.config_path)]
     runpy.run_path(str(SCRIPT), run_name="__main__")
