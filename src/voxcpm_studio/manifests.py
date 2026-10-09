@@ -16,6 +16,7 @@ import json
 import random
 import statistics
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -208,6 +209,7 @@ class ClipRow:
     speech: tuple[float, float] | None = None  # aligned words' span in seconds, when checked
     peaks: list[float] | None = None  # waveform outline (clip_peaks); None: unreadable
     dropped: bool = False  # dropped in review: not used for training (excluded.json)
+    trim: tuple[float, float] | None = None  # what trimming would keep (trim_of), seconds
 
 
 @dataclass
@@ -302,6 +304,11 @@ def clip_peaks(audio: str, bins: int = PEAK_BINS) -> list[float] | None:
     return list(peaks) if peaks is not None else None
 
 
+# A saved check -> what trimming would keep (checks.ClipCheck.trim_range); set by the caller,
+# as checks.py builds on this module.
+TrimOf = Callable[[dict], tuple[float, float] | None]
+
+
 def read_rows(
     path: Path,
     root: Path | None = None,
@@ -310,6 +317,7 @@ def read_rows(
     query: str = "",
     flag: str | None = None,
     worst_first: bool = False,
+    trim_of: TrimOf | None = None,
 ) -> ClipPage:
     """One page of a manifest's clips for review.
 
@@ -367,6 +375,7 @@ def read_rows(
             speech=(check["start"], check["end"]) if check and "start" in check else None,
             peaks=clip_peaks(audio),
             dropped=key in excluded,
+            trim=trim_of(check) if trim_of and check else None,
         )
         for i, audio, text, key, check in matches[offset : offset + limit]
     ]
@@ -387,7 +396,7 @@ class ClipDetail:
     check: dict | None = None  # the clip's current check as align.json holds it
 
 
-def clip_detail(path: Path, root: Path | None, index: int) -> ClipDetail:
+def clip_detail(path: Path, root: Path | None, index: int, trim_of: TrimOf | None = None) -> ClipDetail:
     """One clip for a closer look: a finer waveform and the checked word timings."""
     entries = _entries_for_review(path, root)
     if not 0 <= index < len(entries):
@@ -410,6 +419,7 @@ def clip_detail(path: Path, root: Path | None, index: int) -> ClipDetail:
         speech=(check["start"], check["end"]) if check and "start" in check else None,
         peaks=clip_peaks(audio, DETAIL_BINS),
         dropped=key in excluded_keys(manifest_dir),
+        trim=trim_of(check) if trim_of and check else None,
     )
     return ClipDetail(
         row,

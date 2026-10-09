@@ -491,16 +491,23 @@ def trim_clips(manifest: Path, root: Path | None, cut_for: CutFor) -> dict:
     return {"trimmed": trimmed, "skipped": skipped}
 
 
+def squeezed_edge_filler(check: ClipCheck) -> bool:
+    """The first or last word is a filler the aligner squeezed to nothing: where
+    the sound really is (maybe a quiet blob trimming would cut) is unknown."""
+    edges = check.words[:1] + check.words[-1:]
+    return any(is_filler(w[0]) and w[2] - w[1] < FILLER_SQUEEZED_S for w in edges)
+
+
 def trim_flagged(manifest: Path, root: Path | None, flag: str) -> dict:
     """``trim_clips`` for every clip with ``flag``, except those also flagged
-    TRIM_REVIEW_FIRST (counted as "review")."""
+    TRIM_REVIEW_FIRST or with a squeezed filler at an edge (counted as "review")."""
     review = 0
 
     def cut_for(_: int, check: ClipCheck | None) -> tuple[float, float] | None:
         nonlocal review
         if check is None or flag not in check.flags:
             return None
-        if any(f in check.flags for f in TRIM_REVIEW_FIRST):
+        if any(f in check.flags for f in TRIM_REVIEW_FIRST) or squeezed_edge_filler(check):
             review += 1
             return None
         return check.trim_range()

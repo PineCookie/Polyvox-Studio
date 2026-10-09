@@ -176,6 +176,8 @@ class ClipRowOut(BaseModel):
     speech: tuple[float, float] | None
     peaks: list[float] | None
     dropped: bool  # dropped in review: left out of training runs
+    # What trimming keeps, (start, end) seconds; None when not checked or there is little to trim.
+    trim: tuple[float, float] | None
 
 
 class WordOut(BaseModel):
@@ -203,8 +205,6 @@ class ClipDetailOut(ClipRowOut):
     # before / after this second. None when there is none.
     sound_before: float | None
     sound_after: float | None
-    # What trimming keeps, (start, end) seconds; None when there is little to trim.
-    trim: tuple[float, float] | None
 
 
 class ClipPageOut(BaseModel):
@@ -641,6 +641,9 @@ def create_app(
         report = manifests.inspect(review_manifest(id, run), manifests.legacy_root(settings.data_dir))
         return DatasetReportOut(id=id or f"run:{run}", **dataclasses.asdict(report))
 
+    def trim_of(saved: dict) -> tuple[float, float] | None:
+        return checks.ClipCheck.from_saved(saved).trim_range()
+
     @app.get("/api/dataset-rows")
     def dataset_rows(
         id: str | None = None,
@@ -655,7 +658,14 @@ def create_app(
         flag, or "dropped" clips; ``order=worst`` puts the lowest scores first."""
         path = review_manifest(id, run)
         page = manifests.read_rows(
-            path, manifests.legacy_root(settings.data_dir), max(0, offset), limit, q, flag or None, order == "worst"
+            path,
+            manifests.legacy_root(settings.data_dir),
+            max(0, offset),
+            limit,
+            q,
+            flag or None,
+            order == "worst",
+            trim_of,
         )
         return ClipPageOut(
             total=page.total,
@@ -668,13 +678,12 @@ def create_app(
     def dataset_clip(index: int, id: str | None = None, run: str | None = None) -> ClipDetailOut:
         """One clip with a finer waveform and, when checked, where each word is."""
         path = review_manifest(id, run)
-        detail = _found(manifests.clip_detail, path, manifests.legacy_root(settings.data_dir), index)
+        detail = _found(manifests.clip_detail, path, manifests.legacy_root(settings.data_dir), index, trim_of)
         weak_below = checks.WEAK_WORD_BELOW.get(detail.aligner or "", 0.0)
         check = checks.ClipCheck.from_saved(detail.check) if detail.check else None
         return ClipDetailOut(
             sound_before=check.sound_before[0] if check and check.sound_before else None,
             sound_after=check.sound_after[0] if check and check.sound_after else None,
-            trim=check.trim_range() if check else None,
             **dataclasses.asdict(detail.row),
             aligner=detail.aligner,
             words=[WordOut(text=t, start=s, end=e, confidence=c, weak=c < weak_below) for t, s, e, c in detail.words],

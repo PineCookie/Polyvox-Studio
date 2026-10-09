@@ -95,6 +95,7 @@ def test_a_text_starting_with_a_laugh_keeps_the_laugh():
 
     assert check.flags == []  # squeezed fillers are no evidence either way
     assert check.sound_before is None
+    assert checks.squeezed_edge_filler(check)  # Trim all leaves it for review
     assert check.trim_range()[0] == pytest.approx(0.05, abs=0.02)  # 0.15 s before the laugh, not the words
 
 
@@ -251,6 +252,8 @@ def test_trim_and_hear_endpoints(service, training, asr_service, align_service, 
     clip = client.get("/api/dataset-clip", params={"id": ds, "index": 0}).json()
     assert clip["flags"] == ["edge_sound"] and clip["sound_before"] == pytest.approx(0.8, abs=0.02)
     assert clip["sound_after"] is None and clip["trim"] == pytest.approx([0.85, 2.15], abs=0.02)
+    rows = client.get("/api/dataset-rows", params={"id": ds}).json()["rows"]
+    assert rows[0]["trim"] == pytest.approx([0.85, 2.15], abs=0.02)
     heard = client.post("/api/dataset-clip/hear", json={"id": ds, "index": 0, "start": 0, "end": 0.8}).json()
     assert heard == {"text": f"clip of {int(0.8 * 16000)} samples"}
 

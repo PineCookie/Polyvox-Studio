@@ -19,6 +19,8 @@ interface Props {
   onSeek: (seconds: number) => void
   // Spans to mark (unsure words), in seconds.
   marks?: [number, number][]
+  // What trimming would keep, shown by greying the rest (without handles).
+  trim?: [number, number] | null
   // With handles: what trimming keeps; the rest is greyed.
   keep?: KeepRange
   large?: boolean
@@ -27,9 +29,25 @@ interface Props {
 const MAX_GAIN = 8 // quiet clips are scaled up for visibility, near-silence stays flat
 const MIN_KEEP_S = 0.3 // matches the server's minimum
 const KEY_STEP_S = 0.05
+const LABEL_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60] // seconds between labelled ticks
 
-/** A clip's waveform outline; click to play from a point. */
-export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], keep, large = false }: Props) {
+/** Ticks for a time ruler: [seconds, labelled] with at most `labels` labels. */
+function rulerTicks(seconds: number, labels: number, fine: boolean): [number, boolean][] {
+  const step = LABEL_STEPS.find((s) => seconds / s <= labels) ?? 60
+  // Minor ticks: fifths of the step on a large waveform (0.1 s under 0.5 s labels), else halves.
+  const minor = fine ? step / (String(step).startsWith('2') ? 4 : 5) : step / 2
+  const out: [number, boolean][] = []
+  for (let i = 0; i * minor <= seconds + 1e-9; i++) {
+    const t = i * minor
+    out.push([t, Math.abs(t / step - Math.round(t / step)) < 1e-6])
+  }
+  return out
+}
+
+const tickLabel = (t: number) => (Number.isInteger(Math.round(t * 1000) / 1000) ? String(Math.round(t)) : t.toFixed(1))
+
+/** A clip's waveform outline with a time ruler; click to play from a point. */
+export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], trim, keep, large = false }: Props) {
   const playhead = useRef<SVGLineElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
   const width = peaks.length
@@ -53,11 +71,12 @@ export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], ke
   const top = peaks.map((p, i) => `${i},${1 - Math.min(1, p * gain) * 0.95}`)
   const bottom = peaks.map((p, i) => `${i},${1 + Math.min(1, p * gain) * 0.95}`).reverse()
   const outline = `M0,1 L${top.join(' ')} L${width},1 L${bottom.join(' ')} Z`
-  const cuts: [number, number][] = keep
+  const kept = keep?.value ?? trim
+  const cuts: [number, number][] = kept
     ? (
         [
-          [0, keep.value[0]],
-          [keep.value[1], seconds],
+          [0, kept[0]],
+          [kept[1], seconds],
         ] as [number, number][]
       ).filter(([a, b]) => b - a > 0.005)
     : []
@@ -132,30 +151,40 @@ export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], ke
       {audio && <line ref={playhead} className="waveform-playhead" x1={0} x2={0} y1={0} y2={2} />}
     </svg>
   )
-  if (!keep) return svg
-
   return (
     <div className="waveform-wrap" ref={wrap}>
       {svg}
-      {([0, 1] as const).map((handle) => (
-        <div
-          key={handle}
-          className="trim-handle"
-          style={{ left: `${(keep.value[handle] / seconds) * 100}%` }}
-          role="slider"
-          tabIndex={0}
-          aria-label={handle === 0 ? 'Keep from' : 'Keep until'}
-          aria-valuemin={0}
-          aria-valuemax={seconds}
-          aria-valuenow={keep.value[handle]}
-          aria-valuetext={`${keep.value[handle].toFixed(2)} s`}
-          title={`${handle === 0 ? 'Keep from' : 'Keep until'} ${keep.value[handle].toFixed(2)} s: drag, or use the arrow keys`}
-          onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
-          onPointerMove={(e) => drag(handle, e)}
-          onPointerUp={() => keep.onDone?.(handle, keep.value)}
-          onKeyDown={(e) => nudge(handle, e)}
-        />
-      ))}
+      <div className={large ? 'waveform-ruler large' : 'waveform-ruler'} aria-hidden="true">
+        {rulerTicks(seconds, large ? 14 : 5, large).map(([t, labelled]) => (
+          <span
+            key={t}
+            className={labelled ? 'tick major' : 'tick'}
+            style={{ left: `${(t / seconds) * 100}%` }}
+            data-label={labelled && t > 0 && t < seconds - (large ? 0.04 : 0.15) * seconds ? tickLabel(t) : undefined}
+          />
+        ))}
+        {large && <span className="ruler-unit">s</span>}
+      </div>
+      {keep &&
+        ([0, 1] as const).map((handle) => (
+          <div
+            key={handle}
+            className="trim-handle"
+            style={{ left: `${(keep.value[handle] / seconds) * 100}%` }}
+            role="slider"
+            tabIndex={0}
+            aria-label={handle === 0 ? 'Keep from' : 'Keep until'}
+            aria-valuemin={0}
+            aria-valuemax={seconds}
+            aria-valuenow={keep.value[handle]}
+            aria-valuetext={`${keep.value[handle].toFixed(2)} s`}
+            title={`${handle === 0 ? 'Keep from' : 'Keep until'} ${keep.value[handle].toFixed(2)} s: drag, or use the arrow keys`}
+            onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
+            onPointerMove={(e) => drag(handle, e)}
+            onPointerUp={() => keep.onDone?.(handle, keep.value)}
+            onKeyDown={(e) => nudge(handle, e)}
+          />
+        ))}
     </div>
   )
 }

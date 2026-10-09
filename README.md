@@ -180,8 +180,9 @@ last transcribed word (a laugh, 嗯) when a pause separates it, keeping 0.15 s.
 
 For an existing dataset, the clip view trims one clip (**Trim…**: drag the handles on the waveform; letting go plays the new edge) or
 transcribes just its edge sound (**Add to text**), and **Trim all** trims every
-clip flagged Edge sound or Long silence, leaving those also flagged Mismatch or
-Missing words for review. Clips are rewritten in place (WAV / FLAC / OGG inside
+clip flagged Edge sound or Long silence, leaving for review those also flagged
+Mismatch or Missing words, or starting / ending with a filler the aligner could not
+place. The table greys what trimming would cut, and every waveform has a time ruler. Clips are rewritten in place (WAV / FLAC / OGG inside
 the dataset folder); the originals are kept in `originals/` next to the manifest.
 
 **Fillers and laughs.** ASR and aligners are unsure of them (is it 呵呵呵 or

@@ -1280,11 +1280,61 @@ input[type='search']:focus {
   position: relative;
 }
 
+/* Time ruler under a waveform. */
+.waveform-ruler {
+  position: relative;
+  height: 12px;
+}
+
+.waveform-ruler.large {
+  height: 16px;
+}
+
+.waveform-ruler .tick {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 3px;
+  background: var(--muted);
+  opacity: 0.5;
+}
+
+.waveform-ruler .tick.major {
+  height: 5px;
+  opacity: 0.9;
+}
+
+.waveform-ruler .tick[data-label]::after {
+  content: attr(data-label);
+  position: absolute;
+  top: 3px;
+  left: 0;
+  transform: translateX(-50%);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.waveform-ruler.large .tick[data-label]::after {
+  top: 5px;
+  font-size: 10px;
+}
+
+.waveform-ruler .ruler-unit {
+  position: absolute;
+  right: 0;
+  top: 5px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted);
+}
+
 /* Drag to set what trimming keeps. */
 .trim-handle {
   position: absolute;
   top: 0;
-  bottom: 0;
+  bottom: 16px; /* over the waveform, not its ruler */
   width: 14px;
   margin-left: -7px;
   cursor: ew-resize;

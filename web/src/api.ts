@@ -367,6 +367,7 @@ export interface ClipRow {
   speech: [number, number] | null // aligned words' span in seconds, when checked
   peaks: number[] | null // waveform outline: peak level 0..1 per equal slice
   dropped: boolean // dropped in review: left out of training runs
+  trim: [number, number] | null // what trimming keeps, seconds; null: not checked, or little to trim
 }
 
 export interface AlignedWord {
@@ -393,7 +394,6 @@ export interface ClipDetail extends ClipRow {
   // Untranscribed sound a pause separates from the words lies before / after this second.
   sound_before: number | null
   sound_after: number | null
-  trim: [number, number] | null // what trimming keeps; null: little to trim
 }
 
 /** Trim one clip in place to `keep` seconds, or at its checked edges (the original is kept). */

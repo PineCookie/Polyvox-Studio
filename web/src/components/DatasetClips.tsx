@@ -97,7 +97,8 @@ export function DatasetClips({ source }: Props) {
     const label = FLAG_LABEL[f][0]
     const ask =
       `Trim the edges of the ${count} clips flagged “${label}”? Each keeps 0.15 s around its transcribed speech; ` +
-      'clips also flagged Mismatch or Missing words? are left for review. The originals are kept in the ' +
+      'clips also flagged Mismatch or Missing words?, or starting / ending with a filler the aligner could not place, are ' +
+      'left for review. The originals are kept in the ' +
       "dataset's originals folder."
     if (!window.confirm(ask)) return
     try {
@@ -195,6 +196,8 @@ export function DatasetClips({ source }: Props) {
                           peaks={row.peaks}
                           seconds={row.seconds}
                           speech={row.speech}
+                          // Greyed: what Trim all would cut from this clip.
+                          trim={row.flags.some((f) => TRIMMABLE_FLAGS.includes(f)) ? row.trim : null}
                           audio={row.index === playing ? audio.current : null}
                           onSeek={(at) => play(row.index, at)}
                         />
