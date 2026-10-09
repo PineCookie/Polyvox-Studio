@@ -40,13 +40,22 @@ tests/             run without a GPU (fake model loader and training worker)
 
 ## Setup
 
-Requires Windows with an NVIDIA GPU, [uv](https://docs.astral.sh/uv/) and Node 20+.
+Requires an NVIDIA GPU (driver for CUDA 13), Windows or Linux (x86_64 or
+aarch64), [uv](https://docs.astral.sh/uv/) and Node 20+. uv installs Python 3.13
+and the CUDA build of PyTorch itself.
 
 ```powershell
 uv sync
 cd web; npm install; npm run build; cd ..
-.\run.bat
+.\run.bat          # Windows
+./run.sh           # Linux
 ```
+
+On Linux, Triton (used to compile the model) needs a C compiler (`gcc`), and
+long recordings in m4a / mp3 are decoded with FFmpeg's shared libraries
+(e.g. `apt install build-essential ffmpeg`). To reach a server on another
+machine, start it with `./run.sh --host 0.0.0.0` (it has no login: use it on a
+trusted network or through an SSH tunnel).
 
 Open http://127.0.0.1:8808 and download the models in the **Models** tab
 (VoxCPM2 is required, about 5 GB; the rest only for preparing datasets). The
@@ -87,7 +96,7 @@ folder. A model variable set explicitly (below) always wins.
 | `VOXCPM_STUDIO_DENOISER` | `1` | load the ZipEnhancer denoiser |
 | `VOXCPM_STUDIO_DENOISER_MODEL` | `iic/speech_zipenhancer_ans_multiloss_16k_base` | its dir or ModelScope id |
 
-`run.bat` uses the project's own `models/`, `lora/` and `data/`; set the
+`run.bat` / `run.sh` use the project's own `models/`, `lora/` and `data/`; set the
 variables to use other paths.
 
 Speech recognition (the **Transcribe** button for reference audio) uses
