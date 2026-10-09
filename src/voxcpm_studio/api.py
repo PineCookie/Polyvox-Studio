@@ -129,9 +129,15 @@ class ClipDropIn(BaseModel):
     dropped: bool = True
 
 
-class ClipIn(BaseModel):
+class ClipTrimIn(BaseModel):
     id: str
     index: int
+    # The part to keep, in seconds; both omitted: the checked edges (ClipCheck.trim_range).
+    start: float | None = Field(None, ge=0)
+    end: float | None = Field(None, gt=0)
+
+
+MIN_KEPT_S = 0.3  # a trimmed clip keeps at least this much
 
 
 class ClipRangeIn(BaseModel):
@@ -573,11 +579,27 @@ def create_app(
         return checks.trim_flagged(manifest, manifests.legacy_root(settings.data_dir), body.flag)
 
     @app.post("/api/dataset-clip/trim")
-    def trim_clip(body: ClipIn) -> ClipDetailOut:
-        """Trim one clip at its checked edges, in place (see trim-flagged)."""
+    def trim_clip(body: ClipTrimIn) -> ClipDetailOut:
+        """Trim one clip in place (see trim-flagged): to [start, end) seconds when
+        given, else at its checked edges."""
         manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        root = manifests.legacy_root(settings.data_dir)
         refuse_if_busy(gpu=False)
-        result = checks.trim_clips(manifest, manifests.legacy_root(settings.data_dir), lambda i, _: i == body.index)
+        keep: tuple[float, float] | None = None
+        if body.start is not None or body.end is not None:
+            seconds = _found(manifests.clip_detail, manifest, root, body.index).row.seconds or 0.0
+            keep = (max(0.0, body.start or 0.0), min(seconds, body.end if body.end is not None else seconds))
+            if keep[1] - keep[0] < MIN_KEPT_S:
+                raise HTTPException(422, f"Keep at least {MIN_KEPT_S} s of the clip.")
+            if keep[0] < 0.01 and keep[1] > seconds - 0.01:
+                raise HTTPException(409, "Nothing to trim: the range is the whole clip.")
+
+        def cut_for(index: int, check: checks.ClipCheck | None) -> tuple[float, float] | None:
+            if index != body.index:
+                return None
+            return keep or (check.trim_range() if check else None)
+
+        result = checks.trim_clips(manifest, root, cut_for)
         if result["skipped"]:
             raise HTTPException(
                 422, "This clip can't be trimmed in place (outside the dataset folder, or not WAV / FLAC / OGG)."

@@ -396,9 +396,10 @@ export interface ClipDetail extends ClipRow {
   trim: [number, number] | null // what trimming keeps; null: little to trim
 }
 
-/** Trim one clip at its checked edges, in place (the original is kept). */
-export async function trimClip(id: string, index: number): Promise<ClipDetail> {
-  return (await postJson('/api/dataset-clip/trim', { id, index })).json()
+/** Trim one clip in place to `keep` seconds, or at its checked edges (the original is kept). */
+export async function trimClip(id: string, index: number, keep?: [number, number]): Promise<ClipDetail> {
+  const range = keep ? { start: keep[0], end: keep[1] } : {}
+  return (await postJson('/api/dataset-clip/trim', { id, index, ...range })).json()
 }
 
 /** What ASR hears in part of a clip. */

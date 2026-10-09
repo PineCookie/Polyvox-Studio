@@ -165,7 +165,7 @@ Forced alignment places each word of a transcript in its audio. The import (and
 |---|---|
 | Singing | a sung clip (karaoke, a cover): not wanted in training data |
 | Mismatch | part of the text does not match the audio (low confidence over a few words; fillers not counted) |
-| Filler? | a filler or laugh (嗯, 哈哈, 呵呵, ...) the audio seems to lack, e.g. one 呵 too many |
+| Filler? | a filler or laugh in the text (嗯, 哈哈, 呵呵, ...) placed on quiet audio: maybe not said, e.g. one 呵 too many |
 | Edge sound | sound before or after the words, a pause apart (嗯, a laugh, or words the text misses) |
 | Untranscribed | voice activity right next to the aligned words: the text may miss something |
 | Cut edge | the sound is still loud at the start or end of the file: a word may be cut |
@@ -178,7 +178,7 @@ vocabulary (sharper on single wrong words; Chinese by default, set
 the copied clips' edges: long silence, and sound before the first or after the
 last transcribed word (a laugh, 嗯) when a pause separates it, keeping 0.15 s.
 
-For an existing dataset, the clip view trims one clip (**Trim edges**) or
+For an existing dataset, the clip view trims one clip (**Trim…**: drag the handles on the waveform; letting go plays the new edge) or
 transcribes just its edge sound (**Add to text**), and **Trim all** trims every
 clip flagged Edge sound or Long silence, leaving those also flagged Mismatch or
 Missing words for review. Clips are rewritten in place (WAV / FLAC / OGG inside

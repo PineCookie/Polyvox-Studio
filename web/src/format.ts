@@ -10,7 +10,10 @@ export const FLAG_LABEL: Record<CheckFlag, [string, string]> = {
   singing: ['Singing', 'A sung clip (karaoke, a cover): not wanted in training data'],
   mismatch: ['Mismatch', 'Part of the text does not match the audio'],
   asr_more: ['Missing words?', 'Speech recognition hears words the transcript does not have'],
-  filler: ['Filler?', 'A filler or laugh (嗯, 哈哈, 呵呵, ...) may not be in the audio, or not as written'],
+  filler: [
+    'Filler?',
+    'A filler or laugh in the text (嗯, 哈哈, ...) sits on quiet audio: it may not have been said, e.g. one 呵 too many',
+  ],
   edge_sound: [
     'Edge sound',
     'Sound before or after the transcribed words, a pause apart (嗯, a laugh, or words the text misses): trim it off or add it to the text',

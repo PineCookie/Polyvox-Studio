@@ -86,6 +86,18 @@ def test_trim_cuts_off_untranscribed_sound_a_pause_separates():
     assert joined.trim_range()[0] == pytest.approx(0.25, abs=0.02)
 
 
+def test_a_text_starting_with_a_laugh_keeps_the_laugh():
+    # The aligner squeezed 哈哈 against the words; the laugh itself is before them, a pause apart.
+    wav = tone([(0.2, 0.6), (1.0, 2.0)], 2.4)
+    words = [Word("哈", 1.0, 1.0, 0.2), Word("哈", 1.0, 1.0, 0.2), Word("一", 1.0, 1.5, 0.9), Word("二", 1.5, 2.0, 0.9)]
+
+    check = checks.check_clip(wav, Alignment(words, 0.5), "qwen3", [(0.2, 0.6), (1.0, 2.0)])
+
+    assert check.flags == []  # squeezed fillers are no evidence either way
+    assert check.sound_before is None
+    assert check.trim_range()[0] == pytest.approx(0.05, abs=0.02)  # 0.15 s before the laugh, not the words
+
+
 def test_trim_keeps_padding_around_all_speech():
     wav = tone([(1.5, 3.0)], 5.0)
     check = checks.check_clip(wav, aligned(1.6, 2.9), "qwen3", [(1.5, 3.0)])
@@ -205,7 +217,7 @@ def test_trim_in_place_keeps_the_original_and_updates_the_check(data_dir):
     manifest = laugh_then_words(data_dir)
     folder = manifest.parent
 
-    result = checks.trim_clips(manifest, None, lambda i, c: i == 0)
+    result = checks.trim_clips(manifest, None, lambda i, c: c.trim_range() if i == 0 else None)
 
     assert result == {"trimmed": 1, "skipped": 0}
     info = sf.info(str(folder / "wavs" / "0.wav"))
@@ -219,7 +231,7 @@ def test_trim_in_place_keeps_the_original_and_updates_the_check(data_dir):
     assert sf.info(str(folder / "wavs" / "1.flac")).duration == pytest.approx(2.4)  # not picked
 
     # Trimming again keeps the first original.
-    checks.trim_clips(manifest, None, lambda i, c: True)
+    checks.trim_clips(manifest, None, lambda i, c: c.trim_range())
     assert sf.info(str(folder / checks.ORIGINALS_DIR / "wavs" / "0.wav")).duration == pytest.approx(2.4)
     assert sf.info(str(folder / "wavs" / "1.flac")).duration == pytest.approx(1.3, abs=0.03)
 
@@ -245,6 +257,13 @@ def test_trim_and_hear_endpoints(service, training, asr_service, align_service, 
     trimmed = client.post("/api/dataset-clip/trim", json={"id": ds, "index": 0}).json()
     assert trimmed["flags"] == [] and trimmed["trim"] is None and trimmed["seconds"] == pytest.approx(1.3, abs=0.03)
     assert client.post("/api/dataset-clip/trim", json={"id": ds, "index": 0}).status_code == 409
+
+    # A range of one's own, on a clip trimmed before: cut further.
+    ranged = client.post("/api/dataset-clip/trim", json={"id": ds, "index": 0, "start": 0.1, "end": 1.2}).json()
+    assert ranged["seconds"] == pytest.approx(1.1, abs=0.01)
+    assert sf.info(str(data_dir / "speaker_a" / checks.ORIGINALS_DIR / "wavs" / "0.wav")).duration == pytest.approx(2.4)
+    too_short = {"id": ds, "index": 0, "start": 0.1, "end": 0.2}
+    assert client.post("/api/dataset-clip/trim", json=too_short).status_code == 422
 
     result = client.post("/api/datasets/trim-flagged", json={"id": ds, "flag": "edge_sound"}).json()
     assert result == {"trimmed": 1, "skipped": 0, "review": 0}

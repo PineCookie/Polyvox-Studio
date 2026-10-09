@@ -64,8 +64,10 @@ TRIM_PAD_S = 0.15  # silence kept around the speech when trimming (as the slicer
 MIN_TRIM_S = 0.1  # trimming less than this is not worth rewriting a file
 CHECK_CHUNK = 32  # clips per aligner call; progress and cancel granularity
 EDGE_SOUND_GAP_S = 0.15  # a pause this long lets trimming cut off untranscribed edge sound
-# A filler the audio lacks: squeezed shorter than this (qwen3), or mostly quiet
-# over its span (at least FILLER_PROBE_S from its start).
+# A filler the audio lacks: mostly quiet over its span (at least FILLER_PROBE_S
+# from its start). Qwen3 often squeezes a filler that is clearly there to a span
+# shorter than FILLER_SQUEEZED_S: such a span says nothing about the audio, so it
+# is not counted.
 FILLER_SQUEEZED_S = 0.04
 FILLER_PROBE_S = 0.1
 FILLER_LOUD_SHARE = 0.3
@@ -236,31 +238,43 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
     """Check one 16 kHz clip given its alignment and voice activity segments."""
     duration = len(wav) / SAMPLE_RATE
     span = alignment.span
+    # A text that starts / ends with a filler (哈哈, 啊) has that sound: aligners
+    # often squeeze the filler against the next word, leaving the laugh itself
+    # outside the words. Sound on that side is not untranscribed, and trimming
+    # must keep it.
+    placed = [w for w in alignment.words if w.aligned]
+    filler_first = bool(placed) and is_filler(placed[0].text)
+    filler_last = bool(placed) and is_filler(placed[-1].text)
     if span is None:  # nothing alignable (e.g. only punctuation or unknown characters)
         start, end, unaligned = 0.0, duration, 0.0
     else:
         start, end = refine_edges(wav, *span, inner=alignment.inner)
-        unaligned = _overlap_outside(segments, start - EXTRA_MARGIN_S, end + EXTRA_MARGIN_S)
+        lo = -np.inf if filler_first else start - EXTRA_MARGIN_S
+        hi = np.inf if filler_last else end + EXTRA_MARGIN_S
+        unaligned = _overlap_outside(segments, lo, hi)
     # Silence around all speech, aligned or not: trimming must keep untranscribed speech.
     voice_start = min([start] + [s for s, _ in segments[:1]])
     voice_end = max([end] + [e for _, e in segments[-1:]])
     lead, trail = voice_start, duration - voice_end
     loud = loud_frames(wav)
     sound_before, sound_after = _edge_sound(segments, start, end) if span else (None, None)
+    sound_before = None if filler_first else sound_before
+    sound_after = None if filler_last else sound_after
 
     # Fillers (嗯, 哈哈, ...) are uncertain for any aligner: the mismatch score
-    # covers the other words. A filler the audio seems to lack (squeezed to a
-    # sliver, or placed on quiet audio: e.g. one 呵 too many) gets a soft flag.
+    # covers the other words. A filler placed on quiet audio (e.g. one 呵 too
+    # many) gets a soft flag.
     score = words_score(alignment.words, kind, skip=is_filler)
     if score is None:  # nothing but fillers
         score = alignment.score
 
     def absent(w) -> bool:
+        if kind == "qwen3" and w.end - w.start < FILLER_SQUEEZED_S:
+            return False  # squeezed: no telling where it is (CTC spans are onsets only, so always short)
         a = int(w.start * 100)
         b = max(a + 1, int(np.ceil(max(w.end, w.start + FILLER_PROBE_S) * 100)))
         loud_share = float(loud[a:b].mean()) if a < len(loud) else 0.0
-        squeezed = kind == "qwen3" and w.end - w.start < FILLER_SQUEEZED_S  # CTC spans are onsets only
-        return squeezed or loud_share < FILLER_LOUD_SHARE
+        return loud_share < FILLER_LOUD_SHARE
 
     doubtful_filler = any(w.aligned and is_filler(w.text) and absent(w) for w in alignment.words)
 
@@ -442,12 +456,16 @@ def _trim_file(audio: Path, backup: Path, start: float, end: float) -> None:
     tmp.replace(audio)
 
 
-def trim_clips(manifest: Path, root: Path | None, pick: Callable[[int, ClipCheck], bool]) -> dict:
-    """Trim the checked clips that ``pick(index, check)`` selects at their
-    checked edges (ClipCheck.trim_range), in place, and update their checks.
-    Originals are kept under ORIGINALS_DIR next to the manifest (the first
-    version only). Clips outside the manifest's folder or in a format soundfile
-    can't write back are skipped. Returns {"trimmed", "skipped"}."""
+# (index, the clip's current check or None) -> (start, end) seconds to keep, or None
+CutFor = Callable[[int, ClipCheck | None], tuple[float, float] | None]
+
+
+def trim_clips(manifest: Path, root: Path | None, cut_for: CutFor) -> dict:
+    """Trim clips in place to the range ``cut_for`` gives (e.g. the checked
+    edges, ClipCheck.trim_range), and update their checks. Originals are kept
+    under ORIGINALS_DIR next to the manifest (the first version only). Clips
+    outside the manifest's folder or in a format soundfile can't write back are
+    skipped. Returns {"trimmed", "skipped"}."""
     entries, _ = read_manifest(manifest, root)
     manifest_dir = manifest.resolve().parent
     saved = read_sidecar(manifest_dir / ALIGN_FILE)
@@ -457,16 +475,16 @@ def trim_clips(manifest: Path, root: Path | None, pick: Callable[[int, ClipCheck
         audio = Path(entry["audio"])
         key = row_key(str(audio), manifest_dir)
         stored = clips.get(key)
-        if not stored or stored.get("text") != text_key(entry["text"]):
-            continue  # not checked, or checked for an earlier transcript
-        check = ClipCheck.from_saved(stored)
-        if not pick(index, check) or (cut := check.trim_range()) is None:
+        current = stored is not None and stored.get("text") == text_key(entry["text"])
+        check = ClipCheck.from_saved(stored) if current else None
+        if (cut := cut_for(index, check)) is None:
             continue
         if not audio.is_relative_to(manifest_dir) or audio.suffix.lower() not in TRIM_IN_PLACE_FORMATS:
             skipped += 1
             continue
         _trim_file(audio, manifest_dir / ORIGINALS_DIR / key, *cut)
-        clips[key] = {"text": stored["text"], **asdict(check.trimmed(*cut))}
+        if check:
+            clips[key] = {"text": stored["text"], **asdict(check.trimmed(*cut))}
         trimmed += 1
     if trimmed:
         _write_align(manifest_dir, {**saved, "clips": clips})
@@ -478,13 +496,13 @@ def trim_flagged(manifest: Path, root: Path | None, flag: str) -> dict:
     TRIM_REVIEW_FIRST (counted as "review")."""
     review = 0
 
-    def pick(_: int, check: ClipCheck) -> bool:
+    def cut_for(_: int, check: ClipCheck | None) -> tuple[float, float] | None:
         nonlocal review
-        if flag not in check.flags:
-            return False
+        if check is None or flag not in check.flags:
+            return None
         if any(f in check.flags for f in TRIM_REVIEW_FIRST):
             review += 1
-            return False
-        return True
+            return None
+        return check.trim_range()
 
-    return {**trim_clips(manifest, root, pick), "review": review}
+    return {**trim_clips(manifest, root, cut_for), "review": review}
