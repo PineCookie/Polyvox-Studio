@@ -39,7 +39,16 @@ import numpy as np
 import soundfile as sf
 
 from . import slicer
-from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges, split_words, words_score
+from .aligner import (
+    SAMPLE_RATE,
+    Alignment,
+    edge_levels,
+    loud_frames,
+    refine_edges,
+    sound_spans,
+    split_words,
+    words_score,
+)
 from .fillers import is_filler
 from .manifests import ALIGN_FILE, ASR_FILE, read_manifest, read_sidecar, row_key, text_key
 from .singing import is_sung
@@ -230,6 +239,16 @@ def _edge_sound(
     return out_before, out_after
 
 
+def _merge(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    out: list[tuple[float, float]] = []
+    for s, e in sorted(spans):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
 def _overlap_outside(segments: list[tuple[float, float]], lo: float, hi: float) -> float:
     return sum(max(0.0, min(e, lo) - s) + max(0.0, e - max(s, hi)) for s, e in segments)
 
@@ -252,12 +271,15 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
         lo = -np.inf if filler_first else start - EXTRA_MARGIN_S
         hi = np.inf if filler_last else end + EXTRA_MARGIN_S
         unaligned = _overlap_outside(segments, lo, hi)
-    # Silence around all speech, aligned or not: trimming must keep untranscribed speech.
-    voice_start = min([start] + [s for s, _ in segments[:1]])
-    voice_end = max([end] + [e for _, e in segments[-1:]])
+    # Silence is measured to any sound, aligned or not, speech to VAD or just
+    # audible (a laugh, a sigh VAD passes over): trimming must keep all of it,
+    # except edge sound a pause apart, which is flagged for review.
+    around = _merge(segments + sound_spans(wav))
+    voice_start = min([start] + [s for s, _ in around])
+    voice_end = max([end] + [e for _, e in around])
     lead, trail = voice_start, duration - voice_end
     loud = loud_frames(wav)
-    sound_before, sound_after = _edge_sound(segments, start, end) if span else (None, None)
+    sound_before, sound_after = _edge_sound(around, start, end) if span else (None, None)
     sound_before = None if filler_first else sound_before
     sound_after = None if filler_last else sound_after
 

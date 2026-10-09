@@ -366,6 +366,35 @@ def loud_frames(wav: np.ndarray) -> np.ndarray:
     return db > threshold
 
 
+# Audible sound around the speech (laughs, sighs, a quiet word VAD misses): within
+# this many dB of the clip's loud frames, at least SOUND_MIN_FRAMES long (shorter
+# blips are clicks). Quieter than this: breaths and room noise.
+SOUND_DROP_DB = 30.0
+SOUND_MIN_FRAMES = 5
+
+
+def sound_spans(wav: np.ndarray) -> list[tuple[float, float]]:
+    """(start, end) seconds of each stretch of audible sound, bridging quiet gaps
+    shorter than EDGE_BRIDGE_FRAMES."""
+    db = _frame_db(wav)
+    loud, floor = np.percentile(db, 95), np.percentile(db, 5)
+    audible = db > max(loud - SOUND_DROP_DB, min(floor + EDGE_FLOOR_DB, loud - EDGE_FLOOR_DB))
+    to_s = FRAME / SAMPLE_RATE
+    spans: list[tuple[float, float]] = []
+    start = last = None
+    for i in np.flatnonzero(audible):
+        if start is not None and i - last > EDGE_BRIDGE_FRAMES + 1:
+            if last + 1 - start >= SOUND_MIN_FRAMES:
+                spans.append((start * to_s, (last + 1) * to_s))
+            start = None
+        if start is None:
+            start = i
+        last = i
+    if start is not None and last + 1 - start >= SOUND_MIN_FRAMES:
+        spans.append((start * to_s, (last + 1) * to_s))
+    return spans
+
+
 def refine_edges(
     wav: np.ndarray, start: float, end: float, inner: tuple[float, float] | None = None
 ) -> tuple[float, float]:

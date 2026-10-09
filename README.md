@@ -166,7 +166,7 @@ Forced alignment places each word of a transcript in its audio. The import (and
 | Singing | a sung clip (karaoke, a cover): not wanted in training data |
 | Mismatch | part of the text does not match the audio (low confidence over a few words; fillers not counted) |
 | Filler? | a filler or laugh in the text (嗯, 哈哈, 呵呵, ...) placed on quiet audio: maybe not said, e.g. one 呵 too many |
-| Edge sound | sound before or after the words, a pause apart (嗯, a laugh, or words the text misses) |
+| Edge sound | sound before or after the words, a pause apart (a sigh, 嗯, a laugh, or words the text misses) |
 | Untranscribed | voice activity right next to the aligned words: the text may miss something |
 | Cut edge | the sound is still loud at the start or end of the file: a word may be cut |
 | Long silence | over 0.5 s of silence after the speech (VoxCPM's guide: the model learns when to stop from it), or over 1 s before it |

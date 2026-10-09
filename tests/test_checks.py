@@ -99,6 +99,20 @@ def test_a_text_starting_with_a_laugh_keeps_the_laugh():
     assert check.trim_range()[0] == pytest.approx(0.05, abs=0.02)  # 0.15 s before the laugh, not the words
 
 
+def test_sound_vad_misses_is_not_silence_but_a_breath_is():
+    # A laugh VAD passed over, a pause, then the words: edge sound, not long silence.
+    laugh = tone([(0.3, 0.8), (1.5, 2.5)], 2.7)
+    check = checks.check_clip(laugh, aligned(1.5, 2.5), "qwen3", [(1.5, 2.5)])
+    assert check.flags == ["edge_sound"] and check.lead == pytest.approx(0.3, abs=0.02)
+
+    # The same stretch 40 dB down (a breath): silence.
+    breath = tone([(1.5, 2.5)], 2.7)
+    t = np.arange(len(breath)) / 16000
+    breath[(t >= 0.3) & (t < 0.8)] += 0.003 * np.sin(2 * np.pi * 220 * t[(t >= 0.3) & (t < 0.8)])
+    check = checks.check_clip(breath, aligned(1.5, 2.5), "qwen3", [(1.5, 2.5)])
+    assert check.flags == ["long_silence"] and check.lead == pytest.approx(1.5, abs=0.02)
+
+
 def test_trim_keeps_padding_around_all_speech():
     wav = tone([(1.5, 3.0)], 5.0)
     check = checks.check_clip(wav, aligned(1.6, 2.9), "qwen3", [(1.5, 3.0)])

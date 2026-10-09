@@ -16,7 +16,7 @@ export const FLAG_LABEL: Record<CheckFlag, [string, string]> = {
   ],
   edge_sound: [
     'Edge sound',
-    'Sound before or after the transcribed words, a pause apart (嗯, a laugh, or words the text misses): trim it off or add it to the text',
+    'Sound before or after the transcribed words, a pause apart (a sigh, 嗯, a laugh, or words the text misses): trim it off or add it to the text',
   ],
   extra_speech: [
     'Untranscribed',
