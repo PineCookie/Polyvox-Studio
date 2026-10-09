@@ -88,11 +88,26 @@ def test_read_rows_pages_filters_and_flags_asr(data_dir):
         manifests.clip_audio(manifest, None, 5)
 
 
+def test_rows_carry_a_waveform_outline(data_dir):
+    manifest = five_clips(data_dir)
+    loud = np.zeros(16000, dtype=np.float32)
+    loud[8000:12000] = 0.5  # the third quarter
+    sf.write(data_dir / "speaker_a" / "wavs" / "take_0.wav", loud, 16000)
+
+    peaks = manifests.read_rows(manifest, limit=1).rows[0].peaks
+
+    assert len(peaks) == manifests.PEAK_BINS
+    quarter = manifests.PEAK_BINS // 4
+    assert max(peaks[: 2 * quarter]) == 0 and min(peaks[2 * quarter : 3 * quarter]) == pytest.approx(0.5, abs=0.01)
+    (data_dir / "speaker_a" / "wavs" / "take_1.wav").unlink()
+    assert manifests.read_rows(manifest, offset=1, limit=1).rows[0].peaks is None
+
+
 def test_read_rows_shows_checks_for_the_text_they_were_made_for(data_dir):
     manifest = five_clips(data_dir)
 
     def check(text, score, flags):
-        return {"text": manifests.text_key(text), "score": score, "flags": flags}
+        return {"text": manifests.text_key(text), "score": score, "flags": flags, "start": 0.2, "end": 0.8}
 
     clips = {
         "wavs/take_0.wav": check("line 0", 0.9, []),
@@ -103,6 +118,7 @@ def test_read_rows_shows_checks_for_the_text_they_were_made_for(data_dir):
     (manifest.parent / manifests.ALIGN_FILE).write_text(json.dumps({"aligner": "ctc", "clips": clips}))
 
     page = manifests.read_rows(manifest)
+    assert page.rows[0].speech == (0.2, 0.8) and page.rows[2].speech is None
     assert [(r.score, r.flags) for r in page.rows] == [
         (0.9, []),
         (0.2, ["mismatch"]),

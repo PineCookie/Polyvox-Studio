@@ -19,6 +19,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 
 MANIFEST_GLOB = "*.jsonl"
@@ -109,6 +110,8 @@ class ClipRow:
     asr: bool  # text made by ASR (listed in asr.json)
     score: float | None = None  # alignment check (align.json); None: not checked for this text
     flags: list[str] = field(default_factory=list)
+    speech: tuple[float, float] | None = None  # aligned words' span in seconds, when checked
+    peaks: list[float] | None = None  # waveform outline (clip_peaks); None: unreadable
 
 
 @dataclass
@@ -167,6 +170,33 @@ def _clip_seconds(audio: str) -> float | None:
         return None
 
 
+PEAK_BINS = 120
+
+
+@functools.lru_cache(maxsize=8192)
+def _peaks(audio: str, mtime_ns: int, bins: int) -> tuple[float, ...] | None:
+    try:
+        data, _ = sf.read(audio, dtype="float32", always_2d=True)
+    except Exception:
+        return None
+    level = np.abs(data).max(axis=1)
+    edges = np.linspace(0, len(level), bins + 1).astype(int)
+    return tuple(
+        round(float(level[a:b].max()), 3) if b > a else 0.0 for a, b in zip(edges[:-1], edges[1:], strict=True)
+    )
+
+
+def clip_peaks(audio: str, bins: int = PEAK_BINS) -> list[float] | None:
+    """Peak level (0..1) per equal slice of a clip, to draw its waveform; cached
+    until the file changes. None when the file is missing or unreadable."""
+    try:
+        mtime = Path(audio).stat().st_mtime_ns
+    except OSError:
+        return None
+    peaks = _peaks(audio, mtime, bins)
+    return list(peaks) if peaks is not None else None
+
+
 def read_rows(
     path: Path,
     root: Path | None = None,
@@ -220,6 +250,8 @@ def read_rows(
             asr=key in asr,
             score=check["score"] if check else None,
             flags=check["flags"] if check else [],
+            speech=(check["start"], check["end"]) if check and "start" in check else None,
+            peaks=clip_peaks(audio),
         )
         for i, audio, text, key, check in matches[offset : offset + limit]
     ]

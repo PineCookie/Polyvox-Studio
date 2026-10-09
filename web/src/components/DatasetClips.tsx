@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { datasetAudioUrl, getDatasetRows } from '../api'
 import type { CheckFlag, CheckSummary, ClipPage, DatasetSource } from '../api'
 import { ALIGNER_LABEL, FLAG_LABEL } from '../format'
+import { Waveform } from './Waveform'
 
 interface Props {
   source: DatasetSource
@@ -25,6 +26,7 @@ export function DatasetClips({ source }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState<number | null>(null)
   const audio = useRef<HTMLAudioElement>(null)
+  const loaded = useRef<number | null>(null) // clip index the player holds
 
   // Debounce typing into the search box; a new search starts at page 1.
   useEffect(() => {
@@ -46,14 +48,19 @@ export function DatasetClips({ source }: Props) {
     }
   }, [sourceKey, offset, search, flagged, worstFirst])
 
-  function play(index: number) {
+  // `at`: start from this second (a click on the waveform); otherwise play / pause.
+  function play(index: number, at?: number) {
     const el = audio.current
     if (!el) return
-    if (playing === index && !el.paused) {
+    if (at === undefined && playing === index && !el.paused) {
       el.pause()
       return
     }
-    el.src = datasetAudioUrl(source, index)
+    if (loaded.current !== index) {
+      el.src = datasetAudioUrl(source, index)
+      loaded.current = index
+    }
+    if (at !== undefined) el.currentTime = at
     el.play().then(
       () => setPlaying(index),
       (e: Error) => setError(e.message),
@@ -111,6 +118,17 @@ export function DatasetClips({ source }: Props) {
                     >
                       {row.index === playing ? '❚❚' : '▶'}
                     </button>
+                  </td>
+                  <td className="clip-wave">
+                    {row.peaks && row.seconds !== null && (
+                      <Waveform
+                        peaks={row.peaks}
+                        seconds={row.seconds}
+                        speech={row.speech}
+                        audio={row.index === playing ? audio.current : null}
+                        onSeek={(at) => play(row.index, at)}
+                      />
+                    )}
                   </td>
                   <td className="clip-text">
                     {row.text}

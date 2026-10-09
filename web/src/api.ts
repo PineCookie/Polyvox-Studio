@@ -316,6 +316,8 @@ export interface ClipRow {
   asr: boolean // transcript made by ASR
   score: number | null // alignment check; null: not checked (for this text)
   flags: CheckFlag[]
+  speech: [number, number] | null // aligned words' span in seconds, when checked
+  peaks: number[] | null // waveform outline: peak level 0..1 per equal slice
 }
 
 export interface ClipPage {

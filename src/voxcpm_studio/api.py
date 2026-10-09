@@ -119,6 +119,8 @@ class ClipRowOut(BaseModel):
     asr: bool
     score: float | None
     flags: list[str]
+    speech: tuple[float, float] | None
+    peaks: list[float] | None
 
 
 class ClipPageOut(BaseModel):
