@@ -85,10 +85,11 @@ h2 {
 
 /* Layout */
 
+/* Fills the window up to a width where lines would get too long to read. */
 .app {
-  max-width: 1200px;
+  max-width: 2400px;
   margin: 0 auto;
-  padding: 20px 24px 48px;
+  padding: 20px clamp(16px, 2.5vw, 40px) 48px;
 }
 
 .topbar {
@@ -111,7 +112,7 @@ h2 {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 22vw, 420px);
   gap: 20px;
   align-items: start;
 }
@@ -899,7 +900,7 @@ select {
 
 .console pre {
   margin: 0;
-  max-height: 320px;
+  max-height: max(320px, 50vh);
   overflow: auto;
   background: var(--surface-2);
   border-radius: var(--radius-sm);
@@ -1218,7 +1219,7 @@ input[type='search']:focus {
 }
 
 .clip-table .clip-wave {
-  width: 168px;
+  width: clamp(150px, 16vw, 320px);
   padding-top: 4px;
   padding-bottom: 4px;
 }
@@ -1253,7 +1254,7 @@ input[type='search']:focus {
 }
 
 .waveform.large {
-  height: 76px;
+  height: clamp(76px, 12vh, 140px);
 }
 
 .waveform-mark {
@@ -1401,8 +1402,9 @@ input[type='search']:focus {
   background: var(--accent-soft);
 }
 
+/* Most of the window's height: the rest of the page scrolls away above it. */
 .clips .table-wrap {
-  max-height: 420px;
+  max-height: max(420px, calc(100vh - 120px));
   overflow-y: auto;
 }
 

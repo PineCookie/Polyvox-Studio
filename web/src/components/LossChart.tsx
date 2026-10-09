@@ -10,7 +10,10 @@ interface Props {
   val: MetricPoint[]
 }
 
-const HEIGHT = 180
+// Height follows the width (wider charts get taller), within these bounds.
+const MIN_HEIGHT = 180
+const MAX_HEIGHT = 340
+const chartHeight = (width: number) => Math.round(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, width * 0.3)))
 const M = { top: 10, right: 12, bottom: 24, left: 48 }
 const SMOOTHING = 0.85
 
@@ -67,6 +70,7 @@ function useWidth<T extends HTMLElement>() {
 
 export function LossChart({ title, metric, train, val }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>()
+  const height = chartHeight(width)
   const [hoverStep, setHoverStep] = useState<number | null>(null)
 
   const raw = useMemo(() => series(train, metric), [train, metric])
@@ -93,7 +97,7 @@ export function LossChart({ title, metric, train, val }: Props) {
     y1 += pad
 
     const plotW = width - M.left - M.right
-    const plotH = HEIGHT - M.top - M.bottom
+    const plotH = chartHeight(width) - M.top - M.bottom
     const x = (step: number) => M.left + ((step - x0) / (x1 - x0)) * plotW
     const y = (v: number) => M.top + (1 - (Math.min(Math.max(v, y0), y1) - y0) / (y1 - y0)) * plotH
     const path = (pts: Point[]) =>
@@ -147,7 +151,7 @@ export function LossChart({ title, metric, train, val }: Props) {
         {!geometry ? (
           <p className="muted empty chart-empty">{raw.length === 0 ? 'No steps logged yet.' : ''}</p>
         ) : (
-          <svg width={width} height={HEIGHT} role="img" aria-label={`${title} over training steps`}>
+          <svg width={width} height={height} role="img" aria-label={`${title} over training steps`}>
             {geometry.yTicks.map((t) => (
               <g key={`y${t}`}>
                 <line className="grid" x1={M.left} x2={width - M.right} y1={geometry.y(t)} y2={geometry.y(t)} />
@@ -157,7 +161,7 @@ export function LossChart({ title, metric, train, val }: Props) {
               </g>
             ))}
             {geometry.xTicks.map((t) => (
-              <text key={`x${t}`} className="tick" x={geometry.x(t)} y={HEIGHT - 6} textAnchor="middle">
+              <text key={`x${t}`} className="tick" x={geometry.x(t)} y={height - 6} textAnchor="middle">
                 {formatStep(t)}
               </text>
             ))}
@@ -175,7 +179,7 @@ export function LossChart({ title, metric, train, val }: Props) {
                   x1={geometry.x(raw[hoverIndex].step)}
                   x2={geometry.x(raw[hoverIndex].step)}
                   y1={M.top}
-                  y2={HEIGHT - M.bottom}
+                  y2={height - M.bottom}
                 />
                 <circle
                   className="hover-dot"
@@ -189,7 +193,7 @@ export function LossChart({ title, metric, train, val }: Props) {
               x={M.left}
               y={M.top}
               width={geometry.plotW}
-              height={HEIGHT - M.top - M.bottom}
+              height={height - M.top - M.bottom}
               fill="transparent"
               onPointerMove={onPointerMove}
               onPointerLeave={() => setHoverStep(null)}
