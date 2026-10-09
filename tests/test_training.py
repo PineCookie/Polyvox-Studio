@@ -156,7 +156,9 @@ def test_resume_adopts_webui_run(training, data_dir, lora_dir, model_dir):
 def test_latest_only_checkpoint_takes_its_step_from_the_log(training, lora_dir, model_dir):
     run = lora_dir / "old"
     (run / "checkpoints" / "latest").mkdir(parents=True)
-    (run / "checkpoints" / "train.log").write_text("[train] step 3990: loss/diff: 0.6\n[train] step 3999: loss/diff: 0.6\n")
+    (run / "checkpoints" / "train.log").write_text(
+        "[train] step 3990: loss/diff: 0.6\n[train] step 3999: loss/diff: 0.6\n"
+    )
     config = {"pretrained_path": str(model_dir), "train_manifest": "", "num_iters": 4000, "save_path": "x"}
     (run / "train_config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
 

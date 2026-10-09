@@ -69,7 +69,10 @@ def test_read_rows_pages_filters_and_flags_asr(data_dir):
     (manifest.parent / manifests.ASR_FILE).write_text(json.dumps({"wavs/take_3.wav": {"language": "en"}}))
 
     total, rows = manifests.read_rows(manifest, offset=1, limit=2)
-    assert total == 5 and [(r.index, r.file, r.seconds) for r in rows] == [(1, "wavs/take_1.wav", 2.0), (2, "wavs/take_2.wav", 3.0)]
+    assert total == 5 and [(r.index, r.file, r.seconds) for r in rows] == [
+        (1, "wavs/take_1.wav", 2.0),
+        (2, "wavs/take_2.wav", 3.0),
+    ]
 
     total, rows = manifests.read_rows(manifest, query="HELLO")
     assert total == 2 and [(r.index, r.asr) for r in rows] == [(1, False), (3, True)]

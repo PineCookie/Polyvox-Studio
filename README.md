@@ -135,9 +135,13 @@ paths, optimizer state, logs, transcripts and dataset audio are left out.
 
 ```powershell
 uv run pytest
+uv run ruff check; uv run ruff format   # Python lint / format
 uv run voxcpm-studio            # API on :8808
 cd web; npm run dev             # UI on :5173, proxies /api to :8808
+cd web; npm run lint            # ESLint + Prettier check; `npm run format` fixes
 ```
+
+`src/voxcpm_studio/vendor/` is excluded from Ruff: it stays byte-identical to upstream.
 
 ## Roadmap
 

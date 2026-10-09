@@ -75,20 +75,16 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
         </header>
 
         <p className="muted hint">
-          A zip with the weights, <code>lora_config.json</code> and a README on how to use it. Local paths,
-          optimizer state, logs, transcripts and dataset audio are left out.
+          A zip with the weights, <code>lora_config.json</code> and a README on how to use it. Local paths, optimizer
+          state, logs, transcripts and dataset audio are left out.
         </p>
 
         <label className="field">
-          <span>
-            Name {!nameOk && <span className="field-error">letters, digits, . _ -</span>}
-          </span>
+          <span>Name {!nameOk && <span className="field-error">letters, digits, . _ -</span>}</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </label>
         <label className="field">
-          <span>
-            Base model {!baseOk && <span className="field-error">a Hugging Face id</span>}
-          </span>
+          <span>Base model {!baseOk && <span className="field-error">a Hugging Face id</span>}</span>
           <input value={baseModel} onChange={(e) => setBaseModel(e.target.value)} placeholder="openbmb/VoxCPM2" />
         </label>
         <label className="check">

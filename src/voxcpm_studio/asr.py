@@ -10,9 +10,9 @@ from __future__ import annotations
 import gc
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
@@ -111,7 +111,7 @@ class AsrService:
                 parsed = processor.decode(
                     out[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True, return_format="parsed"
                 )
-                for i, p in zip(idx, parsed if isinstance(parsed, list) else [parsed]):
+                for i, p in zip(idx, parsed if isinstance(parsed, list) else [parsed], strict=True):
                     results[i] = Transcript(text=p["transcription"].strip(), language=p["language"])
         return results  # type: ignore[return-value]
 

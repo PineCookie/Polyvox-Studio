@@ -124,7 +124,12 @@ def test_import_copies_audio_and_writes_relative_manifest(tmp_path, data_dir, cl
     assert (result.id, result.imported, result.transcribed) == ("speaker_a/train.jsonl", 4, 0)
     manifest = data_dir / "speaker_a" / "train.jsonl"
     entries = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
-    assert [e["audio"] for e in entries] == ["wavs/take_0.wav", "wavs/take_1.wav", "wavs/take_2.wav", "wavs/take_0_2.wav"]
+    assert [e["audio"] for e in entries] == [
+        "wavs/take_0.wav",
+        "wavs/take_1.wav",
+        "wavs/take_2.wav",
+        "wavs/take_0_2.wav",
+    ]
     # Self-contained: resolvable without any legacy fallback.
     resolved, errors = manifests.read_manifest(manifest)
     assert not errors and all(manifests.Path(e["audio"]).is_file() for e in resolved)
@@ -156,7 +161,9 @@ def test_transcribe_on_import_fills_missing_texts_in_order(tmp_path, data_dir):
 
     assert (result.imported, result.transcribed) == (3, 2)
     assert transcriber.calls == [["a.wav", "c.wav", "d.wav"]]  # only clips without text
-    entries = [json.loads(line) for line in (data_dir / "asr_set" / "train.jsonl").read_text(encoding="utf-8").splitlines()]
+    entries = [
+        json.loads(line) for line in (data_dir / "asr_set" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
     assert entries == [
         {"audio": "wavs/a.wav", "text": "asr a"},
         {"audio": "wavs/b.wav", "text": "已有文本"},
@@ -201,7 +208,10 @@ def test_import_in_place_and_conflicts(tmp_path, data_dir, clips):
 
 
 def test_import_job_endpoints(service, training, asr_service, data_dir, tmp_path, clips):
-    lst = write_list(tmp_path / "speaker_a.list", [f"{c}|clips|EN|" if i == 0 else f"{c}|clips|EN|line {i}" for i, c in enumerate(clips)])
+    lst = write_list(
+        tmp_path / "speaker_a.list",
+        [f"{c}|clips|EN|" if i == 0 else f"{c}|clips|EN|line {i}" for i, c in enumerate(clips)],
+    )
     client = TestClient(create_app(service.settings, service, training, asr_service))
 
     preview = client.post("/api/datasets/import/preview", json={"source": str(lst)}).json()

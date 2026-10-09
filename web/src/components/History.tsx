@@ -15,7 +15,10 @@ interface Props {
 }
 
 function fileName(clip: Clip): string {
-  const slug = clip.text.slice(0, 32).replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_|_$/g, '')
+  const slug = clip.text
+    .slice(0, 32)
+    .replace(/[^\p{L}\p{N}]+/gu, '_')
+    .replace(/^_|_$/g, '')
   return `${slug || 'voxcpm'}_${clip.seed ?? clip.id}.wav`
 }
 

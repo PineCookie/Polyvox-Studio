@@ -15,9 +15,9 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import soundfile as sf
@@ -149,9 +149,7 @@ def _read_native(path: Path) -> tuple[np.ndarray, int]:
         return tensor.mean(dim=0).numpy(), rate
 
 
-def slice_recording(
-    path: Path, out_dir: Path, opts: SliceOptions, vad: Vad = silero_vad
-) -> list[Path]:
+def slice_recording(path: Path, out_dir: Path, opts: SliceOptions, vad: Vad = silero_vad) -> list[Path]:
     """Write ``<stem>_<start ms>_<end ms>.wav`` clips (mono, source rate) into ``out_dir``."""
     from .asr import load_audio
 

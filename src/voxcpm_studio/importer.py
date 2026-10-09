@@ -24,9 +24,9 @@ import re
 import shutil
 import statistics
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Callable
 
 import soundfile as sf
 
@@ -127,7 +127,9 @@ def parse(source: Path, kind: str) -> list[Row]:
                 rows.append(Row(entry["audio"], str(entry.get("text") or "").strip()))
     else:
         for audio in sorted(p for p in source.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS):
-            transcript = next((audio.with_suffix(e) for e in TRANSCRIPT_EXTENSIONS if audio.with_suffix(e).is_file()), None)
+            transcript = next(
+                (audio.with_suffix(e) for e in TRANSCRIPT_EXTENSIONS if audio.with_suffix(e).is_file()), None
+            )
             text = transcript.read_text(encoding="utf-8-sig").strip() if transcript else ""
             rows.append(Row(str(audio), text, audio))
     return rows
@@ -248,7 +250,7 @@ def _transcribe(rows: list[Row], transcriber: Transcriber, progress: Progress) -
     for start in range(0, len(todo), TRANSCRIBE_CHUNK):
         progress("transcribing", start, len(todo))
         chunk = todo[start : start + TRANSCRIBE_CHUNK]
-        for i, (text, language) in zip(chunk, transcriber([rows[i].audio for i in chunk])):
+        for i, (text, language) in zip(chunk, transcriber([rows[i].audio for i in chunk]), strict=True):
             rows[i].text = text.strip()
             if rows[i].text:
                 languages[i] = language
@@ -321,7 +323,7 @@ def import_dataset(
         if copy:
             (staging / "wavs").mkdir(parents=True, exist_ok=True)
             files = _unique_names([row.audio for _, row in rows_kept])
-            for n, ((_, row), file) in enumerate(zip(rows_kept, files)):
+            for n, ((_, row), file) in enumerate(zip(rows_kept, files, strict=True)):
                 if n % 50 == 0:
                     progress("copying", n, len(rows_kept))
                 if row.audio.is_relative_to(staging):
@@ -332,8 +334,9 @@ def import_dataset(
             paths = [f"wavs/{file}" for file in files]
         else:
             paths = [str(row.audio) for _, row in rows_kept]
-        write_manifest([{"audio": p, "text": row.text} for p, (_, row) in zip(paths, rows_kept)], staging / "train.jsonl")
-        asr_rows = {p: {"language": languages[i]} for p, (i, _) in zip(paths, rows_kept) if i in languages}
+        pairs = list(zip(paths, rows_kept, strict=True))
+        write_manifest([{"audio": p, "text": row.text} for p, (_, row) in pairs], staging / "train.jsonl")
+        asr_rows = {p: {"language": languages[i]} for p, (i, _) in pairs if i in languages}
         if asr_rows:
             (staging / ASR_FILE).write_text(json.dumps(asr_rows, ensure_ascii=False, indent=1), encoding="utf-8")
         staging.rename(target)

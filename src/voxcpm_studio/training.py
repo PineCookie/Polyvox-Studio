@@ -26,9 +26,9 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import yaml
 from pydantic import BaseModel, Field
@@ -154,7 +154,7 @@ def seconds_per_step(train: list[dict], window: int = 20) -> float | None:
     recent = train[-window - 1 :]
     rates = [
         cur["interval"] / (cur["step"] - prev["step"])
-        for prev, cur in zip(recent, recent[1:])
+        for prev, cur in zip(recent, recent[1:], strict=False)  # consecutive pairs
         if "interval" in cur and cur["step"] > prev["step"]
     ]
     # Median: the interval after a validation also includes sample generation.
@@ -529,7 +529,9 @@ class TrainingManager:
 
         config["pretrained_path"] = str(absolute(config["pretrained_path"]))
         config["save_path"] = str(run_dir / "checkpoints")
-        config["tensorboard"] = str(absolute(config["tensorboard"])) if config.get("tensorboard") else str(run_dir / "logs")
+        config["tensorboard"] = (
+            str(absolute(config["tensorboard"])) if config.get("tensorboard") else str(run_dir / "logs")
+        )
         for key, file in (("train_manifest", "train.jsonl"), ("val_manifest", "val.jsonl")):
             if not config.get(key):
                 continue

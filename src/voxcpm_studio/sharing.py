@@ -52,7 +52,9 @@ def checkpoint_step(ckpt: LoraCheckpoint) -> int | None:
 
 def _readme(name: str, base_model: str, config: dict, step: int | None, dtype: str) -> str:
     layers = ", ".join(
-        label for key, label in (("enable_lm", "LM"), ("enable_dit", "DiT"), ("enable_proj", "projections")) if config.get(key)
+        label
+        for key, label in (("enable_lm", "LM"), ("enable_dit", "DiT"), ("enable_proj", "projections"))
+        if config.get(key)
     )
     cli_flags = f"--lora-r {config['r']} --lora-alpha {config['alpha']}"
     cli_flags += "" if config.get("enable_lm", True) else " --lora-disable-lm"
@@ -68,9 +70,9 @@ A LoRA for [VoxCPM](https://github.com/OpenBMB/VoxCPM), trained on top of
 | | |
 |---|---|
 | Base model | `{base_model}` |
-| Rank / alpha | {config['r']} / {alpha} |
+| Rank / alpha | {config["r"]} / {alpha} |
 | Layers | {layers} |
-| Training steps | {step if step is not None else 'unknown'} |
+| Training steps | {step if step is not None else "unknown"} |
 | Weights | {dtype} |
 
 ## Use

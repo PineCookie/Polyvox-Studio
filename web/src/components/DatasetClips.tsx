@@ -108,7 +108,12 @@ export function DatasetClips({ datasetId }: Props) {
 
       {total > PAGE && (
         <div className="pager">
-          <button type="button" className="ghost small" onClick={() => setOffset(offset - PAGE)} disabled={offset === 0}>
+          <button
+            type="button"
+            className="ghost small"
+            onClick={() => setOffset(offset - PAGE)}
+            disabled={offset === 0}
+          >
             Previous
           </button>
           <span className="muted hint">

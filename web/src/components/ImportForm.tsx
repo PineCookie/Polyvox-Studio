@@ -173,8 +173,8 @@ export function ImportForm({ datasetNames, onImported }: Props) {
           />
         </label>
         <p className="muted hint">
-          GPT-SoVITS <code>.list</code>, <code>file|text</code> CSV, <code>.jsonl</code>, or a folder. Paths are on
-          this computer; Explorer's “Copy as path” works.
+          GPT-SoVITS <code>.list</code>, <code>file|text</code> CSV, <code>.jsonl</code>, or a folder. Paths are on this
+          computer; Explorer's “Copy as path” works.
         </p>
         <div className="actions">
           <button
@@ -329,9 +329,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
               )}
 
               <label className="field">
-                <span>
-                  Dataset name {nameError && !running && <span className="field-error">{nameError}</span>}
-                </span>
+                <span>Dataset name {nameError && !running && <span className="field-error">{nameError}</span>}</span>
                 <input value={name} onChange={(e) => setName(e.target.value)} disabled={running} />
               </label>
               <label className="check">

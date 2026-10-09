@@ -44,7 +44,10 @@ type NumericKey = { [K in keyof TrainParams]: TrainParams[K] extends number ? K 
 type FlagKey = 'enable_lm' | 'enable_dit' | 'enable_proj'
 
 function suggestName(dataset: string, rank: number, taken: string[]): string {
-  const base = `${dataset.split('/').at(-2) ?? dataset.replace(/\.jsonl$/, '')}_r${rank}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
+  const base = `${dataset.split('/').at(-2) ?? dataset.replace(/\.jsonl$/, '')}_r${rank}`.replace(
+    /[^\p{L}\p{N}_.-]/gu,
+    '_',
+  )
   let name = base
   for (let i = 2; taken.includes(name); i++) name = `${base}_${i}`
   return name
@@ -106,11 +109,20 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
     }
   }
 
-  function numberField(key: NumericKey, label: ReactNode, props: { min?: number; max?: number; step?: number | 'any' } = {}) {
+  function numberField(
+    key: NumericKey,
+    label: ReactNode,
+    props: { min?: number; max?: number; step?: number | 'any' } = {},
+  ) {
     return (
       <label className="field">
         <span>{label}</span>
-        <input type="number" value={Number.isFinite(params[key]) ? params[key] : ''} onChange={(e) => set(key, e.target.valueAsNumber)} {...props} />
+        <input
+          type="number"
+          value={Number.isFinite(params[key]) ? params[key] : ''}
+          onChange={(e) => set(key, e.target.valueAsNumber)}
+          {...props}
+        />
       </label>
     )
   }
@@ -157,9 +169,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
         </header>
 
         <label className="field">
-          <span>
-            Run name {nameError && <span className="field-error">{nameError}</span>}
-          </span>
+          <span>Run name {nameError && <span className="field-error">{nameError}</span>}</span>
           <input value={name} onChange={(e) => setCustomName(e.target.value)} placeholder="Choose a dataset first" />
         </label>
 

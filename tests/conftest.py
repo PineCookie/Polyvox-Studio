@@ -72,7 +72,9 @@ class TinyTTS(nn.Module):
         self.last_successful_seed = 7
         kwargs = dict(r=lora_config.r, alpha=lora_config.alpha, dropout=lora_config.dropout)
         if lora_config.enable_lm:
-            apply_lora_to_named_linear_modules(self.base_lm, target_submodule_names=lora_config.target_modules_lm, **kwargs)
+            apply_lora_to_named_linear_modules(
+                self.base_lm, target_submodule_names=lora_config.target_modules_lm, **kwargs
+            )
         if lora_config.enable_dit:
             apply_lora_to_named_linear_modules(
                 self.feat_decoder, target_submodule_names=lora_config.target_modules_dit, **kwargs

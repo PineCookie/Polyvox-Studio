@@ -80,7 +80,12 @@ export function LossChart({ title, metric, train, val }: Props) {
     const x1 = Math.max(...steps, x0 + 1)
     // Clip the y range to the bulk of the raw values so a few spikes don't flatten the curve.
     const sorted = raw.map((p) => p.value).sort((a, b) => a - b)
-    const ys = [quantile(sorted, 0.02), quantile(sorted, 0.98), ...smoothed.map((p) => p.value), ...valPoints.map((p) => p.value)]
+    const ys = [
+      quantile(sorted, 0.02),
+      quantile(sorted, 0.98),
+      ...smoothed.map((p) => p.value),
+      ...valPoints.map((p) => p.value),
+    ]
     let y0 = Math.min(...ys)
     let y1 = Math.max(...ys)
     const pad = (y1 - y0) * 0.08 || Math.abs(y1) * 0.1 || 1
@@ -91,8 +96,20 @@ export function LossChart({ title, metric, train, val }: Props) {
     const plotH = HEIGHT - M.top - M.bottom
     const x = (step: number) => M.left + ((step - x0) / (x1 - x0)) * plotW
     const y = (v: number) => M.top + (1 - (Math.min(Math.max(v, y0), y1) - y0) / (y1 - y0)) * plotH
-    const path = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.step).toFixed(1)},${y(p.value).toFixed(1)}`).join('')
-    return { x0, x1, y0, y1, x, y, plotW, path, yTicks: niceTicks(y0, y1, 4), xTicks: niceTicks(x0, x1, Math.max(2, Math.floor(plotW / 90))) }
+    const path = (pts: Point[]) =>
+      pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.step).toFixed(1)},${y(p.value).toFixed(1)}`).join('')
+    return {
+      x0,
+      x1,
+      y0,
+      y1,
+      x,
+      y,
+      plotW,
+      path,
+      yTicks: niceTicks(y0, y1, 4),
+      xTicks: niceTicks(x0, x1, Math.max(2, Math.floor(plotW / 90))),
+    }
   }, [raw, smoothed, valPoints, width])
 
   function onPointerMove(e: PointerEvent<SVGRectElement>) {
@@ -196,7 +213,9 @@ export function LossChart({ title, metric, train, val }: Props) {
             {hoverVal && (
               <span>
                 <span className="swatch dot val" aria-hidden /> Validation {formatValue(hoverVal.value)}
-                {hoverVal.step !== raw[hoverIndex].step && <span className="muted"> @ {formatStep(hoverVal.step)}</span>}
+                {hoverVal.step !== raw[hoverIndex].step && (
+                  <span className="muted"> @ {formatStep(hoverVal.step)}</span>
+                )}
               </span>
             )}
           </div>

@@ -41,11 +41,14 @@ export default function App() {
   const refreshLoras = useCallback(() => {
     setLorasLoading(true)
     listLoras()
-      .then((list) => {
-        setLoras(list)
-        // Drop a selection whose checkpoint disappeared.
-        setSelectedLora((sel) => (sel && list.some((l) => l.id === sel) ? sel : null))
-      }, (e: Error) => setError(e.message))
+      .then(
+        (list) => {
+          setLoras(list)
+          // Drop a selection whose checkpoint disappeared.
+          setSelectedLora((sel) => (sel && list.some((l) => l.id === sel) ? sel : null))
+        },
+        (e: Error) => setError(e.message),
+      )
       .finally(() => setLorasLoading(false))
   }, [])
 

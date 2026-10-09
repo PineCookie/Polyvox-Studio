@@ -20,7 +20,13 @@
   --shadow: 0 1px 2px rgb(20 20 40 / 0.04), 0 4px 16px rgb(20 20 40 / 0.04);
 
   color-scheme: light;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family:
+    'Inter',
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'Microsoft YaHei',
+    sans-serif;
   font-size: 15px;
   line-height: 1.5;
   color: var(--text);
@@ -206,7 +212,9 @@ textarea {
   border-radius: var(--radius-sm);
   padding: 9px 12px;
   outline: none;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
 textarea {
@@ -305,7 +313,10 @@ button,
   cursor: pointer;
   background: var(--surface-2);
   text-decoration: none;
-  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
 }
 
 button:disabled {

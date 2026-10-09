@@ -104,7 +104,10 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
 function MetricsTable({ run }: { run: Run }) {
   const rows = useMemo(() => {
     const val = new Map(run.val.map((p) => [p.step, p]))
-    return run.train.slice(-30).reverse().map((p) => ({ train: p, val: val.get(p.step) }))
+    return run.train
+      .slice(-30)
+      .reverse()
+      .map((p) => ({ train: p, val: val.get(p.step) }))
   }, [run.train, run.val])
   if (rows.length === 0) return null
   return (
@@ -263,7 +266,9 @@ function ConfigDetails({ config }: { config: Record<string, unknown> }) {
           <dt>LoRA</dt>
           <dd>
             rank {String(lora.r)} · alpha {String(lora.alpha)} · dropout {String(lora.dropout ?? 0)} ·{' '}
-            {[lora.enable_lm && 'LM', lora.enable_dit && 'DiT', lora.enable_proj && 'projections'].filter(Boolean).join(', ')}
+            {[lora.enable_lm && 'LM', lora.enable_dit && 'DiT', lora.enable_proj && 'projections']
+              .filter(Boolean)
+              .join(', ')}
           </dd>
         </div>
       </dl>

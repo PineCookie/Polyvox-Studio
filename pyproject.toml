@@ -25,6 +25,7 @@ voxcpm-studio = "voxcpm_studio.__main__:main"
 dev = [
     "pytest>=8",
     "httpx>=0.27",
+    "ruff>=0.16.10",
 ]
 
 [build-system]
@@ -36,6 +37,30 @@ packages = ["src/voxcpm_studio"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+# Byte-identical copy of upstream's training script: never reformat it.
+extend-exclude = ["src/voxcpm_studio/vendor"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import order, pyupgrade, bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+# Line length is the formatter's job; long strings and comments may stay.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# One-line fakes (e.g. a VAD) read better as lambdas.
+"tests/**" = ["E731"]
+
+[tool.ruff.lint.isort]
+# The tests' own helper module sorts after the package, not with third parties.
+known-local-folder = ["conftest"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's parameter declarations are meant to be call defaults.
+extend-immutable-calls = ["fastapi.File", "fastapi.Form", "fastapi.Query"]
 
 [tool.uv.sources]
 # PyPI 2.0.3 predates generate(seed=...) and resolve_model_path; switch to

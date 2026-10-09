@@ -88,7 +88,9 @@ def test_import_slices_long_recordings_then_transcribes(tmp_path, data_dir):
     )  # fmt: skip
 
     assert (result.imported, result.sliced, result.transcribed) == (4, 1, 3)
-    entries = [json.loads(line) for line in (data_dir / "sliced" / "train.jsonl").read_text(encoding="utf-8").splitlines()]
+    entries = [
+        json.loads(line) for line in (data_dir / "sliced" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
     assert entries[0] == {"audio": "wavs/short.wav", "text": "已有文本"}
     assert [e["audio"] for e in entries[1:]] == [
         "wavs/talk_00000900_00006100.wav",

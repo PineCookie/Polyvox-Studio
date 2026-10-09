@@ -198,16 +198,17 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
               className={`voice-row ${active ? 'active' : ''}`}
               onClick={() => onSelect(best.lora.id)}
               disabled={blocked}
-              title={
-                blocked ? `Trained on ${voice.baseModelId}; the server runs ${modelId}` : best.lora.id
-              }
+              title={blocked ? `Trained on ${voice.baseModelId}; the server runs ${modelId}` : best.lora.id}
             >
               <span className="voice-row-name">{voice.name}</span>
               {blocked ? (
                 <span className="tag subtle">{shortModel(voice.baseModelId!)}</span>
               ) : (
                 <span className="muted">
-                  {[best.lora.config && `r${best.lora.config.r}`, best.step !== null && `${formatStep(best.step)} steps`]
+                  {[
+                    best.lora.config && `r${best.lora.config.r}`,
+                    best.step !== null && `${formatStep(best.step)} steps`,
+                  ]
                     .filter(Boolean)
                     .join(' · ')}
                 </span>
