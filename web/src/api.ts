@@ -26,6 +26,7 @@ export interface Status {
   model: string
   // Hugging Face id of the base model, when it can be inferred.
   model_id: string | null
+  torch: string // PyTorch build, e.g. 2.14.1+cu130
   loaded: boolean
   asr_loaded: boolean
   aligner_loaded: boolean

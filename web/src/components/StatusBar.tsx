@@ -12,7 +12,9 @@ export function StatusBar({ status, onUnload }: Props) {
     <div className="status">
       <span className={`dot ${status.loaded ? 'on' : ''}`} aria-hidden />
       <span>{status.loaded ? 'Model loaded' : 'Model idle'}</span>
-      <span className="muted">{status.device}</span>
+      <span className="muted" title={`PyTorch ${status.torch}`}>
+        {status.device}
+      </span>
       <span className="muted">{status.optimize ? 'Triton on' : 'Triton off'}</span>
       {status.asr_loaded && <span className="muted">ASR loaded</span>}
       {status.aligner_loaded && <span className="muted">Aligner loaded</span>}

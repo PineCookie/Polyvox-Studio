@@ -29,5 +29,8 @@ if [ ! -f "$here/web/dist/index.html" ]; then
   (cd "$here/web" && npm ci && npm run build)
 fi
 
-# uv installs Python and the dependencies on the first run.
-exec uv run --project "$here" voxcpm-studio "$@"
+# The PyTorch build for this machine: cu130, cu126 or cpu (VOXCPM_STUDIO_TORCH overrides).
+variant="$(uv run --no-project --python 3.13 "$here/src/voxcpm_studio/torch_variant.py")"
+echo "PyTorch build: $variant"
+# uv installs Python and the dependencies on the first run (and swaps PyTorch builds).
+exec uv run --project "$here" --no-default-groups --group "$variant" voxcpm-studio "$@"

@@ -7,8 +7,8 @@ on:
 
 jobs:
   python:
-    # The tests need no GPU (fake model loader and training worker); this also
-    # checks that the locked dependencies install on each platform.
+    # The tests need no GPU (fake model loader and training worker), so they run
+    # on the CPU build of PyTorch; the GPU builds are only checked to install.
     strategy:
       fail-fast: false
       matrix:
@@ -21,10 +21,16 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --locked
-      - run: uv run ruff check
-      - run: uv run ruff format --check
-      - run: uv run pytest
+      - run: uv sync --locked --no-default-groups --group dev --group cpu
+      - run: uv run --no-sync ruff check
+      - run: uv run --no-sync ruff format --check
+      - run: uv run --no-sync pytest
+      - name: The GPU builds resolve for this platform
+        shell: bash
+        run: |
+          groups="cu130 cu126"
+          if [ "$RUNNER_OS" = "Linux" ]; then groups="$groups rocm"; fi
+          for g in $groups; do uv sync --locked --dry-run --no-default-groups --group "$g"; done
 
   web:
     runs-on: ubuntu-latest

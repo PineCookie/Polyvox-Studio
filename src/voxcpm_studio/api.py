@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib.metadata
 import io
 import os
 import shutil
@@ -335,6 +336,8 @@ def create_app(
         return {
             **service.status(),
             "model_id": sharing.hub_id(settings.model_path("model")),
+            # The PyTorch build (e.g. 2.14.1+cu130): which of run.bat / run.sh's variants runs.
+            "torch": importlib.metadata.version("torch"),
             "asr_loaded": asr.loaded,
             "aligner_loaded": align.loaded,
             "separation_loaded": separation.loaded,

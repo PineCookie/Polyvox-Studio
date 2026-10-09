@@ -40,9 +40,18 @@ tests/             run without a GPU (fake model loader and training worker)
 
 ## Setup
 
-Requires an NVIDIA GPU (driver for CUDA 13) on Windows or Linux (x86_64 or
-aarch64), and [uv](https://docs.astral.sh/uv/), which installs Python 3.13, the
-CUDA build of PyTorch and everything else on the first run:
+Runs on Windows and Linux with [uv](https://docs.astral.sh/uv/), which installs
+Python 3.13, PyTorch and everything else on the first run. `run.bat` / `run.sh`
+pick the PyTorch build for the machine (`VOXCPM_STUDIO_TORCH` overrides):
+
+| Build | For |
+|---|---|
+| `cu130` | NVIDIA RTX 20 series or newer (incl. RTX 50) with a driver for CUDA 13 |
+| `cu126` | older NVIDIA GPUs (e.g. GTX 10 series) or drivers (CUDA 12.6) |
+| `rocm` | AMD GPUs on Linux (ROCm 7.2: recent Radeon and Instinct; untested) |
+| `cpu` | no GPU: datasets can be prepared, but synthesis is slow and training impractical |
+
+Install uv:
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows

@@ -6,9 +6,7 @@ readme = "README.md"
 requires-python = "==3.13.*"
 dependencies = [
     "voxcpm",
-    # Declared directly so the CUDA index below applies to them.
-    "torch>=2.14.1",
-    "torchaudio>=2.11",
+    # torch / torchaudio come from one of the groups cu130 / cu126 / cpu below.
     "triton-windows~=3.8.0; sys_platform == 'win32'",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -29,6 +27,18 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.16.10",
 ]
+# PyTorch builds, one at a time (run.bat / run.sh pick one, see torch_variant.py):
+# CUDA 13 for recent drivers and Turing (RTX 20) or newer, including Blackwell;
+# CUDA 12.6 for older drivers and GPUs; ROCm 7.2 for AMD GPUs (Linux only);
+# CPU otherwise. Linux builds bring their own Triton.
+cu130 = ["torch>=2.14.1", "torchaudio>=2.11"]
+cu126 = ["torch>=2.14.1", "torchaudio>=2.11"]
+rocm = ["torch>=2.14.1", "torchaudio>=2.11", "triton-rocm"]  # triton-rocm: so its source below applies
+cpu = ["torch>=2.14.1", "torchaudio>=2.11"]
+
+[tool.uv]
+default-groups = ["dev", "cu130"]
+conflicts = [[{ group = "cu130" }, { group = "cu126" }, { group = "rocm" }, { group = "cpu" }]]
 
 [build-system]
 requires = ["hatchling"]
@@ -68,10 +78,37 @@ extend-immutable-calls = ["fastapi.File", "fastapi.Form", "fastapi.Query"]
 # PyPI 2.0.3 predates generate(seed=...) and resolve_model_path; switch to
 # "voxcpm>=2.0.4" from PyPI once a release includes them.
 voxcpm = { git = "https://github.com/OpenBMB/VoxCPM", rev = "cce58a5b59303c9bd63d12f23afe6a49a4a80c59" }
-torch = [{ index = "pytorch" }]
-torchaudio = [{ index = "pytorch" }]
+torch = [
+    { index = "pytorch-cu130", group = "cu130" },
+    { index = "pytorch-cu126", group = "cu126" },
+    { index = "pytorch-rocm", group = "rocm" },
+    { index = "pytorch-cpu", group = "cpu" },
+]
+torchaudio = [
+    { index = "pytorch-cu130", group = "cu130" },
+    { index = "pytorch-cu126", group = "cu126" },
+    { index = "pytorch-rocm", group = "rocm" },
+    { index = "pytorch-cpu", group = "cpu" },
+]
+# The ROCm build's Triton lives on PyTorch's ROCm index (PyPI has only an old pre-release).
+triton-rocm = [{ index = "pytorch-rocm", group = "rocm" }]
 
 [[tool.uv.index]]
-name = "pytorch"
+name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true

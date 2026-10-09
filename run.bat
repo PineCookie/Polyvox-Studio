@@ -1,4 +1,5 @@
 @echo off
+setlocal
 rem UTF-8 mode is required for Torch Inductor on non-UTF-8 Windows locales.
 set PYTHONUTF8=1
 rem Models downloaded in the Models tab live here; settings left at their
@@ -29,8 +30,13 @@ call npm run build || goto build_failed
 popd
 
 :run
-rem uv installs Python and the dependencies on the first run.
-uv run --project "%~dp0." voxcpm-studio %*
+rem The PyTorch build for this machine: cu130, cu126 or cpu (VOXCPM_STUDIO_TORCH overrides).
+set "TORCH_VARIANT="
+for /f "delims=" %%v in ('uv run --no-project --python 3.13 "%~dp0src\voxcpm_studio\torch_variant.py"') do set "TORCH_VARIANT=%%v"
+if not defined TORCH_VARIANT exit /b 1
+echo PyTorch build: %TORCH_VARIANT%
+rem uv installs Python and the dependencies on the first run (and swaps PyTorch builds).
+uv run --project "%~dp0." --no-default-groups --group %TORCH_VARIANT% voxcpm-studio %*
 exit /b
 
 :build_failed
