@@ -51,6 +51,37 @@ def test_a_noisy_background_is_not_mistaken_for_speech_at_the_edge():
     assert (check.start, check.end) == pytest.approx((0.4, 1.6), abs=0.03)
 
 
+def test_fillers_count_only_when_the_audio_lacks_them():
+    words = [Word(c, 0.3 + k * 0.3, 0.6 + k * 0.3, 0.1 if c == "哈" else 0.9) for k, c in enumerate("一二哈哈三")]
+    # 哈哈 (0.9-1.5 s) is there: unsure fillers are no mismatch and no flag.
+    heard = tone([(0.3, 1.8)], 2.2)
+    check = checks.check_clip(heard, Alignment(words, 0.1), "qwen3", [(0.3, 1.8)])
+    assert check.flags == [] and check.score == pytest.approx(0.9)
+
+    # 哈哈 written over silence: a soft flag, still no mismatch.
+    missing = tone([(0.3, 0.9), (1.5, 1.8)], 2.2)
+    assert checks.check_clip(missing, Alignment(words, 0.1), "qwen3", [(0.3, 0.9), (1.5, 1.8)]).flags == ["filler"]
+
+    real_words_wrong = [Word(w.text, w.start, w.end, 0.1) for w in words]
+    assert checks.check_clip(heard, Alignment(real_words_wrong, 0.1), "qwen3", [(0.3, 1.8)]).flags == ["mismatch"]
+
+
+def test_trim_cuts_off_untranscribed_sound_a_pause_separates():
+    wav = tone([(0.2, 0.6), (1.0, 2.0)], 2.6)  # a laugh, a pause, then the transcribed words
+    check = checks.check_clip(wav, aligned(1.0, 2.0), "qwen3", [(0.2, 0.6), (1.0, 2.0)])
+    assert "extra_speech" in check.flags and check.sound_before == pytest.approx((0.8, 0.4), abs=0.02)
+
+    start, end = check.trim_range()
+    after = check.trimmed(start, end)
+
+    assert (start, end) == pytest.approx((0.85, 2.15), abs=0.02)
+    assert after.flags == [] and after.unaligned == pytest.approx(0.0)
+    # Sound running into the words without a pause is not cut off: it counts as part of the speech.
+    joined = checks.check_clip(tone([(0.4, 2.0)], 2.4), aligned(1.0, 2.0), "qwen3", [(0.4, 2.0)])
+    assert joined.sound_before is None and joined.start == pytest.approx(0.4, abs=0.02)
+    assert joined.trim_range()[0] == pytest.approx(0.25, abs=0.02)
+
+
 def test_trim_keeps_padding_around_all_speech():
     wav = tone([(1.5, 3.0)], 5.0)
     check = checks.check_clip(wav, aligned(1.6, 2.9), "qwen3", [(1.5, 3.0)])
@@ -82,7 +113,7 @@ def no_vad(wav):
 
 
 def test_check_dataset_writes_results_the_review_shows(data_dir, align_service):
-    manifest = write_dataset(data_dir, ["第一句", "错的一句", "第三句"])
+    manifest = write_dataset(data_dir, ["第一句", "错错错句", "第三句"])
     phases = []
     checker = checks.make_checker(lambda w, t: align_service.align(w, t, "qwen3"), "qwen3", no_vad)
 
@@ -92,7 +123,7 @@ def test_check_dataset_writes_results_the_review_shows(data_dir, align_service):
         "aligner": "qwen3",
         "checked": 3,
         "flagged": 1,
-        "flags": {"mismatch": 1, "extra_speech": 0, "cut_edge": 0, "long_silence": 0},
+        "flags": {"mismatch": 1, "filler": 0, "extra_speech": 0, "cut_edge": 0, "long_silence": 0},
     }
     assert phases[-1] == ("aligning", 3, 3)
     page = manifests.read_rows(manifest, flagged=True)
@@ -126,7 +157,7 @@ def test_import_checks_and_trims_the_copies(tmp_path, data_dir, align_service):
 
 def test_check_job_endpoint(service, training, asr_service, align_service, align_loader, data_dir, monkeypatch):
     monkeypatch.setattr(slicer, "silero_vad_many", lambda wavs: [[] for _ in wavs])
-    write_dataset(data_dir, ["第一句", "错的一句"])
+    write_dataset(data_dir, ["第一句", "错错错句"])
     client = TestClient(create_app(service.settings, service, training, asr_service, align=align_service))
 
     resp = client.post("/api/datasets/check", json={"id": "speaker_a/train.jsonl", "aligner": "qwen3"})
@@ -143,8 +174,8 @@ def test_check_job_endpoint(service, training, asr_service, align_service, align
     clip = client.get("/api/dataset-clip", params={"id": "speaker_a/train.jsonl", "index": 1}).json()
     assert [(w["text"], w["weak"]) for w in clip["words"]] == [
         ("错", True),
-        ("的", False),
-        ("一", False),
+        ("错", True),
+        ("错", True),
         ("句", False),
     ]
     assert clip["aligner"] == "qwen3" and len(clip["peaks"]) == manifests.DETAIL_BINS

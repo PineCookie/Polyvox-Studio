@@ -8,6 +8,7 @@ export const ALIGNER_LABEL: Record<Aligner, string> = {
 // Alignment check flags (checks.py): short tag, and what it means.
 export const FLAG_LABEL: Record<CheckFlag, [string, string]> = {
   mismatch: ['Mismatch', 'Part of the text does not match the audio'],
+  filler: ['Filler?', 'A filler or laugh (嗯, 哈哈, 呵呵, ...) may not be in the audio, or not as written'],
   extra_speech: ['Untranscribed', 'Speech outside the transcribed words: the text may miss something'],
   cut_edge: ['Cut edge', 'The sound runs into the start or end of the file: a word may be cut'],
   long_silence: ['Long silence', 'Over 1 s of silence before or after the speech'],

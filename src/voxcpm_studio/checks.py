@@ -2,8 +2,11 @@
 
 For each clip with a transcript:
 
-- ``mismatch``: part of the text does not match the audio (aligner score
-  below MISMATCH_BELOW for that aligner).
+- ``mismatch``: part of the text does not match the audio (aligner score over
+  the words that are not fillers below MISMATCH_BELOW for that aligner).
+- ``filler``: a filler or laugh (嗯, 哈哈, 呵呵, ...) the aligner doubts: it may
+  not be in the audio, or not as written. Aligners are unsure of fillers in
+  general, so these do not count as a mismatch.
 - ``extra_speech``: voice activity outside the aligned words, i.e. the text
   misses something said (a dropped phrase, an untranscribed filler or laugh).
   The aligner score cannot see this: the remaining words still align well.
@@ -29,7 +32,8 @@ from pathlib import Path
 import numpy as np
 
 from . import slicer
-from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges
+from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges, words_score
+from .fillers import is_filler
 from .manifests import ALIGN_FILE, read_manifest, row_key, text_key
 from .slicer import Vad
 
@@ -48,12 +52,18 @@ CUT_EDGE_DB = 20.0
 TRIM_PAD_S = 0.15  # silence kept around the speech when trimming (as the slicer pads)
 MIN_TRIM_S = 0.1  # trimming less than this is not worth rewriting a file
 CHECK_CHUNK = 32  # clips per aligner call; progress and cancel granularity
-FLAGS = ("mismatch", "extra_speech", "cut_edge", "long_silence")
+EDGE_SOUND_GAP_S = 0.15  # a pause this long lets trimming cut off untranscribed edge sound
+# A filler the audio lacks: squeezed shorter than this (qwen3), or mostly quiet
+# over its span (at least FILLER_PROBE_S from its start).
+FILLER_SQUEEZED_S = 0.04
+FILLER_PROBE_S = 0.1
+FILLER_LOUD_SHARE = 0.3
+FLAGS = ("mismatch", "filler", "extra_speech", "cut_edge", "long_silence")
 
 
 @dataclass
 class ClipCheck:
-    score: float
+    score: float  # over the words that are not fillers (see fillers.py)
     start: float  # aligned speech, seconds (edges refined on the waveform)
     end: float
     lead: float  # silence before any speech (aligned words or voice activity)
@@ -63,32 +73,79 @@ class ClipCheck:
     flags: list[str] = field(default_factory=list)
     # [text, start, end, confidence] per aligned word, as the aligner placed it.
     words: list[list] = field(default_factory=list)
+    # Untranscribed sound before the words / after them that a pause separates
+    # from them: (where a cut would exclude it, seconds of it), else None.
+    sound_before: tuple[float, float] | None = None
+    sound_after: tuple[float, float] | None = None
 
     def trim_range(self, pad: float = TRIM_PAD_S) -> tuple[float, float] | None:
-        """(start, end) to keep, leaving ``pad`` of silence around the speech;
-        None when that would remove less than MIN_TRIM_S."""
-        cut_start = max(0.0, self.lead - pad)
-        cut_end = max(0.0, self.trail - pad)
-        if cut_start + cut_end < MIN_TRIM_S:
+        """(start, end) to keep: ``pad`` of silence around the speech, and
+        without untranscribed sound at the edges when a pause separates it
+        (so audio and text agree). None when that would remove less than
+        MIN_TRIM_S."""
+        if self.sound_before:
+            cut_start = max(self.sound_before[0], self.start - pad)
+        else:
+            cut_start = max(0.0, self.lead - pad)
+        if self.sound_after:
+            keep_end = min(self.sound_after[0], self.end + pad)
+        else:
+            keep_end = min(self.duration, self.duration - self.trail + pad)
+        if cut_start + (self.duration - keep_end) < MIN_TRIM_S:
             return None
-        return cut_start, self.duration - cut_end
+        return cut_start, keep_end
 
     def trimmed(self, start: float, end: float) -> ClipCheck:
         """This check for the clip cut to [start, end]."""
-        lead, trail = self.lead - start, self.trail - (self.duration - end)
-        flags = [f for f in self.flags if f != "long_silence"]
+        cut_before = self.sound_before is not None and start >= self.sound_before[0] - 1e-6
+        cut_after = self.sound_after is not None and end <= self.sound_after[0] + 1e-6
+        lead = (self.start if cut_before else self.lead) - start
+        trail = end - (self.end if cut_after else self.duration - self.trail)
+        unaligned = self.unaligned
+        unaligned -= self.sound_before[1] if cut_before else 0.0
+        unaligned -= self.sound_after[1] if cut_after else 0.0
+        flags = [f for f in self.flags if f not in ("long_silence", "extra_speech")]
+        if unaligned >= EXTRA_SPEECH_S:
+            flags.append("extra_speech")
         if max(lead, trail) > LONG_SILENCE_S:
             flags.append("long_silence")
         return replace(
             self,
             start=self.start - start,
             end=self.end - start,
-            lead=lead,
-            trail=trail,
+            lead=max(0.0, lead),
+            trail=max(0.0, trail),
             duration=end - start,
-            flags=flags,
+            unaligned=round(max(0.0, unaligned), 3),
+            flags=[f for f in FLAGS if f in flags],
             words=[[w, round(s - start, 3), round(e - start, 3), c] for w, s, e, c in self.words],
+            sound_before=None if cut_before else _shift(self.sound_before, start),
+            sound_after=None if cut_after else _shift(self.sound_after, start),
         )
+
+
+def _shift(sound: tuple[float, float] | None, by: float) -> tuple[float, float] | None:
+    return (sound[0] - by, sound[1]) if sound else None
+
+
+def _edge_sound(
+    segments: list[tuple[float, float]], start: float, end: float
+) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
+    """Untranscribed voice activity before ``start`` / after ``end`` that a
+    pause of at least EDGE_SOUND_GAP_S separates from the words: (cut point in
+    the middle of that pause, seconds of sound), for each side."""
+    before = [(s, min(e, start)) for s, e in segments if s < start - EXTRA_MARGIN_S]
+    after = [(max(s, end), e) for s, e in segments if e > end + EXTRA_MARGIN_S]
+    out_before = out_after = None
+    if before:
+        last = max(e for _, e in before)
+        if start - last >= EDGE_SOUND_GAP_S:
+            out_before = (round((last + start) / 2, 3), round(sum(e - s for s, e in before), 3))
+    if after:
+        first = min(s for s, _ in after)
+        if first - end >= EDGE_SOUND_GAP_S:
+            out_after = (round((end + first) / 2, 3), round(sum(e - s for s, e in after), 3))
+    return out_before, out_after
 
 
 def _overlap_outside(segments: list[tuple[float, float]], lo: float, hi: float) -> float:
@@ -109,10 +166,29 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
     voice_end = max([end] + [e for _, e in segments[-1:]])
     lead, trail = voice_start, duration - voice_end
     loud = loud_frames(wav)
+    sound_before, sound_after = _edge_sound(segments, start, end) if span else (None, None)
+
+    # Fillers (嗯, 哈哈, ...) are uncertain for any aligner: the mismatch score
+    # covers the other words. A filler the audio seems to lack (squeezed to a
+    # sliver, or placed on quiet audio: e.g. one 呵 too many) gets a soft flag.
+    score = words_score(alignment.words, kind, skip=is_filler)
+    if score is None:  # nothing but fillers
+        score = alignment.score
+
+    def absent(w) -> bool:
+        a = int(w.start * 100)
+        b = max(a + 1, int(np.ceil(max(w.end, w.start + FILLER_PROBE_S) * 100)))
+        loud_share = float(loud[a:b].mean()) if a < len(loud) else 0.0
+        squeezed = kind == "qwen3" and w.end - w.start < FILLER_SQUEEZED_S  # CTC spans are onsets only
+        return squeezed or loud_share < FILLER_LOUD_SHARE
+
+    doubtful_filler = any(w.aligned and is_filler(w.text) and absent(w) for w in alignment.words)
 
     flags = []
-    if span is None or alignment.score < MISMATCH_BELOW[kind]:
+    if span is None or score < MISMATCH_BELOW[kind]:
         flags.append("mismatch")
+    if doubtful_filler:
+        flags.append("filler")
     if unaligned >= EXTRA_SPEECH_S:
         flags.append("extra_speech")
     first, last = edge_levels(wav)
@@ -121,7 +197,9 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
     if max(lead, trail) > LONG_SILENCE_S:
         flags.append("long_silence")
     return ClipCheck(
-        score=round(alignment.score, 6),
+        sound_before=sound_before,
+        sound_after=sound_after,
+        score=round(score, 6),
         start=round(start, 3),
         end=round(end, 3),
         lead=round(lead, 3),

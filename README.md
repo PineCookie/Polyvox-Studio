@@ -163,7 +163,8 @@ Forced alignment places each word of a transcript in its audio. The import (and
 
 | Flag | Meaning |
 |---|---|
-| Mismatch | part of the text does not match the audio (low confidence over a few words) |
+| Mismatch | part of the text does not match the audio (low confidence over a few words; fillers not counted) |
+| Filler? | a filler or laugh (嗯, 哈哈, 呵呵, ...) the audio seems to lack, e.g. one 呵 too many |
 | Untranscribed | voice activity outside the aligned words: the text may miss something |
 | Cut edge | the sound is still loud at the start or end of the file: a word may be cut |
 | Long silence | over 1 s of silence before or after the speech |
@@ -172,8 +173,17 @@ Two aligners, both running in this environment: **Qwen3-ForcedAligner** (11
 languages, mixed scripts) and a **wav2vec2 CTC** model with a character
 vocabulary (sharper on single wrong words; Chinese by default, set
 `VOXCPM_STUDIO_CTC_ALIGN_MODEL` for another language). The import can also trim
-long silent edges from the copied clips, keeping 0.15 s and never cutting into
-anything voice activity detection hears. Results are saved in
+the copied clips' edges: long silence, and sound before the first or after the
+last transcribed word (a laugh, 嗯) when a pause separates it, keeping 0.15 s.
+
+**Fillers and laughs.** ASR and aligners are unsure of them (is it 呵呵呵 or
+呵呵呵呵?), and for TTS training the count does not matter, only consistency. By
+default the import shortens runs of one filler to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 →
+嗯嗯); **Tidy fillers** does the same for an existing dataset (keeping the
+original manifest as `train.jsonl.orig`). Different fillers stay different: 哈哈
+is a laugh, 呵呵 a "he he". VoxCPM2's non-verbal tags (`[laughing]`, `[Uhm]`, ...)
+sound much the same in Chinese text but can add stray fillers, so transcripts
+keep plain characters. Results are saved in
 `data/<name>/align.json` and shown in the clips table, which can show only
 flagged clips and sort them worst match first. A check made for a transcript
 that was edited since is ignored.

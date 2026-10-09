@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import checks, importer, lora_library, manifests, sharing, slicer
+from . import checks, fillers, importer, lora_library, manifests, sharing, slicer
 from .aligner import AlignService
 from .asr import AsrService, load_audio
 from .config import Settings
@@ -91,6 +91,12 @@ class ImportIn(ImportSourceIn):
     separate: bool = False  # keep only the voice (remove music / background)
     dereverb: bool = False
     denoise: bool = False
+    # Shorten runs of fillers / laughs (哈哈哈哈 -> 哈哈) in every transcript.
+    tidy_fillers: bool = True
+
+
+class DatasetIn(BaseModel):
+    id: str  # dataset manifest id
 
 
 class CheckIn(BaseModel):
@@ -402,6 +408,7 @@ def create_app(
                 if body.slice
                 else None,
                 separation=separation.chain([cleanup_models[k] for k in cleanup]) if cleanup else None,
+                tidy_fillers=body.tidy_fillers,
             )
             return {
                 "id": result.id,
@@ -427,6 +434,14 @@ def create_app(
                 f"Run '{training.active_run}' is training on the GPU that ASR and alignment use. Wait for it, or "
                 "set VOXCPM_STUDIO_ASR_DEVICE to another GPU.",
             )
+
+    @app.post("/api/datasets/tidy-fillers")
+    def tidy_fillers(body: DatasetIn) -> dict:
+        """Shorten runs of fillers in a dataset's transcripts (fillers.tidy), in
+        place; the first time, the original manifest is kept as <name>.orig.
+        Checks made for the old texts become stale."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        return {"changed": _checked(fillers.tidy_manifest, manifest)}
 
     @app.post("/api/datasets/check", status_code=202)
     def check_dataset(body: CheckIn) -> JobOut:

@@ -89,6 +89,20 @@ def worst_window(confidences: list[float], size: int, geometric: bool = False) -
     return float(np.exp(worst)) if geometric else worst
 
 
+# How each backend's score is taken (worst_window): window size, geometric mean.
+SCORE_WINDOW = {"qwen3": (5, False), "ctc": (3, True)}
+
+
+def words_score(words: list[Word], kind: str, skip: Callable[[str], bool] = lambda w: False) -> float | None:
+    """The backend's worst-window score over the aligned words that ``skip``
+    does not exclude; None when none are left."""
+    confidences = [w.confidence for w in words if w.aligned and not skip(w.text)]
+    if not confidences:
+        return None
+    size, geometric = SCORE_WINDOW[kind]
+    return worst_window(confidences, size, geometric)
+
+
 def _is_cjk(char: str) -> bool:
     o = ord(char)
     return (
@@ -165,7 +179,7 @@ class QwenAligner:
                         Word(it["text"], it["start_time"], it["end_time"], c)
                         for it, c in zip(items, confidence, strict=True)
                     ],
-                    score=worst_window(confidence, 5),
+                    score=worst_window(confidence, *SCORE_WINDOW["qwen3"]),
                 )
             )
         return out
@@ -235,7 +249,7 @@ def ctc_alignment(emission, tokens: list[list[int]], words: list[str], blank: in
         out.append(Word(word, mine[0].start * frame_s, mine[-1].end * frame_s, confidence))
         previous_end = out[-1].end
         k += len(ts)
-    return Alignment(out, worst_window([w.confidence for w in out if w.aligned], 3, geometric=True))
+    return Alignment(out, worst_window([w.confidence for w in out if w.aligned], *SCORE_WINDOW["ctc"]))
 
 
 def _batches(order: list[int], lengths: list[int]) -> list[list[int]]:

@@ -246,7 +246,7 @@ export type CleanupOption = 'separate' | 'dereverb' | 'denoise'
 // Forced aligners (src/voxcpm_studio/aligner.py).
 export type Aligner = 'qwen3' | 'ctc'
 
-export type CheckFlag = 'mismatch' | 'extra_speech' | 'cut_edge' | 'long_silence'
+export type CheckFlag = 'mismatch' | 'filler' | 'extra_speech' | 'cut_edge' | 'long_silence'
 
 // Alignment checks over a whole dataset (checks.summarize).
 export interface CheckSummary {
@@ -271,6 +271,7 @@ export interface ImportOptions {
   aligner: Aligner
   trim: boolean // cut long silent edges from the copies
   cleanup: CleanupOption[] // applied first, in this order: separate, dereverb, denoise
+  tidyFillers: boolean // 哈哈哈哈 -> 哈哈 in every transcript
 }
 
 export type ImportJob = Job<{
@@ -300,11 +301,17 @@ export async function importDataset(o: ImportOptions): Promise<ImportJob> {
     separate: o.cleanup.includes('separate'),
     dereverb: o.cleanup.includes('dereverb'),
     denoise: o.cleanup.includes('denoise'),
+    tidy_fillers: o.tidyFillers,
   }
   return (await postJson('/api/datasets/import', body)).json()
 }
 
 export type CheckJob = Job<CheckSummary>
+
+/** Shorten runs of fillers in a dataset's transcripts, in place (the original manifest is kept). */
+export async function tidyFillers(id: string): Promise<{ changed: number }> {
+  return (await postJson('/api/datasets/tidy-fillers', { id })).json()
+}
 
 export async function checkDataset(id: string, aligner: Aligner): Promise<CheckJob> {
   return (await postJson('/api/datasets/check', { id, aligner })).json()

@@ -32,7 +32,7 @@ from pathlib import Path, PureWindowsPath
 
 import soundfile as sf
 
-from . import checks, slicer
+from . import checks, fillers, slicer
 from .checks import Checker, ClipCheck
 from .manifests import ASR_FILE, legacy_root, write_manifest
 from .slicer import SliceOptions, Vad
@@ -370,6 +370,7 @@ def import_dataset(
     trim: bool = False,
     guide: slicer.Guide | None = None,
     separation=None,
+    tidy_fillers: bool = False,
 ) -> ImportResult:
     """Write ``data_dir/<name>/train.jsonl``.
 
@@ -409,6 +410,9 @@ def import_dataset(
             rows, sliced = _slice(rows, staging / "_slices", slicing, vad, guide, progress, separation)
         if transcriber:
             _transcribe(rows, transcriber, progress)
+        if tidy_fillers:
+            for row in rows:
+                row.text = fillers.tidy(row.text)
         rows_kept = [(i, row) for i, row in enumerate(rows) if row.text]
         if not rows_kept:
             raise ValueError("No clips with both audio and a transcript; nothing to import.")

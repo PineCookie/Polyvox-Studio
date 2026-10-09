@@ -56,6 +56,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [check, setCheck] = useState(true)
   const [aligner, setAligner] = useState<Aligner>('qwen3')
   const [trim, setTrim] = useState(true)
+  const [tidy, setTidy] = useState(true)
   // Optional clean-up, off by default; which ones have a model installed.
   const [cleanup, setCleanup] = useState<CleanupOption[]>([])
   const [available, setAvailable] = useState<CleanupOption[]>([])
@@ -113,6 +114,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
           // Trimming rewrites the copies; files imported in place stay as they are.
           trim: check && trim && (copyAudio || willSlice),
           cleanup: copyAudio || willSlice ? cleanup : [],
+          tidyFillers: tidy,
         }),
       )
     } catch (err) {
@@ -381,7 +383,8 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                         disabled={!(copyAudio || willSlice)}
                         onChange={(e) => setTrim(e.target.checked)}
                       />{' '}
-                      Trim long silence at the clip edges (keeps 0.15 s; never cuts into speech)
+                      Trim the clip edges: long silence, and untranscribed sounds (a laugh, 嗯) a pause separates from
+                      the words; keeps 0.15 s
                     </label>
                     <p className="muted hint">
                       Flags clips whose text does not match, with untranscribed speech, cut at the edge or with long
@@ -390,6 +393,12 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                   </>
                 )}
               </fieldset>
+
+              <label className="check">
+                <input type="checkbox" checked={tidy} onChange={(e) => setTidy(e.target.checked)} disabled={running} />{' '}
+                Tidy fillers: shorten runs to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯); counts are unreliable and only need
+                to be consistent
+              </label>
 
               <label className="field">
                 <span>Dataset name {nameError && !running && <span className="field-error">{nameError}</span>}</span>

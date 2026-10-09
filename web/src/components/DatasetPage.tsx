@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { checkDataset } from '../api'
+import { checkDataset, tidyFillers } from '../api'
 import type { Aligner, CheckJob, ImportJob } from '../api'
 import { ALIGNER_LABEL, datasetName } from '../format'
 import { useJob } from '../useJob'
@@ -24,11 +24,23 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
     else if (j.state === 'failed') setError(j.error ?? 'Check failed.')
   })
   const running = job?.state === 'running'
+  const [tidied, setTidied] = useState<number | null>(null) // clips the last tidy changed
 
   async function check() {
     setError(null)
     try {
       setJob(await checkDataset(id, aligner))
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  async function tidy() {
+    setError(null)
+    try {
+      const { changed } = await tidyFillers(id)
+      setTidied(changed)
+      if (changed > 0) setVersion((v) => v + 1)
     } catch (e) {
       setError((e as Error).message)
     }
@@ -76,6 +88,24 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
           and long silence. Qwen3 also handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese model
           by default).
         </p>
+        <div className="inline-field check-action">
+          <button
+            type="button"
+            className="ghost"
+            onClick={tidy}
+            disabled={running}
+            title="Shorten runs of fillers to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯). The original manifest is kept as train.jsonl.orig."
+          >
+            Tidy fillers
+          </button>
+          {tidied !== null && (
+            <span className="muted hint">
+              {tidied === 0
+                ? 'Nothing to tidy.'
+                : `${tidied.toLocaleString()} transcripts tidied; check again to refresh their flags.`}
+            </span>
+          )}
+        </div>
         {job && <JobProgress job={job} what="Check" />}
         {error && <p className="field-error">{error}</p>}
       </section>
