@@ -320,6 +320,23 @@ export interface ClipRow {
   peaks: number[] | null // waveform outline: peak level 0..1 per equal slice
 }
 
+export interface AlignedWord {
+  text: string
+  start: number
+  end: number
+  confidence: number
+  weak: boolean // unsure enough that it is likely not what was said
+}
+
+export interface ClipDetail extends ClipRow {
+  aligner: Aligner | null
+  words: AlignedWord[] // empty when not checked (or checked before word timings were kept)
+}
+
+export async function getDatasetClip(source: DatasetSource, index: number): Promise<ClipDetail> {
+  return (await request(`/api/dataset-clip?${new URLSearchParams({ ...source, index: String(index) })}`)).json()
+}
+
 export interface ClipPage {
   total: number // clips matching the search / filter
   rows: ClipRow[]

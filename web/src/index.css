@@ -1252,10 +1252,89 @@ input[type='search']:focus {
   vector-effect: non-scaling-stroke;
 }
 
+.waveform.large {
+  height: 76px;
+}
+
+.waveform-mark {
+  fill: var(--warn);
+  opacity: 0.3;
+}
+
 @media (max-width: 640px) {
   .clip-table .clip-wave {
     display: none;
   }
+}
+
+/* Expanded clip: larger waveform with the words under it */
+.clip-table .clip-text {
+  cursor: pointer;
+}
+
+.clip-table tr.open td {
+  border-bottom-color: transparent;
+}
+
+.clip-table .clip-detail td {
+  padding: 4px 8px 14px;
+}
+
+.clip-view {
+  display: grid;
+  gap: 6px;
+}
+
+.clip-view .hint {
+  margin: 0;
+}
+
+.word-track {
+  position: relative;
+  height: 44px;
+}
+
+.word {
+  position: absolute;
+  top: 0;
+  height: 20px;
+  /* Squeezed words (often the wrong ones) keep a readable label. */
+  min-width: 1.2em;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 20px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.word.lower {
+  top: 22px;
+}
+
+.word:hover {
+  background: var(--accent-soft);
+}
+
+.word.weak {
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.word.current {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.weak-legend {
+  color: var(--warn);
+  font-weight: 600;
 }
 
 .tag.warn {
@@ -1302,9 +1381,20 @@ input[type='search']:focus {
 }
 
 .clip-table .clip-seconds {
-  width: 70px;
+  width: 84px;
   text-align: right;
   color: var(--muted);
+}
+
+.clip-table .clip-seconds button {
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The expanded clip stays unhighlighted while it plays: the words carry the position. */
+.clip-table tr.clip-detail td {
+  background: transparent;
 }
 
 .clip-table tr.playing td {

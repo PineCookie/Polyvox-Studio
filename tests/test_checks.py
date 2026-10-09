@@ -61,6 +61,7 @@ def test_trim_keeps_padding_around_all_speech():
 
     assert (start, end) == pytest.approx((1.35, 3.15), abs=0.02)
     assert (after.lead, after.trail, after.start) == pytest.approx((0.15, 0.15, 0.15), abs=0.02)
+    assert [w[1] for w in after.words] == pytest.approx([w[1] - start for w in check.words], abs=0.002)
     assert "long_silence" not in after.flags
     assert after.trim_range() is None  # nothing left worth cutting
 
@@ -138,6 +139,17 @@ def test_check_job_endpoint(service, training, asr_service, align_service, align
     assert page["checks"]["aligner"] == "qwen3" and page["rows"][0]["flags"] == ["mismatch"]
     flagged = client.get("/api/dataset-rows", params={"id": "speaker_a/train.jsonl", "flagged": True}).json()
     assert flagged["total"] == 1
+
+    clip = client.get("/api/dataset-clip", params={"id": "speaker_a/train.jsonl", "index": 1}).json()
+    assert [(w["text"], w["weak"]) for w in clip["words"]] == [
+        ("错", True),
+        ("的", False),
+        ("一", False),
+        ("句", False),
+    ]
+    assert clip["aligner"] == "qwen3" and len(clip["peaks"]) == manifests.DETAIL_BINS
+    assert 0.5 <= clip["words"][0]["start"] < clip["words"][-1]["end"] <= 1.5  # the tone's span
+    assert client.get("/api/dataset-clip", params={"id": "speaker_a/train.jsonl", "index": 9}).status_code == 404
     assert client.get("/api/status").json()["aligner_loaded"] is True
     assert client.post("/api/model/unload").json()["aligner_loaded"] is False
 

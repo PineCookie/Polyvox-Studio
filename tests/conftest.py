@@ -163,7 +163,10 @@ class FakeAligner:
             step = (hi - lo) / len(ws) / 16000
             out.append(
                 Alignment(
-                    [Word(w, lo / 16000 + k * step, lo / 16000 + (k + 1) * step, 0.9) for k, w in enumerate(ws)],
+                    [
+                        Word(w, lo / 16000 + k * step, lo / 16000 + (k + 1) * step, 0.1 if w == "错" else 0.9)
+                        for k, w in enumerate(ws)
+                    ],
                     0.1 if "错" in ws else 0.9,
                 )
             )

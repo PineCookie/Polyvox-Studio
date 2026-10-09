@@ -9,12 +9,15 @@ interface Props {
   // The player, while it plays this clip: drives the playhead.
   audio: HTMLAudioElement | null
   onSeek: (seconds: number) => void
+  // Spans to mark (unsure words), in seconds.
+  marks?: [number, number][]
+  large?: boolean
 }
 
 const MAX_GAIN = 8 // quiet clips are scaled up for visibility, near-silence stays flat
 
 /** A clip's waveform outline; click to play from a point. */
-export function Waveform({ peaks, seconds, speech, audio, onSeek }: Props) {
+export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], large = false }: Props) {
   const playhead = useRef<SVGLineElement>(null)
   const width = peaks.length
 
@@ -45,7 +48,7 @@ export function Waveform({ peaks, seconds, speech, audio, onSeek }: Props) {
 
   return (
     <svg
-      className="waveform"
+      className={large ? 'waveform large' : 'waveform'}
       viewBox={`0 0 ${width} 2`}
       preserveAspectRatio="none"
       onClick={seek}
@@ -61,6 +64,16 @@ export function Waveform({ peaks, seconds, speech, audio, onSeek }: Props) {
           height={2}
         />
       )}
+      {marks.map(([start, end]) => (
+        <rect
+          key={start}
+          className="waveform-mark"
+          x={(start / seconds) * width}
+          y={0}
+          width={Math.max(((end - start) / seconds) * width, width / 400)}
+          height={2}
+        />
+      ))}
       <path className="waveform-outline" d={outline} />
       {audio && <line ref={playhead} className="waveform-playhead" x1={0} x2={0} y1={0} y2={2} />}
     </svg>

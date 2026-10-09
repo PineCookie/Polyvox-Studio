@@ -34,6 +34,9 @@ from .slicer import Vad, silero_vad
 # Calibrated on ~600 real clips to flag ~4% of correct transcripts, catching
 # ~65% (qwen3) / ~83% (ctc) of transcripts with a third of the words wrong.
 MISMATCH_BELOW = {"qwen3": 0.45, "ctc": 1e-5}
+# A single word this unsure is marked in the clip view: 5% of correct words, and
+# 76% (qwen3) / 88% (ctc) of words replaced by wrong ones.
+WEAK_WORD_BELOW = {"qwen3": 0.55, "ctc": 6e-5}
 EXTRA_SPEECH_S = 0.3
 EXTRA_MARGIN_S = 0.25  # voice this close to the aligned words is theirs (breath, release)
 LONG_SILENCE_S = 1.0
@@ -53,6 +56,8 @@ class ClipCheck:
     duration: float
     unaligned: float  # seconds of voice activity outside the aligned words
     flags: list[str] = field(default_factory=list)
+    # [text, start, end, confidence] per aligned word, as the aligner placed it.
+    words: list[list] = field(default_factory=list)
 
     def trim_range(self, pad: float = TRIM_PAD_S) -> tuple[float, float] | None:
         """(start, end) to keep, leaving ``pad`` of silence around the speech;
@@ -77,6 +82,7 @@ class ClipCheck:
             trail=trail,
             duration=end - start,
             flags=flags,
+            words=[[w, round(s - start, 3), round(e - start, 3), c] for w, s, e, c in self.words],
         )
 
 
@@ -117,6 +123,11 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
         duration=round(duration, 3),
         unaligned=round(unaligned, 3),
         flags=flags,
+        words=[
+            [w.text, round(w.start, 3), round(w.end, 3), float(f"{w.confidence:.3g}")]
+            for w in alignment.words
+            if w.aligned
+        ],
     )
 
 

@@ -149,6 +149,11 @@ anything voice activity detection hears. Results are saved in
 flagged clips and sort them worst match first. A check made for a transcript
 that was edited since is ignored.
 
+Each row shows the clip's waveform with the span the text covers shaded; click
+it to play from that point. Expanding a row (its length) shows a larger
+waveform with every word where the aligner placed it; words it is unsure of,
+usually not what was said, are marked in orange on both.
+
 Mostly not caught: a transcript that leaves out a few words (about 1 in 7 is
 flagged). The aligner spreads the remaining words over the audio; comparing with
 ASR output (planned) will find those.

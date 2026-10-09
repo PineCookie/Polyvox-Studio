@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { datasetAudioUrl, getDatasetRows } from '../api'
 import type { CheckFlag, CheckSummary, ClipPage, DatasetSource } from '../api'
 import { ALIGNER_LABEL, FLAG_LABEL } from '../format'
+import { ClipView } from './ClipView'
 import { Waveform } from './Waveform'
 
 interface Props {
@@ -25,6 +26,7 @@ export function DatasetClips({ source }: Props) {
   const [page, setPage] = useState<ClipPage | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState<number | null>(null)
+  const [open, setOpen] = useState<number | null>(null) // clip shown with its words
   const audio = useRef<HTMLAudioElement>(null)
   const loaded = useRef<number | null>(null) // clip index the player holds
 
@@ -67,6 +69,10 @@ export function DatasetClips({ source }: Props) {
     )
   }
 
+  function toggle(index: number) {
+    setOpen((o) => (o === index ? null : index))
+  }
+
   function filter(apply: () => void) {
     apply()
     setOffset(0)
@@ -106,39 +112,64 @@ export function DatasetClips({ source }: Props) {
           <table className="metrics clip-table">
             <tbody>
               {page.rows.map((row) => (
-                <tr key={row.index} className={row.index === playing ? 'playing' : ''}>
-                  <td className="clip-play">
-                    <button
-                      type="button"
-                      className="ghost small"
-                      onClick={() => play(row.index)}
-                      disabled={row.seconds === null}
-                      aria-label={`Play ${fileName(row.file)}`}
-                      title={row.file}
-                    >
-                      {row.index === playing ? '❚❚' : '▶'}
-                    </button>
-                  </td>
-                  <td className="clip-wave">
-                    {row.peaks && row.seconds !== null && (
-                      <Waveform
-                        peaks={row.peaks}
-                        seconds={row.seconds}
-                        speech={row.speech}
-                        audio={row.index === playing ? audio.current : null}
-                        onSeek={(at) => play(row.index, at)}
-                      />
-                    )}
-                  </td>
-                  <td className="clip-text">
-                    {row.text}
-                    {row.asr && <span className="tag subtle">ASR</span>}
-                    {row.flags.map((f) => (
-                      <FlagTag key={f} flag={f} score={row.score} />
-                    ))}
-                  </td>
-                  <td className="clip-seconds">{row.seconds === null ? 'missing' : `${row.seconds.toFixed(1)} s`}</td>
-                </tr>
+                <Fragment key={row.index}>
+                  <tr className={`${row.index === playing ? 'playing' : ''} ${row.index === open ? 'open' : ''}`}>
+                    <td className="clip-play">
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => play(row.index)}
+                        disabled={row.seconds === null}
+                        aria-label={`Play ${fileName(row.file)}`}
+                        title={row.file}
+                      >
+                        {row.index === playing ? '❚❚' : '▶'}
+                      </button>
+                    </td>
+                    <td className="clip-wave">
+                      {row.peaks && row.seconds !== null && (
+                        <Waveform
+                          peaks={row.peaks}
+                          seconds={row.seconds}
+                          speech={row.speech}
+                          audio={row.index === playing ? audio.current : null}
+                          onSeek={(at) => play(row.index, at)}
+                        />
+                      )}
+                    </td>
+                    <td className="clip-text" onClick={() => toggle(row.index)}>
+                      {row.text}
+                      {row.asr && <span className="tag subtle">ASR</span>}
+                      {row.flags.map((f) => (
+                        <FlagTag key={f} flag={f} score={row.score} />
+                      ))}
+                    </td>
+                    <td className="clip-seconds">
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => toggle(row.index)}
+                        aria-expanded={row.index === open}
+                        title="Words and a larger waveform"
+                      >
+                        {row.seconds === null ? 'missing' : `${row.seconds.toFixed(1)} s`}{' '}
+                        {row.index === open ? '▴' : '▾'}
+                      </button>
+                    </td>
+                  </tr>
+                  {row.index === open && (
+                    <tr className="clip-detail">
+                      <td colSpan={4}>
+                        <ClipView
+                          source={source}
+                          index={row.index}
+                          audio={row.index === playing ? audio.current : null}
+                          onSeek={(at) => play(row.index, at)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>

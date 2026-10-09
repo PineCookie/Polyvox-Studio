@@ -259,6 +259,42 @@ def read_rows(
     return ClipPage(len(matches), rows, {"aligner": aligned.get("aligner"), **summary} if has_checks else None)
 
 
+DETAIL_BINS = 800
+
+
+@dataclass
+class ClipDetail:
+    row: ClipRow  # with a finer waveform (DETAIL_BINS slices)
+    aligner: str | None  # that made `words`
+    words: list[list]  # [text, start, end, confidence] from the check; [] when not checked
+
+
+def clip_detail(path: Path, root: Path | None, index: int) -> ClipDetail:
+    """One clip for a closer look: a finer waveform and the checked word timings."""
+    entries = _entries_for_review(path, root)
+    if not 0 <= index < len(entries):
+        raise KeyError(f"No clip {index} in this dataset.")
+    audio, text = entries[index]
+    manifest_dir = path.resolve().parent
+    key = row_key(audio, manifest_dir)
+    aligned = read_sidecar(manifest_dir / ALIGN_FILE)
+    check = aligned.get("clips", {}).get(key)
+    if check and check.get("text") != text_key(text):
+        check = None  # made for an earlier transcript
+    row = ClipRow(
+        index=index,
+        file=key,
+        text=text,
+        seconds=_clip_seconds(audio),
+        asr=key in read_sidecar(manifest_dir / ASR_FILE),
+        score=check["score"] if check else None,
+        flags=check["flags"] if check else [],
+        speech=(check["start"], check["end"]) if check and "start" in check else None,
+        peaks=clip_peaks(audio, DETAIL_BINS),
+    )
+    return ClipDetail(row, aligned.get("aligner") if check else None, check.get("words", []) if check else [])
+
+
 def clip_audio(path: Path, root: Path | None, index: int) -> Path:
     """The audio file of a manifest's ``index``-th usable entry."""
     entries = _entries_for_review(path, root)

@@ -123,6 +123,19 @@ class ClipRowOut(BaseModel):
     peaks: list[float] | None
 
 
+class WordOut(BaseModel):
+    text: str
+    start: float
+    end: float
+    confidence: float
+    weak: bool  # below checks.WEAK_WORD_BELOW for the aligner: likely not what was said
+
+
+class ClipDetailOut(ClipRowOut):
+    aligner: str | None
+    words: list[WordOut]  # empty when not checked, or checked before word timings were saved
+
+
 class ClipPageOut(BaseModel):
     total: int
     rows: list[ClipRowOut]
@@ -437,6 +450,18 @@ def create_app(
         )
         return ClipPageOut(
             total=page.total, rows=[ClipRowOut(**dataclasses.asdict(r)) for r in page.rows], checks=page.checks
+        )
+
+    @app.get("/api/dataset-clip")
+    def dataset_clip(index: int, id: str | None = None, run: str | None = None) -> ClipDetailOut:
+        """One clip with a finer waveform and, when checked, where each word is."""
+        path = review_manifest(id, run)
+        detail = _found(manifests.clip_detail, path, manifests.legacy_root(settings.data_dir), index)
+        weak_below = checks.WEAK_WORD_BELOW.get(detail.aligner or "", 0.0)
+        return ClipDetailOut(
+            **dataclasses.asdict(detail.row),
+            aligner=detail.aligner,
+            words=[WordOut(text=t, start=s, end=e, confidence=c, weak=c < weak_below) for t, s, e, c in detail.words],
         )
 
     @app.get("/api/dataset-audio")
