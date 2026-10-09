@@ -27,9 +27,10 @@ from pathlib import Path
 
 import numpy as np
 
+from . import slicer
 from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges
 from .manifests import ALIGN_FILE, read_manifest, row_key, text_key
-from .slicer import Vad, silero_vad
+from .slicer import Vad
 
 # Calibrated on ~600 real clips to flag ~4% of correct transcripts, catching
 # ~65% (qwen3) / ~83% (ctc) of transcripts with a third of the words wrong.
@@ -143,12 +144,12 @@ AlignFn = Callable[[list[np.ndarray], list[str]], list[Alignment]]
 
 
 def make_checker(align: AlignFn, kind: str, vad: Vad | None = None) -> Checker:
-    """``vad`` defaults to Silero VAD (looked up per call)."""
+    """``vad`` defaults to Silero VAD, batched over the clips (looked up per call)."""
 
     def check(wavs: list[np.ndarray], texts: list[str]) -> list[ClipCheck]:
         alignments = align(wavs, texts)
-        detect = vad or silero_vad
-        return [check_clip(w, a, kind, detect(w)) for w, a in zip(wavs, alignments, strict=True)]
+        segments = [vad(w) for w in wavs] if vad else slicer.silero_vad_many(wavs)
+        return [check_clip(w, a, kind, s) for w, a, s in zip(wavs, alignments, segments, strict=True)]
 
     return check
 

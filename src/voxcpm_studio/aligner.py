@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16_000
 BATCH_SIZE = 16
+BATCH_SECONDS = 160  # padded audio per model call
 ALIGNERS = ("qwen3", "ctc")
 
 # Energy refinement of the speech edges (10 ms frames).
@@ -194,16 +195,26 @@ class CtcAligner:
         return out
 
     def align(self, audios: list[np.ndarray], words: list[list[str]]) -> list[Alignment]:
-        return [self._align_one(a, ws) for a, ws in zip(audios, words, strict=True)]
-
-    def _align_one(self, audio: np.ndarray, words: list[str]) -> Alignment:
+        """One padded batch (the service groups similar lengths); each clip's
+        frames are cut back out by the model's own output-length rule."""
         import torch
 
-        inputs = self.processor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt").input_values
-        with torch.inference_mode():
-            emission = self.model(inputs.to(self.model.device)).logits[0].float().log_softmax(-1)
-        frame_s = len(audio) / SAMPLE_RATE / emission.shape[0]
-        return ctc_alignment(emission, [self.tokens(w) for w in words], words, self.blank, frame_s)
+        inputs = self.processor(
+            audios, sampling_rate=SAMPLE_RATE, return_tensors="pt", padding=True, return_attention_mask=True
+        )
+        mask = inputs.attention_mask.to(self.model.device)
+        # fp16 on CUDA: ~1.9x faster; on 656 clips no mismatch flag changed and
+        # 99.8% of word starts were identical to fp32.
+        cuda = self.model.device.type == "cuda"
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16, enabled=cuda):
+            logits = self.model(inputs.input_values.to(self.model.device), attention_mask=mask).logits
+            frames = self.model._get_feat_extract_output_lengths(mask.sum(-1)).tolist()
+        out = []
+        for i, (audio, ws) in enumerate(zip(audios, words, strict=True)):
+            emission = logits[i, : frames[i]].float().log_softmax(-1)
+            frame_s = len(audio) / SAMPLE_RATE / max(1, frames[i])
+            out.append(ctc_alignment(emission, [self.tokens(w) for w in ws], ws, self.blank, frame_s))
+        return out
 
 
 def ctc_alignment(emission, tokens: list[list[int]], words: list[str], blank: int, frame_s: float) -> Alignment:
@@ -231,6 +242,21 @@ def ctc_alignment(emission, tokens: list[list[int]], words: list[str], blank: in
         previous_end = out[-1].end
         k += len(ts)
     return Alignment(out, worst_window([w.confidence for w in out if w.aligned], 3, geometric=True))
+
+
+def _batches(order: list[int], lengths: list[int]) -> list[list[int]]:
+    """Consecutive runs of ``order`` (sorted by length) with at most BATCH_SIZE
+    clips and BATCH_SECONDS of padded audio: a fixed count of long clips ran
+    out of GPU memory (16 x 30 s in wav2vec2's attention)."""
+    out: list[list[int]] = []
+    for i in order:
+        batch = out[-1] if out else None
+        longest = max([lengths[j] for j in batch] + [lengths[i]]) if batch else lengths[i]
+        if batch and len(batch) < BATCH_SIZE and (len(batch) + 1) * longest <= BATCH_SECONDS * SAMPLE_RATE:
+            batch.append(i)
+        else:
+            out.append([i])
+    return out
 
 
 # (kind, model, device) -> backend
@@ -279,8 +305,7 @@ class AlignService:
             for i in order:
                 if not words[i]:
                     results[i] = Alignment([], 0.0)
-            for start in range(0, len(todo), BATCH_SIZE):
-                idx = todo[start : start + BATCH_SIZE]
+            for idx in _batches(todo, [len(a) for a in audios]):
                 aligned = backend.align([audios[i] for i in idx], [words[i] for i in idx])
                 for i, a in zip(idx, aligned, strict=True):
                     results[i] = a

@@ -98,6 +98,50 @@ def silero_vad(wav16k: np.ndarray) -> list[tuple[float, float]]:
     return [(s["start"] / VAD_RATE, s["end"] / VAD_RATE) for s in stamps]
 
 
+VAD_WINDOW = 512  # samples per Silero step at 16 kHz
+VAD_BATCH = 64
+
+
+def silero_vad_many(wavs: list[np.ndarray]) -> list[list[tuple[float, float]]]:
+    """``silero_vad`` for many clips at once: the clips' windows go through the
+    model as one batch per step (each keeps its own state), then Silero's own
+    rules turn each clip's probabilities into segments. Per clip, Silero steps
+    through 32 ms windows one model call at a time; batched, a 656-clip check
+    spent 15 s of its 21 s here."""
+    global _vad_model
+    import torch
+    from silero_vad import load_silero_vad
+    from silero_vad.utils_vad import get_speech_timestamps_from_probs
+
+    out: list[list[tuple[float, float]] | None] = [None] * len(wavs)
+    order = sorted(range(len(wavs)), key=lambda i: len(wavs[i]))  # similar lengths per batch
+    with _vad_lock, torch.no_grad():
+        if _vad_model is None:
+            _vad_model = load_silero_vad()
+        for b in range(0, len(order), VAD_BATCH):
+            idx = order[b : b + VAD_BATCH]
+            steps = max(1, -(-max(len(wavs[i]) for i in idx) // VAD_WINDOW))
+            batch = torch.zeros(len(idx), steps * VAD_WINDOW)
+            for row, i in enumerate(idx):
+                batch[row, : len(wavs[i])] = torch.from_numpy(np.ascontiguousarray(wavs[i]))
+            _vad_model.reset_states()
+            probs = torch.stack(
+                [_vad_model(batch[:, s * VAD_WINDOW : (s + 1) * VAD_WINDOW], VAD_RATE)[:, 0] for s in range(steps)],
+                dim=1,
+            ).tolist()
+            for row, i in enumerate(idx):
+                n = max(1, -(-len(wavs[i]) // VAD_WINDOW))
+                stamps = get_speech_timestamps_from_probs(
+                    probs[row][:n],
+                    sampling_rate=VAD_RATE,
+                    min_silence_duration_ms=int(VAD_MIN_SILENCE_S * 1000),
+                    speech_pad_ms=0,
+                    audio_length_samples=len(wavs[i]),
+                )
+                out[i] = [(s["start"] / VAD_RATE, s["end"] / VAD_RATE) for s in stamps]
+    return out  # type: ignore[return-value]
+
+
 # Reading
 
 

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from test_aligner import tone
 from test_importer import wait_job, write_list
 
-from voxcpm_studio import checks, importer, manifests
+from voxcpm_studio import checks, importer, manifests, slicer
 from voxcpm_studio.aligner import Alignment, Word
 from voxcpm_studio.api import create_app
 from voxcpm_studio.asr import load_audio
@@ -125,7 +125,7 @@ def test_import_checks_and_trims_the_copies(tmp_path, data_dir, align_service):
 
 
 def test_check_job_endpoint(service, training, asr_service, align_service, align_loader, data_dir, monkeypatch):
-    monkeypatch.setattr(checks, "silero_vad", no_vad)
+    monkeypatch.setattr(slicer, "silero_vad_many", lambda wavs: [[] for _ in wavs])
     write_dataset(data_dir, ["第一句", "错的一句"])
     client = TestClient(create_app(service.settings, service, training, asr_service, align=align_service))
 
@@ -158,7 +158,7 @@ def test_check_job_endpoint(service, training, asr_service, align_service, align
 
 
 def test_import_endpoint_with_checks(service, training, asr_service, align_service, data_dir, tmp_path, monkeypatch):
-    monkeypatch.setattr(checks, "silero_vad", no_vad)
+    monkeypatch.setattr(slicer, "silero_vad_many", lambda wavs: [[] for _ in wavs])
     src = tmp_path / "speaker_b"
     src.mkdir()
     sf.write(src / "a.wav", tone([(0.3, 1.2)], 1.5), 16000)
