@@ -237,6 +237,20 @@ def test_source_reads_ranges_through_either_backend(tmp_path):
     assert abs(len(decoded) - 16000) <= 16 and np.abs(decoded[9000:15000]).max() > 0.1
 
 
+def test_compressed_stereo_is_mixed_to_mono_without_gain(tmp_path):
+    path = tmp_path / "stereo.wav"
+    tone = bursts([(0.0, 1.0)], 1.0, 44100)
+    sf.write(path, np.stack([tone, tone], axis=1), 44100)
+    src = slicer.Source(path)
+    src._sf = False  # decoded by torchcodec, as m4a / mp3 are
+
+    mono = src.read(0.0, 1.0)
+
+    # FFmpeg's own downmix would be 3 dB louder (peaks over full scale on loud audio).
+    assert np.abs(mono).max() == pytest.approx(np.abs(tone).max(), rel=0.02)
+    assert src.read_channels(0.0, 1.0, None, 2).shape[0] == 2
+
+
 def test_slicing_needs_copy_and_transcription(tmp_path, data_dir):
     with pytest.raises(ValueError, match="needs copying and transcription"):
         importer.import_dataset(str(tmp_path), None, "x", data_dir, slicing=OPTS)

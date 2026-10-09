@@ -154,7 +154,7 @@ class Source:
 
     def __init__(self, path: Path):
         self.path = path
-        self._decoders: dict[tuple[int | None, int], object] = {}
+        self._decoders: dict[tuple[int | None, int], object] = {}  # (rate, 0) -> decoder
         try:
             info = sf.info(str(path))
             self.rate, self.duration, self._sf = info.samplerate, info.duration, True
@@ -189,13 +189,18 @@ class Source:
 
                 audio = F.resample(torch.from_numpy(np.ascontiguousarray(audio)), self.rate, rate).numpy()
             return audio.astype(np.float32)
-        decoder = self._decoders.get((rate, channels))
+        # Decode the file's own channels and mix them here: FFmpeg's downmix to mono
+        # sums the channels at -3 dB each, i.e. +3 dB for ordinary centered audio,
+        # which clipped loud moments once written as PCM16.
+        decoder = self._decoders.get((rate, 0))
         if decoder is None:
             from torchcodec.decoders import AudioDecoder
 
-            decoder = AudioDecoder(str(self.path), sample_rate=rate, num_channels=channels)
-            self._decoders[(rate, channels)] = decoder
-        return decoder.get_samples_played_in_range(start, end).data.numpy().astype(np.float32)
+            decoder = self._decoders[(rate, 0)] = AudioDecoder(str(self.path), sample_rate=rate)
+        audio = decoder.get_samples_played_in_range(start, end).data.numpy().astype(np.float32)
+        if channels == 1:
+            return audio.mean(axis=0, keepdims=True)
+        return audio[:channels] if audio.shape[0] >= channels else np.repeat(audio[:1], channels, axis=0)
 
 
 def probe(path: Path) -> tuple[float, int]:
