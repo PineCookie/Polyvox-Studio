@@ -25,11 +25,13 @@ src/voxcpm_studio/
   asr.py           speech recognition (Qwen3-ASR, transformers-native)
   aligner.py       forced alignment (Qwen3-ForcedAligner or a wav2vec2 CTC model)
   checks.py        per-clip checks from alignment: mismatch, cut edges, silence
+  separation.py    optional vocal separation / de-reverb / denoise (RoFormer)
   jobs.py          in-process background jobs with progress and cancel
   training.py      training runs: config, job control, metrics
   train_worker.py  training subprocess around the vendored script
   sharing.py       export / import of shareable LoRA packages
-  vendor/          train_voxcpm_finetune.py, unmodified from the pinned commit
+  vendor/          train_voxcpm_finetune.py, unmodified from the pinned commit;
+                   roformer/ from Music-Source-Separation-Training (MIT)
   api.py           FastAPI routes; serves web/dist when built
 web/               Vite + React + TypeScript frontend
 tests/             run without a GPU (fake model loader and training worker)
@@ -130,6 +132,29 @@ or empty text in a list) can be transcribed with Qwen3-ASR during the import, op
 with a fixed language and names / terms to spell right. Imports run in the
 background with progress and can be cancelled. Transcribed clips are listed in
 `data/<name>/asr.json` so they can be reviewed.
+
+### Optional clean-up: separation, de-reverb, denoise
+
+The import can first clean the audio with the RoFormer models UVR5 and
+MSST-WebUI use (architectures vendored from ZFTurbo's Music-Source-Separation-
+Training, MIT): **separate** the voice from music and background, **remove
+reverb**, **remove noise**. Each is an import option, off by default, and
+available once its model is configured (`run.bat` uses the ones in `models/`):
+
+```powershell
+hf download pcunwa/Kim-Mel-Band-Roformer-FT kimmel_unwa_ft2_bleedless.ckpt config_kimmel_unwa_ft.yaml --local-dir models/pcunwa__Kim-Mel-Band-Roformer-FT
+hf download anvuew/dereverb_mel_band_roformer dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt dereverb_mel_band_roformer_anvuew.yaml --local-dir models/anvuew__dereverb_mel_band_roformer
+hf download poiqazwsx/melband-roformer-denoise denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt model_mel_band_roformer_denoise.yaml --local-dir models/aufr33__melband-roformer-denoise
+```
+
+Any MSST-style checkpoint works: set `VOXCPM_STUDIO_VOCALS_MODEL`,
+`VOXCPM_STUDIO_DEREVERB_MODEL` or `VOXCPM_STUDIO_DENOISE_MODEL` to `model.ckpt`
+(its config: the same-name or only `.yaml` beside it) or `model.ckpt|config.yaml`.
+The default vocal model is a "bleedless" one: for training data, music left in the
+voice is worse than a slightly thinner voice. It runs at about 20× real time and
+leaves small artifacts (alignment scores on clean speech drop a little), so use it
+for recordings with music or background under the voice, not for clean ones.
+Separation does not remove singing.
 
 ### Checking clips against their text
 

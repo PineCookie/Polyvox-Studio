@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { importDataset, previewImport } from '../api'
-import type { Aligner, ImportJob, ImportPreview } from '../api'
+import { getStatus, importDataset, previewImport } from '../api'
+import type { Aligner, CleanupOption, ImportJob, ImportPreview } from '../api'
 import { ALIGNER_LABEL, formatDuration, formatRates } from '../format'
 import { useJob } from '../useJob'
 import { JobProgress } from './JobProgress'
@@ -28,6 +28,14 @@ const LANGUAGES: [string, string][] = [
   ['ko', 'Korean'],
 ]
 
+// Clean-up options in the order they run: [option, label, what it is for].
+const CLEANUP: [CleanupOption, string, string][] = [
+  ['separate', 'Separate the voice from music and background', 'Vocal separation (bleedless Mel-Band RoFormer)'],
+  ['dereverb', 'Remove reverb', 'For echoey rooms or reverb added in a stream mix'],
+  ['denoise', 'Remove noise', 'For hiss, hum or fan noise'],
+]
+const NO_MODEL = 'No model installed; see the README (Configuration) to add one.'
+
 // Matches importer.DATASET_NAME.
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 
@@ -48,6 +56,15 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [check, setCheck] = useState(true)
   const [aligner, setAligner] = useState<Aligner>('qwen3')
   const [trim, setTrim] = useState(true)
+  // Optional clean-up, off by default; which ones have a model installed.
+  const [cleanup, setCleanup] = useState<CleanupOption[]>([])
+  const [available, setAvailable] = useState<CleanupOption[]>([])
+  useEffect(() => {
+    getStatus().then(
+      (s) => setAvailable(s.cleanup),
+      () => setAvailable([]),
+    )
+  }, [])
   const [scanning, setScanning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [job, setJob] = useJob<ImportJob>((j) => {
@@ -95,6 +112,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
           aligner,
           // Trimming rewrites the copies; files imported in place stay as they are.
           trim: check && trim && (copyAudio || willSlice),
+          cleanup: copyAudio || willSlice ? cleanup : [],
         }),
       )
     } catch (err) {
@@ -227,6 +245,30 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                   </tbody>
                 </table>
               )}
+
+              <fieldset className="field asr-options" disabled={running || !(copyAudio || willSlice)}>
+                <span className="check-title">
+                  Clean up the audio first <span className="muted">optional · slower · needs copying</span>
+                </span>
+                {CLEANUP.map(([option, label, hint]) => (
+                  <label key={option} className="check" title={available.includes(option) ? hint : NO_MODEL}>
+                    <input
+                      type="checkbox"
+                      checked={cleanup.includes(option)}
+                      disabled={!available.includes(option)}
+                      onChange={(e) =>
+                        setCleanup((c) => (e.target.checked ? [...c, option] : c.filter((x) => x !== option)))
+                      }
+                    />{' '}
+                    {label}
+                    {!available.includes(option) && <span className="muted"> · no model installed</span>}
+                  </label>
+                ))}
+                <p className="muted hint">
+                  RoFormer models (as in UVR / MSST-WebUI), about 20× real time on the GPU. Separation keeps the voice
+                  and drops music and background; de-reverb and denoise are for echoey or noisy recordings.
+                </p>
+              </fieldset>
 
               {preview.long_recordings > 0 && (
                 <fieldset className="field asr-options" disabled={running}>

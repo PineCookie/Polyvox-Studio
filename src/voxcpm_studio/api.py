@@ -24,6 +24,7 @@ from .asr import AsrService, load_audio
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .jobs import Job, JobRunner
+from .separation import SeparationService
 from .slicer import SliceOptions
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
 
@@ -86,6 +87,10 @@ class ImportIn(ImportSourceIn):
     aligner: Literal["qwen3", "ctc"] = "qwen3"
     # Cut long silent edges from the copied clips (needs copy_audio and check).
     trim: bool = False
+    # Clean-up before anything else (needs copy_audio and the model configured):
+    separate: bool = False  # keep only the voice (remove music / background)
+    dereverb: bool = False
+    denoise: bool = False
 
 
 class CheckIn(BaseModel):
@@ -169,7 +174,7 @@ def _cuda_index(device: str) -> int | None:
 
 
 def free_gpu_for_training(
-    service: InferenceService, train_gpu: int | None, *helpers: AsrService | AlignService
+    service: InferenceService, train_gpu: int | None, *helpers: AsrService | AlignService | SeparationService
 ) -> None:
     """Unload the models that sit on the GPU a training job will use."""
     if _cuda_index(service.device) == (train_gpu or 0):
@@ -186,14 +191,21 @@ def create_app(
     asr: AsrService | None = None,
     jobs: JobRunner | None = None,
     align: AlignService | None = None,
+    separation: SeparationService | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     service = service or InferenceService(settings)
     asr = asr or AsrService(settings)
     align = align or AlignService(settings)
+    separation = separation or SeparationService(lambda: asr.device)
+    cleanup_models = {
+        "separate": settings.vocals_model,
+        "dereverb": settings.dereverb_model,
+        "denoise": settings.denoise_model,
+    }
     jobs = jobs or JobRunner()
     training = training or TrainingManager(
-        settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr, align)
+        settings, before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr, align, separation)
     )
 
     @asynccontextmanager
@@ -214,6 +226,9 @@ def create_app(
             "model_id": sharing.hub_id(settings.model),
             "asr_loaded": asr.loaded,
             "aligner_loaded": align.loaded,
+            "separation_loaded": separation.loaded,
+            # Import clean-up options whose model is configured.
+            "cleanup": [k for k, v in cleanup_models.items() if v],
         }
 
     @app.get("/api/status")
@@ -301,6 +316,7 @@ def create_app(
         service.unload()
         asr.unload()
         align.unload()
+        separation.unload()
         return status_with_model_id()
 
     @app.post("/api/asr")
@@ -331,6 +347,7 @@ def create_app(
     def import_dataset(body: ImportIn) -> JobOut:
         """Start an import job; poll /api/jobs/{id}. The job's result is
         {"id", "imported", "transcribed", "sliced"}."""
+        cleanup = [k for k in cleanup_models if getattr(body, k)]
         # Fail fast on what can be checked now.
         try:
             if body.slice and not (body.copy_audio and body.transcribe):
@@ -339,13 +356,18 @@ def create_app(
                 raise ValueError("The minimum clip length must be below the maximum.")
             if body.trim and not (body.copy_audio and body.check):
                 raise ValueError("Trimming rewrites the copied clips: it needs copying and checking.")
+            for option in cleanup:
+                if not cleanup_models[option]:
+                    raise ValueError(f"No model is configured for '{option}' (see README: Configuration).")
+            if cleanup and not body.copy_audio:
+                raise ValueError("Clean-up writes new audio: it needs copying.")
             importer.check_name(body.name, settings.data_dir)
             importer.detect(importer.clean_path(body.source))
         except FileExistsError as e:
             raise HTTPException(409, str(e)) from e
         except (ValueError, OSError) as e:
             raise HTTPException(422, str(e)) from e
-        refuse_if_busy(gpu=body.transcribe or body.check)
+        refuse_if_busy(gpu=body.transcribe or body.check or bool(cleanup))
 
         def heard(wavs: list) -> list[tuple[str, str | None]]:
             results = asr.transcribe(wavs, language=body.language, prompt=body.prompt)
@@ -379,6 +401,7 @@ def create_app(
                 guide=slicer.Guide(transcribe=heard, align=lambda wavs, texts: align.align(wavs, texts, body.aligner))
                 if body.slice
                 else None,
+                separation=separation.chain([cleanup_models[k] for k in cleanup]) if cleanup else None,
             )
             return {
                 "id": result.id,

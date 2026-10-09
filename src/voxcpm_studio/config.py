@@ -38,6 +38,12 @@ class Settings:
     # with a character vocabulary for the transcripts' language.
     align_model: str = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
     ctc_align_model: str = "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
+    # RoFormer checkpoints (separation.py) for the import's optional clean-up:
+    # "model.ckpt" (config: same-stem or only .yaml beside it) or "model.ckpt|config.yaml".
+    # Empty = that option is unavailable.
+    vocals_model: str = ""
+    dereverb_model: str = ""
+    denoise_model: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -55,4 +61,7 @@ class Settings:
             asr_device=_env("ASR_DEVICE", cls.asr_device),
             align_model=_env("ALIGN_MODEL", cls.align_model),
             ctc_align_model=_env("CTC_ALIGN_MODEL", cls.ctc_align_model),
+            vocals_model=_env("VOCALS_MODEL", cls.vocals_model),
+            dereverb_model=_env("DEREVERB_MODEL", cls.dereverb_model),
+            denoise_model=_env("DENOISE_MODEL", cls.denoise_model),
         )

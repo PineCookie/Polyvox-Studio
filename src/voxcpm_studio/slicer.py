@@ -110,7 +110,7 @@ class Source:
 
     def __init__(self, path: Path):
         self.path = path
-        self._decoders: dict[int | None, object] = {}
+        self._decoders: dict[tuple[int | None, int], object] = {}
         try:
             info = sf.info(str(path))
             self.rate, self.duration, self._sf = info.samplerate, info.duration, True
@@ -124,26 +124,34 @@ class Source:
 
     def read(self, start: float, end: float, rate: int | None = None) -> np.ndarray:
         """Mono float32 samples of [start, end) seconds, at ``rate`` (default: the file's)."""
+        return self.read_channels(start, end, rate, 1)[0]
+
+    def read_channels(self, start: float, end: float, rate: int | None = None, channels: int = 1) -> np.ndarray:
+        """(channels, samples) float32 of [start, end) seconds: ``channels`` = 1
+        downmixes, 2 gives stereo (a mono file is duplicated)."""
         start, end = max(0.0, start), min(self.duration, end)
         if end <= start:
-            return np.zeros(0, dtype=np.float32)
+            return np.zeros((channels, 0), dtype=np.float32)
         if self._sf:
             with sf.SoundFile(str(self.path)) as f:
                 f.seek(int(start * self.rate))
-                audio = f.read(int((end - start) * self.rate), dtype="float32", always_2d=True).mean(axis=1)
+                audio = f.read(int((end - start) * self.rate), dtype="float32", always_2d=True).T
+            audio = audio.mean(axis=0, keepdims=True) if channels == 1 else audio
+            if audio.shape[0] != channels:
+                audio = np.repeat(audio[:1], channels, axis=0)
             if rate and rate != self.rate:
                 import torch
                 import torchaudio.functional as F
 
                 audio = F.resample(torch.from_numpy(np.ascontiguousarray(audio)), self.rate, rate).numpy()
             return audio.astype(np.float32)
-        decoder = self._decoders.get(rate)
+        decoder = self._decoders.get((rate, channels))
         if decoder is None:
             from torchcodec.decoders import AudioDecoder
 
-            decoder = self._decoders[rate] = AudioDecoder(str(self.path), sample_rate=rate, num_channels=1)
-        samples = decoder.get_samples_played_in_range(start, end)
-        return samples.data[0].numpy().astype(np.float32)
+            decoder = AudioDecoder(str(self.path), sample_rate=rate, num_channels=channels)
+            self._decoders[(rate, channels)] = decoder
+        return decoder.get_samples_played_in_range(start, end).data.numpy().astype(np.float32)
 
 
 def probe(path: Path) -> tuple[float, int]:
@@ -386,13 +394,38 @@ def word_clips(wav16k: np.ndarray, text: str, alignment, opts: SliceOptions) -> 
 # Slicing
 
 
-def windows(src: Source, vad: Vad, length: float = WINDOW_S) -> Iterator[tuple[float, np.ndarray, list]]:
-    """(start, 16 kHz audio, speech segments) of consecutive windows, each
-    ending in the longest pause of its last minute so no speech is split."""
+def _resample(audio: np.ndarray, rate: int, to: int) -> np.ndarray:
+    if rate == to:
+        return audio
+    import torch
+    import torchaudio.functional as F
+
+    return F.resample(torch.from_numpy(np.ascontiguousarray(audio)), rate, to).numpy()
+
+
+@dataclass
+class Window:
+    start: float  # seconds into the recording
+    wav16k: np.ndarray  # mono at VAD_RATE, for VAD / ASR / alignment
+    audio: np.ndarray  # mono at `rate`, what clips are cut from
+    rate: int
+    segments: list[tuple[float, float]]  # speech, seconds into the window
+
+
+def windows(src: Source, vad: Vad, length: float = WINDOW_S, chain=None) -> Iterator[Window]:
+    """Consecutive windows of a recording, each ending in the longest pause of
+    its last minute so no speech is split. With a separation ``chain``
+    (separation.Chain), each window is separated first: everything after works
+    on the voice alone, and clips are cut from it."""
     t0 = 0.0
     while t0 < src.duration - 0.05:
         end = min(src.duration, t0 + length + WINDOW_SLACK_S)
-        wav = src.read(t0, end, VAD_RATE)
+        if chain is not None:
+            audio, rate = chain.process(src.read_channels(t0, end, chain.rate, chain.channels)).mean(axis=0), chain.rate
+        else:
+            audio, rate = src.read(t0, end), src.rate
+        audio = audio.astype(np.float32)
+        wav = _resample(audio, rate, VAD_RATE)
         segments = vad(wav)
         cut = len(wav) / VAD_RATE
         if end < src.duration:  # not the last window: end at a pause
@@ -403,7 +436,7 @@ def windows(src: Source, vad: Vad, length: float = WINDOW_S) -> Iterator[tuple[f
             ]
             cut = max(gaps)[1] if gaps else length
             segments = [(s, min(e, cut)) for s, e in segments if s < cut]
-        yield t0, wav[: int(cut * VAD_RATE)], segments
+        yield Window(t0, wav[: int(cut * VAD_RATE)], audio[: int(cut * rate)], rate, segments)
         t0 += cut
 
 
@@ -427,14 +460,17 @@ def slice_recording(
     vad: Vad = silero_vad,
     guide: Guide | None = None,
     progress: Callable[[float], None] | None = None,
+    chain=None,
 ) -> list[Slice]:
-    """Write ``<stem>_<start ms>_<end ms>.wav`` clips (mono PCM16, source rate)
-    into ``out_dir``. With a ``guide``, clips are cut between words and carry
-    their transcript. ``progress`` gets the seconds processed so far."""
+    """Write ``<stem>_<start ms>_<end ms>.wav`` clips (mono PCM16, source rate,
+    or the separation models' rate with a ``chain``) into ``out_dir``. With a
+    ``guide``, clips are cut between words and carry their transcript.
+    ``progress`` gets the seconds processed so far."""
     src = Source(path)
     out_dir.mkdir(parents=True, exist_ok=True)
     out: list[Slice] = []
-    for t0, wav, segments in windows(src, vad):
+    for window in windows(src, vad, chain=chain):
+        t0, wav, segments = window.start, window.wav16k, window.segments
         if guide is None:
             pieces = [(s, e, "", None) for s, e in find_clips(wav, opts, vad, segments)]
         else:
@@ -448,10 +484,10 @@ def slice_recording(
                 text, language = heard[k]
                 for c in word_clips(chunk_wavs[k], text, alignment, opts):
                     pieces.append((spans[k][0] + c.start, spans[k][0] + c.end, c.text, language))
-        native = src.read(t0, t0 + len(wav) / VAD_RATE)
+        audio, rate = window.audio, window.rate
         for start, end, text, language in pieces:
             file = out_dir / f"{path.stem}_{int((t0 + start) * 1000):08d}_{int((t0 + end) * 1000):08d}.wav"
-            sf.write(file, native[int(start * src.rate) : int(end * src.rate)], src.rate, subtype="PCM_16")
+            sf.write(file, audio[int(start * rate) : int(end * rate)], rate, subtype="PCM_16")
             out.append(Slice(file, text, language))
         if progress:
             progress(t0 + len(wav) / VAD_RATE)

@@ -5,6 +5,7 @@ import { ProgressBar } from './RunList'
 
 const PHASE_LABEL: Record<string, string> = {
   scanning: 'Scanning',
+  separating: 'Separating the voice',
   slicing: 'Transcribing and slicing recordings',
   transcribing: 'Transcribing',
   aligning: 'Checking clips against their text',

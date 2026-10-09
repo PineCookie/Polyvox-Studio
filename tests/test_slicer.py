@@ -197,6 +197,7 @@ def test_windows_end_in_pauses_and_cover_the_recording(monkeypatch):
 
     class Fake:
         duration = 25.0
+        rate = RATE
 
         def read(self, start, end, rate=None):
             return np.zeros(int((min(end, 25.0) - start) * RATE), dtype=np.float32)
@@ -214,9 +215,10 @@ def test_windows_end_in_pauses_and_cover_the_recording(monkeypatch):
         return vad
 
     starts, t0 = [], 0.0
-    for start, wav, _ in slicer.windows(Fake(), lambda w: vad_from(starts[-1] if starts else 0.0)(w), length=10.0):
-        starts.append(start)
-        t0 = start + len(wav) / RATE
+    for window in slicer.windows(Fake(), lambda w: vad_from(starts[-1] if starts else 0.0)(w), length=10.0):
+        starts.append(window.start)
+        assert len(window.audio) == len(window.wav16k)  # same rate here
+        t0 = window.start + len(window.wav16k) / RATE
         starts[-1] = t0  # the next window's vad offset
     assert t0 == pytest.approx(25.0)
 

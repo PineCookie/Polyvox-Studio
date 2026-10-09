@@ -273,7 +273,13 @@ def _transcribe(rows: list[Row], transcriber: Transcriber, progress: Progress) -
 
 
 def _slice(
-    rows: list[Row], out_dir: Path, opts: SliceOptions, vad: Vad, guide: slicer.Guide | None, progress: Progress
+    rows: list[Row],
+    out_dir: Path,
+    opts: SliceOptions,
+    vad: Vad,
+    guide: slicer.Guide | None,
+    progress: Progress,
+    chain=None,
 ) -> tuple[list[Row], int]:
     """Replace recordings longer than LONG_RECORDING_S by their clips. With a
     ``guide`` the clips are cut between words and keep their ASR text; without
@@ -296,6 +302,7 @@ def _slice(
             vad,
             guide,
             progress=lambda at, base=base: progress("slicing", int(base + at), total),
+            chain=chain,
         )
         for clip in clips:
             out.append(
@@ -312,6 +319,22 @@ def _slice(
         seconds += row.seconds
     progress("slicing", total, total)
     return out, done
+
+
+def _separate(rows: list[Row], out_dir: Path, chain, progress: Progress, sliced: bool) -> None:
+    """Replace each clip's audio by its separated voice, written to ``out_dir``
+    as PCM16 WAV at the models' rate (same file name). Recordings that will be
+    ``sliced`` are separated window by window while slicing instead."""
+    todo = [row for row in rows if not (sliced and row.seconds > LONG_RECORDING_S)]
+    for n, row in enumerate(todo):
+        progress("separating", n, len(todo))
+        src = slicer.Source(row.audio)
+        voice = chain.process(src.read_channels(0.0, src.duration, chain.rate, chain.channels)).mean(axis=0)
+        target = out_dir / f"{n:06d}" / f"{row.audio.stem}.wav"
+        target.parent.mkdir(parents=True)
+        sf.write(target, voice, chain.rate, subtype="PCM_16")
+        row.audio, row.ref = target, str(target)
+    progress("separating", len(todo), len(todo))
 
 
 def _check(rows: list[Row], checker: Checker, progress: Progress) -> list[ClipCheck]:
@@ -346,6 +369,7 @@ def import_dataset(
     aligner: str = "qwen3",
     trim: bool = False,
     guide: slicer.Guide | None = None,
+    separation=None,
 ) -> ImportResult:
     """Write ``data_dir/<name>/train.jsonl``.
 
@@ -363,6 +387,8 @@ def import_dataset(
     progress = progress or (lambda phase, done, total: None)
     if slicing and not (copy and transcriber):
         raise ValueError("Slicing writes new clips without text: it needs copying and transcription.")
+    if separation is not None and not copy:
+        raise ValueError("Separation writes new audio: it needs copying.")
     if trim and not (copy and checker):
         raise ValueError("Trimming rewrites the copied clips at their checked edges: it needs copying and checking.")
     check_name(name, data_dir)
@@ -377,8 +403,10 @@ def import_dataset(
     shutil.rmtree(staging, ignore_errors=True)
     try:
         sliced = 0
+        if separation is not None:
+            _separate(rows, staging / "_separated", separation, progress, sliced=slicing is not None)
         if slicing:
-            rows, sliced = _slice(rows, staging / "_slices", slicing, vad, guide, progress)
+            rows, sliced = _slice(rows, staging / "_slices", slicing, vad, guide, progress, separation)
         if transcriber:
             _transcribe(rows, transcriber, progress)
         rows_kept = [(i, row) for i, row in enumerate(rows) if row.text]
@@ -406,6 +434,7 @@ def import_dataset(
                 else:
                     shutil.copy2(row.audio, staging / "wavs" / file)
             shutil.rmtree(staging / "_slices", ignore_errors=True)
+            shutil.rmtree(staging / "_separated", ignore_errors=True)
             paths = [f"wavs/{file}" for file in files]
         else:
             paths = [str(row.audio) for _, row in rows_kept]

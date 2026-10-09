@@ -1150,6 +1150,11 @@ input[type='search']:focus {
   background: var(--surface-2);
 }
 
+.check-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .asr-options .hint {
   margin: 0;
 }

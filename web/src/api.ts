@@ -29,6 +29,9 @@ export interface Status {
   loaded: boolean
   asr_loaded: boolean
   aligner_loaded: boolean
+  separation_loaded: boolean
+  // Import clean-up options whose model is configured.
+  cleanup: CleanupOption[]
   lora_rank: number | null
   active_lora: string | null
 }
@@ -237,6 +240,9 @@ export interface Job<R = unknown> {
   result: R
 }
 
+// Optional clean-up before import (src/voxcpm_studio/separation.py).
+export type CleanupOption = 'separate' | 'dereverb' | 'denoise'
+
 // Forced aligners (src/voxcpm_studio/aligner.py).
 export type Aligner = 'qwen3' | 'ctc'
 
@@ -264,6 +270,7 @@ export interface ImportOptions {
   check: boolean // check each clip against its text by forced alignment
   aligner: Aligner
   trim: boolean // cut long silent edges from the copies
+  cleanup: CleanupOption[] // applied first, in this order: separate, dereverb, denoise
 }
 
 export type ImportJob = Job<{
@@ -290,6 +297,9 @@ export async function importDataset(o: ImportOptions): Promise<ImportJob> {
     check: o.check,
     aligner: o.aligner,
     trim: o.trim,
+    separate: o.cleanup.includes('separate'),
+    dereverb: o.cleanup.includes('dereverb'),
+    denoise: o.cleanup.includes('denoise'),
   }
   return (await postJson('/api/datasets/import', body)).json()
 }
