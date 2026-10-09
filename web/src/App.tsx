@@ -6,6 +6,7 @@ import { History } from './components/History'
 import type { Clip } from './components/History'
 import { PrepareView } from './components/PrepareView'
 import { StatusBar } from './components/StatusBar'
+import { ThemeToggle } from './components/ThemeToggle'
 import { SynthesisPanel } from './components/SynthesisPanel'
 import { TrainingView } from './components/TrainingView'
 import { VoicePanel } from './components/VoicePanel'
@@ -153,6 +154,7 @@ export default function App() {
         </nav>
         <span className="spacer" />
         <StatusBar status={status} onUnload={unload} />
+        <ThemeToggle />
       </header>
 
       {error && (

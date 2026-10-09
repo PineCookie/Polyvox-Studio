@@ -1,27 +1,30 @@
+/* Colors as light-dark(light, dark): the theme follows the system, or the
+   toggle's choice (data-theme on <html>, set before the page renders). */
 :root {
-  --bg: #f6f6f8;
-  --surface: #ffffff;
-  --surface-2: #f0f0f4;
-  --border: #e3e3ea;
-  --text: #1c1c24;
-  --muted: #6b6b7b;
-  --accent: #5b5bd6;
-  --accent-soft: #ebebfc;
-  --accent-text: #ffffff;
-  --danger: #c9372c;
-  --danger-soft: #fdecea;
-  --ok: #2f9e5f;
-  --ok-soft: #e6f5ec;
-  --warn: #9a5b00;
-  --warn-soft: #fcf0dc;
+  --bg: light-dark(#f6f6f8, #111116);
+  --surface: light-dark(#ffffff, #1a1a21);
+  --surface-2: light-dark(#f0f0f4, #23232c);
+  --border: light-dark(#e3e3ea, #2e2e39);
+  --text: light-dark(#1c1c24, #ececf1);
+  --muted: light-dark(#6b6b7b, #9696a6);
+  --accent: light-dark(#5b5bd6, #8080f0);
+  --accent-soft: light-dark(#ebebfc, #2a2a4a);
+  --accent-text: light-dark(#ffffff, #0f0f1a);
+  --danger: light-dark(#c9372c, #f2796f);
+  --danger-soft: light-dark(#fdecea, #3a1f1d);
+  --ok: light-dark(#2f9e5f, #5fcf8f);
+  --ok-soft: light-dark(#e6f5ec, #1c3326);
+  --warn: light-dark(#9a5b00, #e8b05a);
+  --warn-soft: light-dark(#fcf0dc, #382c16);
   /* Chart series (validated categorical slots 1-2 for this surface). */
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
+  --series-1: light-dark(#2a78d6, #3987e5);
+  --series-2: light-dark(#eb6834, #d95926);
   --radius: 12px;
   --radius-sm: 8px;
-  --shadow: 0 1px 2px rgb(20 20 40 / 0.04), 0 4px 16px rgb(20 20 40 / 0.04);
+  --shadow:
+    0 1px 2px light-dark(rgb(20 20 40 / 0.04), transparent), 0 4px 16px light-dark(rgb(20 20 40 / 0.04), transparent);
 
-  color-scheme: light;
+  color-scheme: light dark;
   font-family:
     'Inter',
     system-ui,
@@ -36,28 +39,12 @@
   -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111116;
-    --surface: #1a1a21;
-    --surface-2: #23232c;
-    --border: #2e2e39;
-    --text: #ececf1;
-    --muted: #9696a6;
-    --accent: #8080f0;
-    --accent-soft: #2a2a4a;
-    --accent-text: #0f0f1a;
-    --danger: #f2796f;
-    --danger-soft: #3a1f1d;
-    --ok: #5fcf8f;
-    --ok-soft: #1c3326;
-    --warn: #e8b05a;
-    --warn-soft: #382c16;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --shadow: none;
-    color-scheme: dark;
-  }
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 * {
@@ -90,6 +77,26 @@ h2 {
   max-width: 2400px;
   margin: 0 auto;
   padding: 20px clamp(16px, 2.5vw, 40px) 48px;
+}
+
+/* Wide screens (2.5K / 4K at 100% scaling): the whole page scales up in steps,
+   so text stays readable and the layout fills the screen (at 3840 px exactly). */
+@media (min-width: 2200px) {
+  .app {
+    zoom: 1.15;
+  }
+}
+
+@media (min-width: 2900px) {
+  .app {
+    zoom: 1.35;
+  }
+}
+
+@media (min-width: 3400px) {
+  .app {
+    zoom: 1.6;
+  }
 }
 
 .topbar {
