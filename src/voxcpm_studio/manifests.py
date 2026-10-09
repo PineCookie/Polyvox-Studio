@@ -10,6 +10,7 @@ their manifests with absolute paths, so both layouts train correctly.
 
 from __future__ import annotations
 
+import functools
 import json
 import random
 import statistics
@@ -111,6 +112,30 @@ def _row_key(audio: str, manifest_dir: Path) -> str:
     return path.relative_to(manifest_dir).as_posix() if path.is_relative_to(manifest_dir) else audio
 
 
+@functools.lru_cache(maxsize=16)
+def _review_entries(path: str, mtime_ns: int, size: int, root: str) -> tuple[tuple[str, str], ...]:
+    """(absolute audio, text) per usable entry; cached until the manifest changes.
+
+    Parsing resolves every clip's path on disk: ~0.4 s for 2k clips, too slow per page.
+    """
+    entries, _ = read_manifest(Path(path), Path(root) if root else None)
+    return tuple((e["audio"], e["text"]) for e in entries)
+
+
+def _entries_for_review(path: Path, root: Path | None) -> tuple[tuple[str, str], ...]:
+    path = path.resolve()
+    st = path.stat()
+    return _review_entries(str(path), st.st_mtime_ns, st.st_size, str(root) if root else "")
+
+
+@functools.lru_cache(maxsize=200_000)
+def _clip_seconds(audio: str) -> float | None:
+    try:
+        return sf.info(audio).duration
+    except Exception:
+        return None
+
+
 def read_rows(
     path: Path, root: Path | None = None, offset: int = 0, limit: int = 50, query: str = ""
 ) -> tuple[int, list[ClipRow]]:
@@ -119,31 +144,28 @@ def read_rows(
     ``query`` matches text or file name, case-insensitively.
     """
     manifest_dir = path.resolve().parent
-    entries, _ = read_manifest(path, root)
+    entries = _entries_for_review(path, root)
     asr_file = manifest_dir / ASR_FILE
     asr = set(json.loads(asr_file.read_text(encoding="utf-8"))) if asr_file.is_file() else set()
     q = query.strip().lower()
     matches = [
-        (i, e, _row_key(e["audio"], manifest_dir))
-        for i, e in enumerate(entries)
-        if not q or q in e["text"].lower() or q in Path(e["audio"]).name.lower()
+        (i, audio, text)
+        for i, (audio, text) in enumerate(entries)
+        if not q or q in text.lower() or q in Path(audio).name.lower()
     ]
     rows = []
-    for i, entry, key in matches[offset : offset + limit]:
-        try:
-            seconds = sf.info(entry["audio"]).duration
-        except Exception:
-            seconds = None
-        rows.append(ClipRow(index=i, file=key, text=entry["text"], seconds=seconds, asr=key in asr))
+    for i, audio, text in matches[offset : offset + limit]:
+        key = _row_key(audio, manifest_dir)
+        rows.append(ClipRow(index=i, file=key, text=text, seconds=_clip_seconds(audio), asr=key in asr))
     return len(matches), rows
 
 
 def clip_audio(path: Path, root: Path | None, index: int) -> Path:
     """The audio file of a manifest's ``index``-th usable entry."""
-    entries, _ = read_manifest(path, root)
-    if not 0 <= index < len(entries) or not Path(entries[index]["audio"]).is_file():
+    entries = _entries_for_review(path, root)
+    if not 0 <= index < len(entries) or not Path(entries[index][0]).is_file():
         raise KeyError(f"No clip {index} in this dataset.")
-    return Path(entries[index]["audio"])
+    return Path(entries[index][0])
 
 
 def split_holdout(entries: list[dict], count: int, seed: int = 0) -> tuple[list[dict], list[dict]]:

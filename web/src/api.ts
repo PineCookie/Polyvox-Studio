@@ -160,6 +160,7 @@ export interface RunDetail extends RunSummary {
   samples: { step: number; index: number; file: string }[]
   references: string[]
   sample_texts: string[]
+  val_clips: number
   log: string[]
 }
 
@@ -282,22 +283,25 @@ export interface ClipRow {
   asr: boolean // transcript made by ASR
 }
 
+// A dataset in the data dir, or the copy a training run trains on.
+export type DatasetSource = { id: string } | { run: string }
+
+export async function getDatasetReport(source: DatasetSource): Promise<DatasetReport> {
+  return (await request(`/api/dataset-report?${new URLSearchParams(source)}`)).json()
+}
+
 export async function getDatasetRows(
-  id: string,
+  source: DatasetSource,
   offset: number,
   limit: number,
   query: string,
 ): Promise<{ total: number; rows: ClipRow[] }> {
-  const q = new URLSearchParams({ id, offset: String(offset), limit: String(limit), q: query })
+  const q = new URLSearchParams({ ...source, offset: String(offset), limit: String(limit), q: query })
   return (await request(`/api/dataset-rows?${q}`)).json()
 }
 
-export function datasetAudioUrl(id: string, index: number): string {
-  return `/api/dataset-audio?${new URLSearchParams({ id, index: String(index) })}`
-}
-
-export async function inspectDataset(id: string): Promise<DatasetReport> {
-  return (await request(`/api/datasets/${id.split('/').map(encodeURIComponent).join('/')}`)).json()
+export function datasetAudioUrl(source: DatasetSource, index: number): string {
+  return `/api/dataset-audio?${new URLSearchParams({ ...source, index: String(index) })}`
 }
 
 export async function listRuns(): Promise<RunSummary[]> {

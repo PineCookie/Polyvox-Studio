@@ -2,8 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { sampleUrl } from '../api'
 import type { Lora, RunDetail as Run } from '../api'
 import { formatDuration, formatStep, formatValue } from '../format'
+import { DatasetReview } from './DatasetReview'
 import { LossChart } from './LossChart'
+import { paramsFromConfig } from '../trainParams'
+import { ParamsFields } from './ParamsFields'
 import { ProgressBar, StatusPill } from './RunList'
+import { SubTabs } from './SubTabs'
 
 interface Props {
   run: Run
@@ -16,7 +20,10 @@ interface Props {
 
 const checkpointId = (run: string, step: number) => `${run}/checkpoints/step_${String(step).padStart(7, '0')}`
 
+type Tab = 'progress' | 'dataset' | 'parameters'
+
 export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckpoint }: Props) {
+  const [tab, setTab] = useState<Tab>('progress')
   const [extendTo, setExtendTo] = useState(run.num_iters * 2)
   const live = run.status === 'running' || run.status === 'stopping'
   const step = run.step ?? 0
@@ -24,7 +31,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
   const otherJob = activeRun !== null && activeRun !== run.name
 
   return (
-    <div className="main-col">
+    <>
       <section className="panel">
         <header className="panel-head">
           <h2 className="run-title">
@@ -82,22 +89,59 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
           {run.saved_step !== null && <span className="muted">checkpoint at step {formatStep(run.saved_step)}</span>}
           {otherJob && <span className="muted">“{activeRun}” is training</span>}
         </p>
+        <SubTabs
+          label="Run sections"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { id: 'progress', label: 'Progress' },
+            { id: 'dataset', label: 'Dataset' },
+            { id: 'parameters', label: 'Parameters' },
+          ]}
+        />
       </section>
 
-      <section className="panel">
-        <header className="panel-head">
-          <h2>Loss</h2>
-        </header>
-        <LossChart title="Diffusion loss" metric="loss/diff" train={run.train} val={run.val} />
-        <LossChart title="Stop loss" metric="loss/stop" train={run.train} val={run.val} />
-        <MetricsTable run={run} />
-      </section>
+      {tab === 'progress' && (
+        <>
+          <section className="panel">
+            <header className="panel-head">
+              <h2>Loss</h2>
+            </header>
+            <LossChart title="Diffusion loss" metric="loss/diff" train={run.train} val={run.val} />
+            <LossChart title="Stop loss" metric="loss/stop" train={run.train} val={run.val} />
+            <MetricsTable run={run} />
+          </section>
+          <Samples run={run} loras={loras} onTryCheckpoint={onTryCheckpoint} />
+          <Console lines={run.log} open={run.status === 'failed'} follow={live} />
+        </>
+      )}
 
-      <Samples run={run} loras={loras} onTryCheckpoint={onTryCheckpoint} />
+      {tab === 'dataset' && (
+        <section className="panel">
+          <p className="muted hint">The clips this run trains on (validation clips not included).</p>
+          <DatasetReview source={{ run: run.name }} />
+        </section>
+      )}
 
-      <Console lines={run.log} open={run.status === 'failed'} follow={live} />
-      <ConfigDetails config={run.config} />
-    </div>
+      {tab === 'parameters' && (
+        <section className="panel">
+          <ParamsFields
+            params={paramsFromConfig(run.config)}
+            validation={
+              <div className="field">
+                <span>Validation</span>
+                <p className="muted hint">
+                  {run.val_clips > 0
+                    ? `${run.val_clips} clips, for validation loss and audio samples`
+                    : 'None: no validation loss or samples'}
+                </p>
+              </div>
+            }
+          />
+          <ConfigFiles config={run.config} />
+        </section>
+      )}
+    </>
   )
 }
 
@@ -237,41 +281,23 @@ function Console({ lines, open, follow }: { lines: string[]; open: boolean; foll
   )
 }
 
-const CONFIG_KEYS: [string, string][] = [
+const FILE_KEYS: [string, string][] = [
+  ['pretrained_path', 'Base model'],
   ['train_manifest', 'Train manifest'],
   ['val_manifest', 'Validation manifest'],
-  ['pretrained_path', 'Base model'],
-  ['learning_rate', 'Learning rate'],
-  ['warmup_steps', 'Warmup steps'],
-  ['batch_size', 'Batch size'],
-  ['grad_accum_steps', 'Gradient accumulation'],
-  ['save_interval', 'Save every'],
-  ['valid_interval', 'Validate every'],
   ['save_path', 'Checkpoints'],
 ]
 
-function ConfigDetails({ config }: { config: Record<string, unknown> }) {
-  const lora = (config.lora ?? {}) as Record<string, unknown>
+/** Where a run's inputs and outputs live (the parameters are shown above). */
+function ConfigFiles({ config }: { config: Record<string, unknown> }) {
   return (
-    <details className="panel console">
-      <summary>Configuration</summary>
-      <dl className="lora-details">
-        {CONFIG_KEYS.filter(([key]) => config[key] !== undefined && config[key] !== '').map(([key, label]) => (
-          <div key={key} className="dl-row">
-            <dt>{label}</dt>
-            <dd className="path">{String(config[key])}</dd>
-          </div>
-        ))}
-        <div className="dl-row">
-          <dt>LoRA</dt>
-          <dd>
-            rank {String(lora.r)} · alpha {String(lora.alpha)} · dropout {String(lora.dropout ?? 0)} ·{' '}
-            {[lora.enable_lm && 'LM', lora.enable_dit && 'DiT', lora.enable_proj && 'projections']
-              .filter(Boolean)
-              .join(', ')}
-          </dd>
+    <dl className="lora-details">
+      {FILE_KEYS.filter(([key]) => config[key] !== undefined && config[key] !== '').map(([key, label]) => (
+        <div key={key} className="dl-row">
+          <dt>{label}</dt>
+          <dd className="path">{String(config[key])}</dd>
         </div>
-      </dl>
-    </details>
+      ))}
+    </dl>
   )
 }

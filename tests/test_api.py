@@ -83,6 +83,22 @@ def test_dataset_rows_and_clip_audio(client, data_dir):
     assert audio.status_code == 200 and audio.content[:4] == b"RIFF"
     assert client.get("/api/dataset-audio", params={"id": "voice/train.jsonl", "index": 9}).status_code == 404
     assert client.get("/api/dataset-rows", params={"id": "../x.jsonl"}).status_code == 404
+    assert client.get("/api/dataset-rows").status_code == 422
+    assert client.get("/api/dataset-report", params={"id": "voice/train.jsonl"}).json()["valid"] == 4
+
+
+def test_a_run_dataset_can_be_reviewed(client, training, data_dir):
+    make_dataset(data_dir, "voice")
+    client.post("/api/training/runs", json={"name": "v1", "dataset": "voice/train.jsonl", "num_iters": 20})
+    wait_idle(training)
+
+    report = client.get("/api/dataset-report", params={"run": "v1"}).json()
+    assert report["valid"] == 2  # 4 clips, 2 held out for validation
+    page = client.get("/api/dataset-rows", params={"run": "v1"}).json()
+    assert page["total"] == 2
+    audio = client.get("/api/dataset-audio", params={"run": "v1", "index": 1})
+    assert audio.status_code == 200 and audio.content[:4] == b"RIFF"
+    assert client.get("/api/dataset-rows", params={"run": "nope"}).status_code == 404
 
 
 def test_training_run_lifecycle(client, training, data_dir):

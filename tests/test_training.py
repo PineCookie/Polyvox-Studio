@@ -64,6 +64,7 @@ def test_start_prepares_run_and_completes(training, data_dir, lora_dir):
     assert detail.seconds_per_step == pytest.approx(0.2)
     assert [s.file for s in detail.samples] == ["step_0000000_0.wav"]
     assert detail.sample_texts == [v["text"] for v in val]
+    assert detail.val_clips == 2
     assert "progress 100%" in detail.log
 
 

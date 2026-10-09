@@ -344,17 +344,36 @@ def create_app(
 
         return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
 
+    def review_manifest(id: str | None, run: str | None) -> Path:
+        """A dataset by manifest id (e.g. "speaker/train.jsonl"), or the one a run trains on."""
+        if run:
+            return _found(training.train_manifest, run)
+        if id:
+            return _found(manifests.resolve, settings.data_dir, id)
+        raise HTTPException(422, "Give a dataset id or a run name.")
+
+    @app.get("/api/dataset-report")
+    def dataset_report(id: str | None = None, run: str | None = None) -> DatasetReportOut:
+        report = manifests.inspect(review_manifest(id, run), manifests.legacy_root(settings.data_dir))
+        return DatasetReportOut(id=id or f"run:{run}", **dataclasses.asdict(report))
+
     @app.get("/api/dataset-rows")
-    def dataset_rows(id: str, offset: int = 0, limit: int = Query(50, ge=1, le=500), q: str = "") -> ClipPageOut:
-        """A page of a dataset's clips for review (id = manifest id, e.g. "speaker/train.jsonl")."""
-        path = _found(manifests.resolve, settings.data_dir, id)
+    def dataset_rows(
+        id: str | None = None,
+        run: str | None = None,
+        offset: int = 0,
+        limit: int = Query(50, ge=1, le=500),
+        q: str = "",
+    ) -> ClipPageOut:
+        """A page of a dataset's clips for review."""
+        path = review_manifest(id, run)
         total, rows = manifests.read_rows(path, manifests.legacy_root(settings.data_dir), max(0, offset), limit, q)
         return ClipPageOut(total=total, rows=[ClipRowOut(**dataclasses.asdict(r)) for r in rows])
 
     @app.get("/api/dataset-audio")
-    def dataset_audio(id: str, index: int) -> FileResponse:
+    def dataset_audio(index: int, id: str | None = None, run: str | None = None) -> FileResponse:
         """Audio of one clip, by its index in a dataset (never by path)."""
-        path = _found(manifests.resolve, settings.data_dir, id)
+        path = review_manifest(id, run)
         return FileResponse(_found(manifests.clip_audio, path, manifests.legacy_root(settings.data_dir), index))
 
     @app.get("/api/jobs/{job_id}")

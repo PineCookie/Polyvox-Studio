@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { datasetAudioUrl, getDatasetRows } from '../api'
-import type { ClipRow } from '../api'
+import type { ClipRow, DatasetSource } from '../api'
 
 interface Props {
-  datasetId: string
+  source: DatasetSource
 }
 
 const PAGE = 50
@@ -12,7 +12,9 @@ const SEARCH_DELAY_MS = 250
 const fileName = (path: string) => path.split(/[\\/]/).at(-1) ?? path
 
 /** Browse a dataset's clips: play, read the transcript, spot ASR-made texts. */
-export function DatasetClips({ datasetId }: Props) {
+export function DatasetClips({ source }: Props) {
+  // Effects follow the source's value, not the object passed in each render.
+  const sourceKey = JSON.stringify(source)
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
@@ -32,14 +34,14 @@ export function DatasetClips({ datasetId }: Props) {
 
   useEffect(() => {
     let cancelled = false
-    getDatasetRows(datasetId, offset, PAGE, search).then(
+    getDatasetRows(JSON.parse(sourceKey), offset, PAGE, search).then(
       (p) => !cancelled && (setPage(p), setError(null)),
       (e: Error) => !cancelled && setError(e.message),
     )
     return () => {
       cancelled = true
     }
-  }, [datasetId, offset, search])
+  }, [sourceKey, offset, search])
 
   function play(index: number) {
     const el = audio.current
@@ -48,7 +50,7 @@ export function DatasetClips({ datasetId }: Props) {
       el.pause()
       return
     }
-    el.src = datasetAudioUrl(datasetId, index)
+    el.src = datasetAudioUrl(source, index)
     el.play().then(
       () => setPlaying(index),
       (e: Error) => setError(e.message),

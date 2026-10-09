@@ -113,6 +113,7 @@ class RunDetail(RunSummary):
     samples: list[Sample]
     references: list[str]
     sample_texts: list[str]
+    val_clips: int  # clips in the validation manifest (0: none)
     log: list[str]
 
 
@@ -269,6 +270,13 @@ def build_config(
             "target_modules_dit": LORA_TARGETS,
         },
     }
+
+
+def _count_lines(manifest: str) -> int:
+    if not manifest or not Path(manifest).is_file():
+        return 0
+    with open(manifest, encoding="utf-8") as f:
+        return sum(1 for line in f if line.strip())
 
 
 def _first_texts(manifest: str, count: int = 2) -> list[str]:
@@ -459,8 +467,19 @@ class TrainingManager:
             samples=samples,
             references=references,
             sample_texts=_first_texts(str(config.get("val_manifest") or "")),
+            val_clips=_count_lines(str(config.get("val_manifest") or "")),
             log=tail_lines(run_dir / CONSOLE_FILE),
         )
+
+    def train_manifest(self, name: str) -> Path:
+        """The manifest a run trains on (its own copy, or a webui run's original)."""
+        value = read_config(self._run_dir(name)).get("train_manifest")
+        path = Path(str(value)) if value else None
+        if path is not None and not path.is_absolute():
+            path = manifests.legacy_root(self.settings.data_dir) / path
+        if path is None or not path.is_file():
+            raise KeyError(f"Run '{name}' has no readable training manifest.")
+        return path
 
     def sample_file(self, name: str, file: str) -> Path:
         path = self._run_dir(name) / "samples" / file

@@ -1244,3 +1244,50 @@ input[type='search']:focus {
 .prepared p {
   margin: 0;
 }
+
+/* Run page: sub-tabs and parameters */
+
+.subtabs {
+  display: flex;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.subtabs button {
+  padding: 6px 14px;
+  font-size: 0.88rem;
+  background: transparent;
+  color: var(--muted);
+}
+
+.subtabs button:not(:disabled):hover {
+  background: var(--surface-2);
+}
+
+.subtabs button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+fieldset.params {
+  display: grid;
+  gap: 14px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+/* Read-only parameters must stay readable, not faded like disabled controls. */
+fieldset.params:disabled input,
+fieldset.params:disabled select {
+  color: var(--text);
+  opacity: 1;
+  cursor: default;
+}
+
+fieldset.params:disabled input[type='checkbox'] {
+  opacity: 0.8;
+}
