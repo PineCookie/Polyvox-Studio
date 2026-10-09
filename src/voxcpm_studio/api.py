@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated
 
 import soundfile as sf
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -98,6 +98,19 @@ class ImportPreviewOut(BaseModel):
     examples: list[dict]
     missing_examples: list[str]
     suggested_name: str
+
+
+class ClipRowOut(BaseModel):
+    index: int
+    file: str
+    text: str
+    seconds: float | None
+    asr: bool
+
+
+class ClipPageOut(BaseModel):
+    total: int
+    rows: list[ClipRowOut]
 
 
 class JobOut(BaseModel):
@@ -330,6 +343,19 @@ def create_app(
             }
 
         return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
+
+    @app.get("/api/dataset-rows")
+    def dataset_rows(id: str, offset: int = 0, limit: int = Query(50, ge=1, le=500), q: str = "") -> ClipPageOut:
+        """A page of a dataset's clips for review (id = manifest id, e.g. "speaker/train.jsonl")."""
+        path = _found(manifests.resolve, settings.data_dir, id)
+        total, rows = manifests.read_rows(path, manifests.legacy_root(settings.data_dir), max(0, offset), limit, q)
+        return ClipPageOut(total=total, rows=[ClipRowOut(**dataclasses.asdict(r)) for r in rows])
+
+    @app.get("/api/dataset-audio")
+    def dataset_audio(id: str, index: int) -> FileResponse:
+        """Audio of one clip, by its index in a dataset (never by path)."""
+        path = _found(manifests.resolve, settings.data_dir, id)
+        return FileResponse(_found(manifests.clip_audio, path, manifests.legacy_root(settings.data_dir), index))
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str) -> JobOut:

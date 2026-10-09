@@ -78,9 +78,12 @@ To keep synthesizing while training, put them on different GPUs, e.g.
 
 ## Training
 
-The Train tab starts, stops and resumes LoRA runs, one at a time. A run lives in
-`<lora dir>/<name>/` in the layout `lora_ft_webui.py` uses, so its runs appear
-too and can be resumed or continued with more steps.
+The Train tab starts, stops and resumes LoRA runs, one at a time. A new run
+starts from a dataset: its stats, warnings and a browsable list of its clips
+(play, transcript, length, search; ASR-made transcripts are marked), then the
+training parameters. A run lives in `<lora dir>/<name>/` in the layout
+`lora_ft_webui.py` uses, so its runs appear too and can be resumed or
+continued with more steps.
 
 - Stop saves a checkpoint first; Resume continues from it.
 - Validation clips (held out from the training set by default) produce loss
@@ -90,10 +93,10 @@ too and can be resumed or continued with more steps.
   (`data/<name>/wavs/...`), which the current
   `voxcpm` loader would resolve against the manifest's folder instead.
 
-## Datasets
+## Preparing datasets
 
-The Data tab lists the datasets in the data dir and imports new ones from a path
-on this computer:
+The Prepare tab turns raw recordings and transcript lists into datasets in the
+data dir, from a path on this computer:
 
 - a GPT-SoVITS `.list` (`path|speaker|lang|text`),
 - a `file|text` CSV (LJSpeech style),

@@ -31,14 +31,13 @@ from typing import Callable
 import soundfile as sf
 
 from . import slicer
-from .manifests import legacy_root, write_manifest
+from .manifests import ASR_FILE, legacy_root, write_manifest
 from .slicer import SliceOptions, Vad
 
 AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a"}
 TRANSCRIPT_EXTENSIONS = (".lab", ".txt")
 # Unicode-aware: voice names are often Chinese or Japanese.
 DATASET_NAME = r"^[^\W_][\w.-]{0,79}$"
-ASR_FILE = "asr.json"
 EXAMPLES = 5
 MISSING_EXAMPLES = 2  # sliced file names are long
 TRANSCRIBE_CHUNK = 32  # clips per ASR call; progress and cancel granularity

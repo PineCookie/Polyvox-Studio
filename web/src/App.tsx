@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getStatus, importLora, listLoras, synthesize, unloadModel } from './api'
 import type { Lora, Status, SynthesisParams } from './api'
-import { DataView } from './components/DataView'
 import { History } from './components/History'
 import type { Clip } from './components/History'
+import { PrepareView } from './components/PrepareView'
 import { StatusBar } from './components/StatusBar'
 import { SynthesisPanel } from './components/SynthesisPanel'
 import { TrainingView } from './components/TrainingView'
 import { VoicePanel } from './components/VoicePanel'
 
-const TABS = { synthesize: 'Synthesize', data: 'Data', train: 'Train' } as const
+// Workflow order: raw audio -> dataset -> LoRA -> speech.
+const TABS = { synthesize: 'Synthesize', prepare: 'Prepare', train: 'Train' } as const
 type Tab = keyof typeof TABS
 
 function tabFromHash(): Tab {
   const t = location.hash.slice(1)
+  if (t === 'data') return 'prepare' // the tab's earlier name
   return t in TABS ? (t as Tab) : 'synthesize'
 }
 
@@ -181,7 +183,7 @@ export default function App() {
           />
         </aside>
       </main>
-      {tab === 'data' && <DataView onError={showError} onTrain={trainOn} />}
+      {tab === 'prepare' && <PrepareView onError={showError} onTrain={trainOn} />}
       {tab === 'train' && (
         <TrainingView
           key={trainDataset?.key}

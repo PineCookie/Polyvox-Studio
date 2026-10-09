@@ -73,6 +73,18 @@ def test_datasets_list_and_inspect(client, data_dir):
     assert client.get("/api/datasets/../x.jsonl").status_code == 404
 
 
+def test_dataset_rows_and_clip_audio(client, data_dir):
+    make_dataset(data_dir, "voice")
+
+    page = client.get("/api/dataset-rows", params={"id": "voice/train.jsonl", "limit": 2}).json()
+    assert page["total"] == 4 and [r["index"] for r in page["rows"]] == [0, 1]
+
+    audio = client.get("/api/dataset-audio", params={"id": "voice/train.jsonl", "index": 3})
+    assert audio.status_code == 200 and audio.content[:4] == b"RIFF"
+    assert client.get("/api/dataset-audio", params={"id": "voice/train.jsonl", "index": 9}).status_code == 404
+    assert client.get("/api/dataset-rows", params={"id": "../x.jsonl"}).status_code == 404
+
+
 def test_training_run_lifecycle(client, training, data_dir):
     make_dataset(data_dir, "voice")
 

@@ -20,6 +20,7 @@ from pathlib import Path
 import soundfile as sf
 
 MANIFEST_GLOB = "*.jsonl"
+ASR_FILE = "asr.json"  # next to a manifest: {"<audio as written>": {"language": ...}} for ASR-made texts
 MAX_REPORTED = 20  # errors / warnings listed individually
 SHORT_CLIP_S = 0.3
 LONG_CLIP_S = 30.0
@@ -35,7 +36,9 @@ def scan(data_dir: Path) -> list[str]:
     data_dir = data_dir.resolve()
     if not data_dir.is_dir():
         return []
-    return sorted(p.relative_to(data_dir).as_posix() for p in data_dir.rglob(MANIFEST_GLOB))
+    ids = (p.relative_to(data_dir) for p in data_dir.rglob(MANIFEST_GLOB))
+    # Hidden folders hold work in progress, e.g. an import's staging dir.
+    return sorted(p.as_posix() for p in ids if not any(part.startswith(".") for part in p.parts))
 
 
 def resolve(data_dir: Path, dataset_id: str) -> Path:
@@ -92,6 +95,55 @@ def write_manifest(entries: list[dict], path: Path) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as f:
         for entry in entries:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+@dataclass
+class ClipRow:
+    index: int  # position among the manifest's usable entries (stable ids for audio)
+    file: str  # audio path as it appears relative to the manifest, or absolute
+    text: str
+    seconds: float | None  # None: unreadable or missing
+    asr: bool  # text made by ASR (listed in asr.json)
+
+
+def _row_key(audio: str, manifest_dir: Path) -> str:
+    path = Path(audio)
+    return path.relative_to(manifest_dir).as_posix() if path.is_relative_to(manifest_dir) else audio
+
+
+def read_rows(
+    path: Path, root: Path | None = None, offset: int = 0, limit: int = 50, query: str = ""
+) -> tuple[int, list[ClipRow]]:
+    """One page of a manifest's clips for review: (matching total, rows).
+
+    ``query`` matches text or file name, case-insensitively.
+    """
+    manifest_dir = path.resolve().parent
+    entries, _ = read_manifest(path, root)
+    asr_file = manifest_dir / ASR_FILE
+    asr = set(json.loads(asr_file.read_text(encoding="utf-8"))) if asr_file.is_file() else set()
+    q = query.strip().lower()
+    matches = [
+        (i, e, _row_key(e["audio"], manifest_dir))
+        for i, e in enumerate(entries)
+        if not q or q in e["text"].lower() or q in Path(e["audio"]).name.lower()
+    ]
+    rows = []
+    for i, entry, key in matches[offset : offset + limit]:
+        try:
+            seconds = sf.info(entry["audio"]).duration
+        except Exception:
+            seconds = None
+        rows.append(ClipRow(index=i, file=key, text=entry["text"], seconds=seconds, asr=key in asr))
+    return len(matches), rows
+
+
+def clip_audio(path: Path, root: Path | None, index: int) -> Path:
+    """The audio file of a manifest's ``index``-th usable entry."""
+    entries, _ = read_manifest(path, root)
+    if not 0 <= index < len(entries) or not Path(entries[index]["audio"]).is_file():
+        raise KeyError(f"No clip {index} in this dataset.")
+    return Path(entries[index]["audio"])
 
 
 def split_holdout(entries: list[dict], count: int, seed: int = 0) -> tuple[list[dict], list[dict]]:

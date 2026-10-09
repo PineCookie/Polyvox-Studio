@@ -274,6 +274,28 @@ export async function cancelJob(id: string): Promise<void> {
   await postJson(`/api/jobs/${encodeURIComponent(id)}/cancel`)
 }
 
+export interface ClipRow {
+  index: number // stable id within the dataset (for audio)
+  file: string
+  text: string
+  seconds: number | null // null: unreadable or missing
+  asr: boolean // transcript made by ASR
+}
+
+export async function getDatasetRows(
+  id: string,
+  offset: number,
+  limit: number,
+  query: string,
+): Promise<{ total: number; rows: ClipRow[] }> {
+  const q = new URLSearchParams({ id, offset: String(offset), limit: String(limit), q: query })
+  return (await request(`/api/dataset-rows?${q}`)).json()
+}
+
+export function datasetAudioUrl(id: string, index: number): string {
+  return `/api/dataset-audio?${new URLSearchParams({ id, index: String(index) })}`
+}
+
 export async function inspectDataset(id: string): Promise<DatasetReport> {
   return (await request(`/api/datasets/${id.split('/').map(encodeURIComponent).join('/')}`)).json()
 }

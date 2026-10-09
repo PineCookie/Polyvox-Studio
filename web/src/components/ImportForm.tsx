@@ -7,7 +7,7 @@ import { ProgressBar } from './RunList'
 
 interface Props {
   datasetNames: string[]
-  onImported: (id: string) => void
+  onImported: (result: ImportJob['result']) => void
 }
 
 const KIND_LABEL: Record<ImportPreview['kind'], string> = {
@@ -70,7 +70,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
       try {
         const next = await getJob<ImportJob>(job.id)
         setJob(next)
-        if (next.state === 'done') onImportedRef.current(next.result.id)
+        if (next.state === 'done') onImportedRef.current(next.result)
         else if (next.state === 'failed') setError(next.error ?? 'Import failed.')
       } catch (e) {
         setError((e as Error).message)
