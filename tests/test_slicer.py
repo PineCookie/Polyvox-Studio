@@ -61,7 +61,7 @@ def test_slice_recording_writes_clips_at_the_source_rate(tmp_path):
     sf.write(src, np.zeros((44100 * 20, 2), dtype=np.float32), 44100)  # stereo, 44.1 kHz
     vad = lambda wav: [(1.0, 5.0), (7.0, 12.0)]
 
-    files = slicer.slice_recording(src, tmp_path / "out", OPTS, vad)
+    files = [s.path for s in slicer.slice_recording(src, tmp_path / "out", OPTS, vad)]
 
     assert [f.name for f in files] == ["long_00000900_00005100.wav", "long_00006900_00012100.wav"]
     info = sf.info(str(files[0]))
@@ -99,7 +99,140 @@ def test_import_slices_long_recordings_then_transcribes(tmp_path, data_dir):
     ]
     assert all((data_dir / "sliced" / e["audio"]).is_file() for e in entries)
     assert not (data_dir / "sliced" / "_slices").exists()
-    assert ("slicing", 1, 1) in phases
+    assert ("slicing", 40, 40) in phases  # seconds of recordings sliced
+
+
+RATE = 16000
+
+
+def bursts(spans, seconds, rate=RATE):
+    """Silence with a loud tone per (start, end): one "word" each."""
+    wav = np.zeros(int(seconds * rate), dtype=np.float32)
+    t = np.arange(len(wav)) / rate
+    for s, e in spans:
+        on = (t >= s) & (t < e)
+        wav[on] = 0.3 * np.sin(2 * np.pi * 220 * t[on])
+    return wav
+
+
+def loud_runs(wav, rate=RATE):
+    """(start, end) of the loud stretches (10 ms frames): where the fake aligner puts words."""
+    frame = rate // 100
+    n = len(wav) // frame
+    loud = np.abs(wav[: n * frame]).reshape(n, frame).max(axis=1) > 0.01
+    runs, start = [], None
+    for k, on in enumerate(list(loud) + [False]):
+        if on and start is None:
+            start = k
+        elif not on and start is not None:
+            runs.append((start / 100, k / 100))
+            start = None
+    return runs
+
+
+def fake_guide(texts_by_words: dict[int, str]):
+    """ASR that "hears" the text listed for a chunk's number of bursts; an
+    aligner that puts word k on burst k."""
+    from voxcpm_studio.aligner import Alignment, Word, split_words
+
+    calls = {"transcribe": 0, "align": 0}
+
+    def transcribe(wavs):
+        calls["transcribe"] += 1
+        return [(texts_by_words.get(len(loud_runs(w)), ""), "Chinese") for w in wavs]
+
+    def align(wavs, texts):
+        calls["align"] += 1
+        out = []
+        for w, t in zip(wavs, texts, strict=True):
+            runs = loud_runs(w)
+            out.append(Alignment([Word(x, s, e, 0.9) for x, (s, e) in zip(split_words(t), runs, strict=True)], 0.9))
+        return out
+
+    return slicer.Guide(transcribe=transcribe, align=align), calls
+
+
+def test_word_spans_keep_offsets_into_the_text():
+    from voxcpm_studio.aligner import word_spans
+
+    text = "你好，world！再见。"
+    assert [text[s:e] for s, e in word_spans(text)] == ["你", "好", "world", "再", "见"]
+
+
+def test_word_plan_cuts_at_sentence_ends_even_without_a_longer_pause():
+    # Ten 0.5 s words, 0.2 s apart; a sentence ends after the fifth.
+    times = [(k * 0.7, k * 0.7 + 0.5) for k in range(10)]
+    text_between = ["，" if k == 2 else "。" if k == 4 else "" for k in range(9)]
+    breaks = [slicer._break_score(t, 0.2) for t in text_between]
+    opts = SliceOptions(min_seconds=1.0, max_seconds=6.0, target_seconds=3.5, pad_seconds=0.1)
+
+    assert slicer.plan_word_clips(times, breaks, opts) == [(0, 4), (5, 9)]
+
+
+def test_guided_slicing_cuts_between_words_and_splits_the_text(tmp_path):
+    # Two sentences of four words; the comma pause inside the second (0.4 s) is
+    # longer than the one between them (0.2 s), yet the sentence end wins.
+    words = [(1.0, 1.4), (1.6, 2.0), (2.2, 2.6), (2.8, 3.2), (3.4, 3.8), (4.0, 4.4), (4.8, 5.2), (5.4, 5.8)]
+    src = tmp_path / "talk.wav"
+    sf.write(src, bursts(words, 8.0, 44100), 44100)
+    guide, calls = fake_guide({8: "一二三四。五六，七八。"})
+    vad = lambda wav: [(1.0, 4.4), (4.8, 5.8)]
+    opts = SliceOptions(min_seconds=2.0, max_seconds=4.0, target_seconds=2.5, max_inner_gap=1.0, pad_seconds=0.15)
+
+    clips = slicer.slice_recording(src, tmp_path / "out", opts, vad, guide)
+
+    assert [c.text for c in clips] == ["一二三四。", "五六，七八。"]
+    assert all(c.language == "Chinese" for c in clips)
+    first = sf.info(str(clips[0].path))
+    assert first.samplerate == 44100
+    # 0.15 s before the first word; cut in the middle of the 0.2 s pause, never into a word.
+    assert first.duration == pytest.approx(3.3 - 0.85, abs=0.02)
+    (start_ms, end_ms), (next_ms, _) = (map(int, c.path.stem.split("_")[1:]) for c in clips)
+    assert start_ms == 850 and end_ms == next_ms == pytest.approx(3300, abs=10)
+    assert calls == {"transcribe": 1, "align": 1}
+
+
+def test_windows_end_in_pauses_and_cover_the_recording(monkeypatch):
+    monkeypatch.setattr(slicer, "WINDOW_SLACK_S", 2.0)
+
+    class Fake:
+        duration = 25.0
+
+        def read(self, start, end, rate=None):
+            return np.zeros(int((min(end, 25.0) - start) * RATE), dtype=np.float32)
+
+    # Speech everywhere except pauses at 9.0-9.6 and 19.5-20.5 (absolute seconds).
+    pauses = [(9.0, 9.6), (19.5, 20.5)]
+
+    def vad_from(t0):
+        def vad(wav):
+            end = t0 + len(wav) / RATE
+            cuts = [p for p in pauses if t0 < p[0] < end]
+            points = [t0] + [x for p in cuts for x in p] + [end]
+            return [(points[i] - t0, points[i + 1] - t0) for i in range(0, len(points), 2)]
+
+        return vad
+
+    starts, t0 = [], 0.0
+    for start, wav, _ in slicer.windows(Fake(), lambda w: vad_from(starts[-1] if starts else 0.0)(w), length=10.0):
+        starts.append(start)
+        t0 = start + len(wav) / RATE
+        starts[-1] = t0  # the next window's vad offset
+    assert t0 == pytest.approx(25.0)
+
+
+def test_source_reads_ranges_through_either_backend(tmp_path):
+    path = tmp_path / "x.wav"
+    sf.write(path, bursts([(1.0, 2.0)], 3.0, 44100), 44100)
+
+    src = slicer.Source(path)
+    assert (src.duration, src.rate) == (pytest.approx(3.0), 44100)
+    part = src.read(0.5, 1.5, 16000)
+    assert len(part) == 16000 and np.abs(part[:7000]).max() < 0.01 < np.abs(part[9000:]).max()
+
+    src._sf = False  # as for m4a / mp3: decoded by torchcodec
+    decoded = src.read(0.5, 1.5, 16000)
+    assert abs(len(decoded) - 16000) <= 16 and np.abs(decoded[9000:15000]).max() > 0.1
 
 
 def test_slicing_needs_copy_and_transcription(tmp_path, data_dir):

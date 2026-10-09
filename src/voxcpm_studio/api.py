@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import checks, importer, lora_library, manifests, sharing
+from . import checks, importer, lora_library, manifests, sharing, slicer
 from .aligner import AlignService
 from .asr import AsrService, load_audio
 from .config import Settings
@@ -347,10 +347,13 @@ def create_app(
             raise HTTPException(422, str(e)) from e
         refuse_if_busy(gpu=body.transcribe or body.check)
 
-        def transcriber(paths: list[Path]) -> list[tuple[str, str | None]]:
-            results = asr.transcribe([load_audio(p) for p in paths], language=body.language, prompt=body.prompt)
+        def heard(wavs: list) -> list[tuple[str, str | None]]:
+            results = asr.transcribe(wavs, language=body.language, prompt=body.prompt)
             # A forced language is not detected, so record what was forced.
             return [(r.text, r.language or body.language) for r in results]
+
+        def transcriber(paths: list[Path]) -> list[tuple[str, str | None]]:
+            return heard([load_audio(p) for p in paths])
 
         def run(job: Job) -> dict:
             result = importer.import_dataset(
@@ -373,6 +376,9 @@ def create_app(
                 checker=checker(body.aligner) if body.check else None,
                 aligner=body.aligner,
                 trim=body.trim,
+                guide=slicer.Guide(transcribe=heard, align=lambda wavs, texts: align.align(wavs, texts, body.aligner))
+                if body.slice
+                else None,
             )
             return {
                 "id": result.id,

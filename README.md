@@ -116,10 +116,14 @@ before anything is written; rows without audio are skipped. The import writes
 `data/<name>/train.jsonl` with paths relative to it and, by default, copies the
 audio into `data/<name>/wavs/` so the folder is self-contained.
 
-Long recordings (over 20 s) can be sliced into clips during the import: voice
-activity detection (Silero VAD) finds the speech, and cuts are chosen at the
-longest pauses so clips stay within a length range (2-15 s by default) and end
-between sentences rather than mid-word.
+Long recordings (over 20 s, any format FFmpeg reads: WAV, FLAC, m4a, mp3, ...)
+can be sliced into clips during the import. They are read 10 minutes at a time,
+so hours of audio are fine. Voice activity detection (Silero VAD) groups the
+speech into pieces of up to 28 s, Qwen3-ASR transcribes them, and the forced
+aligner places every word. Cuts then fall only between words, at pauses
+measured on the waveform, preferring sentence ends and keeping clips within a
+length range (2-15 s by default); each clip keeps its exact part of the
+transcript, punctuation included.
 
 Clips that have audio but no transcript (a folder of bare recordings, slices,
 or empty text in a list) can be transcribed with Qwen3-ASR during the import, optionally

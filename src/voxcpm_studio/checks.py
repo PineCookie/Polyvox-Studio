@@ -7,8 +7,8 @@ For each clip with a transcript:
 - ``extra_speech``: voice activity outside the aligned words, i.e. the text
   misses something said (a dropped phrase, an untranscribed filler or laugh).
   The aligner score cannot see this: the remaining words still align well.
-- ``cut_edge``: the sound is still loud at the start or end of the file; a word
-  may be cut. (Measured on the waveform: Silero VAD keeps a segment open to the
+- ``cut_edge``: the sound is still loud at the start or end of the file (within
+  CUT_EDGE_DB of the speech); a word may be cut. (Measured on the waveform: Silero VAD keeps a segment open to the
   end of a clip whenever the clip ends shortly after speech.)
 - ``long_silence``: over LONG_SILENCE_S of silence before or after the speech.
 
@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .aligner import SAMPLE_RATE, Alignment, loud_frames, refine_edges
+from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges
 from .manifests import ALIGN_FILE, read_manifest, row_key, text_key
 from .slicer import Vad, silero_vad
 
@@ -40,6 +40,10 @@ WEAK_WORD_BELOW = {"qwen3": 0.55, "ctc": 6e-5}
 EXTRA_SPEECH_S = 0.3
 EXTRA_MARGIN_S = 0.25  # voice this close to the aligned words is theirs (breath, release)
 LONG_SILENCE_S = 1.0
+# A loud edge counts as cut only within this many dB of the clip's speech: in
+# live recordings, background music and room noise sit 20-25 dB down and are
+# not a cut word (cut words measured -1 to -5 dB, word tails -10 to -15 dB).
+CUT_EDGE_DB = 20.0
 TRIM_PAD_S = 0.15  # silence kept around the speech when trimming (as the slicer pads)
 MIN_TRIM_S = 0.1  # trimming less than this is not worth rewriting a file
 CHECK_CHUNK = 32  # clips per aligner call; progress and cancel granularity
@@ -110,7 +114,8 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
         flags.append("mismatch")
     if unaligned >= EXTRA_SPEECH_S:
         flags.append("extra_speech")
-    if loud[0] or loud[-1]:
+    first, last = edge_levels(wav)
+    if (loud[0] and first > -CUT_EDGE_DB) or (loud[-1] and last > -CUT_EDGE_DB):
         flags.append("cut_edge")
     if max(lead, trail) > LONG_SILENCE_S:
         flags.append("long_silence")

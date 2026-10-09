@@ -232,7 +232,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                 <fieldset className="field asr-options" disabled={running}>
                   <label className="check">
                     <input type="checkbox" checked={slice} onChange={(e) => setSlice(e.target.checked)} /> Slice the{' '}
-                    {preview.long_recordings} long recordings into clips at pauses
+                    {preview.long_recordings} long recordings into clips
                   </label>
                   {slice ? (
                     <>
@@ -259,7 +259,9 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                         {!sliceRangeOk && <span className="field-error">min must be below max</span>}
                       </div>
                       <p className="muted hint">
-                        Clips are transcribed with ASR; any transcript of a whole recording is not kept.
+                        Each recording is transcribed and aligned first, then cut between words, preferably at sentence
+                        ends; each clip keeps its part of the transcript. Any transcript of a whole recording is not
+                        kept.
                       </p>
                     </>
                   ) : (

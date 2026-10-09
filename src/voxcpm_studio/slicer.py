@@ -1,21 +1,27 @@
-"""Slice long recordings into training clips at pauses.
+"""Slice long recordings into training clips.
 
-1. Voice activity detection (Silero VAD) finds speech segments separated by
-   pauses of at least ``VAD_MIN_SILENCE_S``.
-2. Segments still longer than the maximum clip length (talking without any
-   pause) are split at their quietest point.
-3. Cut points are chosen by dynamic programming over the pauses: cutting at a
-   long pause (likely a sentence end) is rewarded, clips far from the target
-   length are penalized, and a clip never exceeds the maximum length or
-   contains a pause longer than ``max_inner_gap``.
-4. Each clip is padded into the surrounding silence and written at the source
-   sample rate.
+Recordings are read in windows of about WINDOW_S (ending at a pause), so hours
+of compressed audio (m4a, mp3, ...) never sit in memory at once.
+
+With a transcript guide (ASR + forced aligner), clips are cut between words:
+
+1. Voice activity detection (Silero VAD) finds the speech; it is grouped into
+   chunks of up to CHUNK_MAX_S at the longest pauses (what ASR handles well).
+2. Each chunk is transcribed (with punctuation) and its words aligned.
+3. Cut points are chosen between words by dynamic programming: sentence ends
+   are rewarded most, then clause punctuation, then long pauses; clips far from
+   the target length are penalized and never exceed the maximum. A cut sits at
+   the quietest moment between the two words.
+4. Each clip's text is its exact slice of the chunk's transcript.
+
+Without a guide, cuts follow pauses alone (VAD segments grouped the same way),
+and the clips get no text.
 """
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +33,17 @@ VAD_MIN_SILENCE_S = 0.1
 ENERGY_FRAME_S = 0.02
 CUT_REWARD_CAP_S = 1.0  # pauses beyond this are all "clearly a boundary"
 CUT_WEIGHT = 2.0
+WINDOW_S = 600.0  # audio decoded at a time
+WINDOW_SLACK_S = 60.0  # a window ends at the longest pause in its last minute
+CHUNK_MAX_S = 28.0  # per ASR call (Qwen3-ASR's features cover 30 s)
+CHUNK_PAD_S = 0.3
+SENTENCE_END = set("。！？!?…")
+WORD_CUT_COST = 1.0  # a clause mark alone does not justify a short clip
+MIN_PAUSE_S = 0.08  # quieter stretch between words that counts as a pause
+EDGE_QUIET_DB = 25.0  # a clip edge must be this far below the speech (else moved inward)
+NO_PAUSE_PENALTY = 3.0  # cutting where the sound goes on: only if a clip would be too long
+CHUNK_CUT_COST = 3.0  # ASR chunks break only at long pauses (more context)
+CLAUSE_END = set("，,、；;：:")
 
 # 16 kHz mono audio -> speech segments as (start, end) in seconds.
 Vad = Callable[[np.ndarray], list[tuple[float, float]]]
@@ -39,6 +56,23 @@ class SliceOptions:
     target_seconds: float = 8.0
     max_inner_gap: float = 1.0  # a longer pause always ends a clip
     pad_seconds: float = 0.15
+
+
+@dataclass
+class Guide:
+    """What the transcript-guided slicer needs, on 16 kHz mono chunks."""
+
+    # chunks -> (text, language) each
+    transcribe: Callable[[list[np.ndarray]], list[tuple[str, str | None]]]
+    # (chunks, texts) -> aligner.Alignment each
+    align: Callable[[list[np.ndarray], list[str]], list]
+
+
+@dataclass
+class Slice:
+    path: Path
+    text: str  # "" when sliced without a guide
+    language: str | None = None
 
 
 _vad_model = None
@@ -64,6 +98,63 @@ def silero_vad(wav16k: np.ndarray) -> list[tuple[float, float]]:
     return [(s["start"] / VAD_RATE, s["end"] / VAD_RATE) for s in stamps]
 
 
+# Reading
+
+
+class Source:
+    """An audio file read by time range, mono, at its own or a given rate.
+
+    soundfile handles WAV / FLAC / OGG with exact seeking; anything else (m4a,
+    mp3, video containers) is decoded by torchcodec (FFmpeg).
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._decoders: dict[int | None, object] = {}
+        try:
+            info = sf.info(str(path))
+            self.rate, self.duration, self._sf = info.samplerate, info.duration, True
+        except Exception:
+            from torchcodec.decoders import AudioDecoder
+
+            meta = AudioDecoder(str(path)).metadata
+            if not meta.duration_seconds or not meta.sample_rate:
+                raise ValueError(f"Unreadable audio: {path.name}") from None
+            self.rate, self.duration, self._sf = meta.sample_rate, meta.duration_seconds, False
+
+    def read(self, start: float, end: float, rate: int | None = None) -> np.ndarray:
+        """Mono float32 samples of [start, end) seconds, at ``rate`` (default: the file's)."""
+        start, end = max(0.0, start), min(self.duration, end)
+        if end <= start:
+            return np.zeros(0, dtype=np.float32)
+        if self._sf:
+            with sf.SoundFile(str(self.path)) as f:
+                f.seek(int(start * self.rate))
+                audio = f.read(int((end - start) * self.rate), dtype="float32", always_2d=True).mean(axis=1)
+            if rate and rate != self.rate:
+                import torch
+                import torchaudio.functional as F
+
+                audio = F.resample(torch.from_numpy(np.ascontiguousarray(audio)), self.rate, rate).numpy()
+            return audio.astype(np.float32)
+        decoder = self._decoders.get(rate)
+        if decoder is None:
+            from torchcodec.decoders import AudioDecoder
+
+            decoder = self._decoders[rate] = AudioDecoder(str(self.path), sample_rate=rate, num_channels=1)
+        samples = decoder.get_samples_played_in_range(start, end)
+        return samples.data[0].numpy().astype(np.float32)
+
+
+def probe(path: Path) -> tuple[float, int]:
+    """(duration in seconds, sample rate) of any readable audio file."""
+    src = Source(path)
+    return src.duration, src.rate
+
+
+# Planning cuts from pauses
+
+
 def split_long(
     segments: list[tuple[float, float]], wav16k: np.ndarray, max_seconds: float
 ) -> list[tuple[float, float]]:
@@ -87,8 +178,11 @@ def split_long(
     return sorted(out)
 
 
-def plan_clips(segments: list[tuple[float, float]], opts: SliceOptions) -> list[tuple[float, float]]:
-    """Group consecutive speech segments into clips (start, end) in seconds."""
+def plan_clips(
+    segments: list[tuple[float, float]], opts: SliceOptions, cut_cost: float = 0.0
+) -> list[tuple[float, float]]:
+    """Group consecutive speech segments into clips (start, end) in seconds;
+    `cut_cost` makes every cut cost that much (fewer, longer pieces)."""
     n = len(segments)
     if n == 0:
         return []
@@ -108,7 +202,7 @@ def plan_clips(segments: list[tuple[float, float]], opts: SliceOptions) -> list[
             if dur < opts.min_seconds:
                 cost += 10.0 * (opts.min_seconds - dur)
             if j < n - 1:
-                cost -= CUT_WEIGHT * min(gaps[j], CUT_REWARD_CAP_S)
+                cost += cut_cost - CUT_WEIGHT * min(gaps[j], CUT_REWARD_CAP_S)
             if best[i] + cost < best[j + 1]:
                 best[j + 1], back[j + 1] = best[i] + cost, i
     clips = []
@@ -130,35 +224,235 @@ def pad_clips(clips: list[tuple[float, float]], pad: float, duration: float) -> 
     return out
 
 
-def find_clips(wav16k: np.ndarray, opts: SliceOptions, vad: Vad = silero_vad) -> list[tuple[float, float]]:
+def find_clips(
+    wav16k: np.ndarray, opts: SliceOptions, vad: Vad = silero_vad, segments: list[tuple[float, float]] | None = None
+) -> list[tuple[float, float]]:
     duration = len(wav16k) / VAD_RATE
-    segments = split_long(vad(wav16k), wav16k, opts.max_seconds)
+    segments = split_long(vad(wav16k) if segments is None else segments, wav16k, opts.max_seconds)
     clips = pad_clips(plan_clips(segments, opts), opts.pad_seconds, duration)
     return [(s, e) for s, e in clips if e - s >= opts.min_seconds]
 
 
-def _read_native(path: Path) -> tuple[np.ndarray, int]:
-    """Mono float32 at the file's own sample rate."""
-    try:
-        audio, rate = sf.read(str(path), dtype="float32", always_2d=True)
-        return audio.mean(axis=1), rate
-    except Exception:
-        import torchaudio
-
-        tensor, rate = torchaudio.load(str(path))
-        return tensor.mean(dim=0).numpy(), rate
+# Planning cuts from words
 
 
-def slice_recording(path: Path, out_dir: Path, opts: SliceOptions, vad: Vad = silero_vad) -> list[Path]:
-    """Write ``<stem>_<start ms>_<end ms>.wav`` clips (mono, source rate) into ``out_dir``."""
-    from .asr import load_audio
+def _break_score(text: str, pause: float) -> float:
+    """How good a place to end a clip the stretch between two words is: by the
+    pause the audio really has there (measured on the waveform: ASR often puts
+    a full stop where the speaker never paused) and the punctuation of the
+    transcript, which only counts when there is a pause."""
+    if pause < MIN_PAUSE_S:
+        return -NO_PAUSE_PENALTY
+    stripped = text.strip()
+    punct = 1.5 if any(c in SENTENCE_END for c in stripped) else 0.5 if any(c in CLAUSE_END for c in stripped) else 0.0
+    return punct + 1.5 * min(pause, CUT_REWARD_CAP_S)
 
-    clips = find_clips(load_audio(path), opts, vad)
-    audio, rate = _read_native(path)
+
+def plan_word_clips(
+    times: list[tuple[float, float]], breaks: list[float], opts: SliceOptions, pauses: list[float] | None = None
+) -> list[tuple[int, int]]:
+    """Group words (start, end) into clips [(first, last)], cutting after word k
+    rewarded by ``breaks[k]``. Pads count toward the length."""
+    n = len(times)
+    if n == 0:
+        return []
+    pad2 = 2 * opts.pad_seconds
+    if pauses is None:
+        pauses = [times[k + 1][0] - times[k][1] for k in range(n - 1)]
+    inf = float("inf")
+    best = [inf] * (n + 1)
+    back = [0] * (n + 1)
+    best[0] = 0.0
+    for j in range(n):
+        for i in range(j, -1, -1):
+            if i < j and pauses[i] > opts.max_inner_gap:
+                break  # this pause must end a clip
+            dur = times[j][1] - times[i][0] + pad2
+            if dur > opts.max_seconds and i < j:
+                break
+            cost = ((dur - opts.target_seconds) / opts.target_seconds) ** 2
+            if dur < opts.min_seconds:
+                cost += 10.0 * (opts.min_seconds - dur)
+            if j < n - 1:
+                cost += WORD_CUT_COST - breaks[j]
+            if best[i] + cost < best[j + 1]:
+                best[j + 1], back[j + 1] = best[i] + cost, i
+    clips = []
+    j = n
+    while j > 0:
+        clips.append((back[j], j - 1))
+        j = back[j]
+    return clips[::-1]
+
+
+def _quietest(wav16k: np.ndarray, lo: float, hi: float) -> float:
+    """The quietest 10 ms in [lo, hi] seconds (the middle when too short)."""
+    frame = VAD_RATE // 100
+    a, b = int(lo * VAD_RATE), int(hi * VAD_RATE)
+    if b - a < 2 * frame:
+        return (lo + hi) / 2
+    n = (b - a) // frame
+    rms = np.sqrt(np.mean(wav16k[a : a + n * frame].reshape(n, frame) ** 2, axis=1))
+    # Of the (near-)quietest frames, the one nearest the middle: in digital
+    # silence every frame ties, and the middle leaves both words room.
+    quiet = np.flatnonzero(rms <= rms.min() * 1.5 + 1e-6)
+    k = int(quiet[np.argmin(np.abs(quiet - (n - 1) / 2))])
+    return (a + k * frame + frame // 2) / VAD_RATE
+
+
+def _pauses(loud: np.ndarray, times: list[tuple[float, float]]) -> list[tuple[float, float, float]]:
+    """(length, start, end) in seconds of the longest quiet stretch between each two
+    consecutive words, on 10 ms frames (``loud`` from aligner.loud_frames). The
+    search reaches a little into the words: aligner edges are approximate."""
+    out = []
+    for (s0, e0), (s1, e1) in zip(times[:-1], times[1:], strict=True):
+        lo = max(s0, e0 - 0.1)
+        hi = min(e1, max(e0, s1) + 0.1)
+        a, b = int(lo * 100), min(len(loud), int(np.ceil(hi * 100)))
+        best, best_end, run = 0, 0, 0
+        for f in range(a, b):
+            run = run + 1 if not loud[f] else 0
+            if run > best:
+                best, best_end = run, f + 1
+        out.append((best / 100, (best_end - best) / 100, best_end / 100))
+    return out
+
+
+def _quiet_edges(db: np.ndarray, start: float, end: float, speech_start: float, speech_end: float):
+    """Move clip edges that sit on sound inward to the first quiet 10 ms frame
+    (``db`` per frame relative to the loud frames), never past the speech.
+
+    Measured on a live recording: without this, about 1 clip in 5 began or
+    ended in sound: the tail of an earlier word where an ASR chunk began, or an
+    untranscribed filler inside a "pause" that was quiet relative to the chunk
+    but not to the clip.
+    """
+    f, limit = int(start * 100), int(speech_start * 100)
+    while f < min(limit, len(db)) and db[f] > -EDGE_QUIET_DB:
+        f += 1
+    g, limit = int(np.ceil(end * 100)) - 1, int(np.ceil(speech_end * 100)) - 1
+    while g > max(limit, 0) and g < len(db) and db[g] > -EDGE_QUIET_DB:
+        g -= 1
+    return max(start, f / 100), min(end, (g + 1) / 100)
+
+
+@dataclass
+class WordClip:
+    start: float  # seconds, within the chunk
+    end: float
+    text: str
+
+
+def word_clips(wav16k: np.ndarray, text: str, alignment, opts: SliceOptions) -> list[WordClip]:
+    """Clips of one transcribed, aligned chunk, cut between words."""
+    from .aligner import _frame_db, loud_frames, refine_edges, word_spans
+
+    spans = word_spans(text)
+    words = alignment.words
+    if not words or len(words) != len(spans):
+        return []
+    times = [(w.start, max(w.end, w.start)) for w in words]
+    pauses = _pauses(loud_frames(wav16k), times)
+    breaks = [_break_score(text[spans[k][1] : spans[k + 1][0]], pauses[k][0]) for k in range(len(words) - 1)]
+    plan = plan_word_clips(times, breaks, opts, [p[0] for p in pauses])
+    duration = len(wav16k) / VAD_RATE
+    # Cut at the quietest moment of the pause after a clip's last word: a
+    # pause found while the previous word still fades has its middle too early
+    # (measured: clips then opened with that word's tail). Words that run
+    # together are cut at their quietest moment.
+    cuts = [
+        _quietest(wav16k, pauses[j][1], pauses[j][2])
+        if pauses[j][0] > 0
+        else _quietest(wav16k, times[j][1], max(times[j][1], times[j + 1][0]))
+        for (_, j) in plan[:-1]
+    ]
+    db = _frame_db(wav16k)
+    db -= np.percentile(db, 95)
+    out = []
+    for k, (i, j) in enumerate(plan):
+        lo = cuts[k - 1] if k > 0 else 0.0
+        hi = cuts[k] if k < len(cuts) else duration
+        speech_start, speech_end = refine_edges(wav16k, times[i][0], times[j][1], inner=(times[i][1], times[j][0]))
+        start = max(lo, min(speech_start, times[i][0]) - opts.pad_seconds)
+        end = min(hi, max(speech_end, times[j][1]) + opts.pad_seconds)
+        start, end = _quiet_edges(db, start, end, speech_start, speech_end)
+        clip_text = text[spans[i][0] : spans[j + 1][0] if j + 1 < len(spans) else len(text)]
+        clip_text = clip_text.strip().lstrip("".join(SENTENCE_END | CLAUSE_END)).strip()
+        if end - start >= opts.min_seconds and clip_text:
+            out.append(WordClip(start, end, clip_text))
+    return out
+
+
+# Slicing
+
+
+def windows(src: Source, vad: Vad, length: float = WINDOW_S) -> Iterator[tuple[float, np.ndarray, list]]:
+    """(start, 16 kHz audio, speech segments) of consecutive windows, each
+    ending in the longest pause of its last minute so no speech is split."""
+    t0 = 0.0
+    while t0 < src.duration - 0.05:
+        end = min(src.duration, t0 + length + WINDOW_SLACK_S)
+        wav = src.read(t0, end, VAD_RATE)
+        segments = vad(wav)
+        cut = len(wav) / VAD_RATE
+        if end < src.duration:  # not the last window: end at a pause
+            gaps = [
+                (segments[k + 1][0] - segments[k][1], (segments[k][1] + segments[k + 1][0]) / 2)
+                for k in range(len(segments) - 1)
+                if length - WINDOW_SLACK_S <= segments[k][1] <= length + WINDOW_SLACK_S
+            ]
+            cut = max(gaps)[1] if gaps else length
+            segments = [(s, min(e, cut)) for s, e in segments if s < cut]
+        yield t0, wav[: int(cut * VAD_RATE)], segments
+        t0 += cut
+
+
+def _chunks(wav16k: np.ndarray, segments: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Speech grouped into ASR-sized pieces at the longest pauses."""
+    opts = SliceOptions(
+        min_seconds=0.0, max_seconds=CHUNK_MAX_S - 2 * CHUNK_PAD_S, target_seconds=20.0, max_inner_gap=3.0
+    )
+    planned = plan_clips(split_long(segments, wav16k, opts.max_seconds), opts, CHUNK_CUT_COST)
+    return pad_clips(planned, CHUNK_PAD_S, len(wav16k) / VAD_RATE)
+
+
+# (phase, done, total); may raise to cancel.
+Progress = Callable[[str, int, int], None]
+
+
+def slice_recording(
+    path: Path,
+    out_dir: Path,
+    opts: SliceOptions,
+    vad: Vad = silero_vad,
+    guide: Guide | None = None,
+    progress: Callable[[float], None] | None = None,
+) -> list[Slice]:
+    """Write ``<stem>_<start ms>_<end ms>.wav`` clips (mono PCM16, source rate)
+    into ``out_dir``. With a ``guide``, clips are cut between words and carry
+    their transcript. ``progress`` gets the seconds processed so far."""
+    src = Source(path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    files = []
-    for start, end in clips:
-        file = out_dir / f"{path.stem}_{int(start * 1000):08d}_{int(end * 1000):08d}.wav"
-        sf.write(file, audio[int(start * rate) : int(end * rate)], rate, subtype="PCM_16")
-        files.append(file)
-    return files
+    out: list[Slice] = []
+    for t0, wav, segments in windows(src, vad):
+        if guide is None:
+            pieces = [(s, e, "", None) for s, e in find_clips(wav, opts, vad, segments)]
+        else:
+            pieces = []
+            spans = _chunks(wav, segments)
+            chunk_wavs = [wav[int(s * VAD_RATE) : int(e * VAD_RATE)] for s, e in spans]
+            heard = guide.transcribe(chunk_wavs)
+            keep = [k for k, (text, _) in enumerate(heard) if text.strip()]
+            alignments = guide.align([chunk_wavs[k] for k in keep], [heard[k][0] for k in keep]) if keep else []
+            for k, alignment in zip(keep, alignments, strict=True):
+                text, language = heard[k]
+                for c in word_clips(chunk_wavs[k], text, alignment, opts):
+                    pieces.append((spans[k][0] + c.start, spans[k][0] + c.end, c.text, language))
+        native = src.read(t0, t0 + len(wav) / VAD_RATE)
+        for start, end, text, language in pieces:
+            file = out_dir / f"{path.stem}_{int((t0 + start) * 1000):08d}_{int((t0 + end) * 1000):08d}.wav"
+            sf.write(file, native[int(start * src.rate) : int(end * src.rate)], src.rate, subtype="PCM_16")
+            out.append(Slice(file, text, language))
+        if progress:
+            progress(t0 + len(wav) / VAD_RATE)
+    return out

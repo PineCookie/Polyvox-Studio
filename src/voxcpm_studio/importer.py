@@ -58,6 +58,8 @@ class Row:
     text: str  # empty when the source has no transcript for it
     audio: Path | None = None  # resolved file
     seconds: float = 0.0
+    asr: bool = False  # text made by speech recognition
+    language: str | None = None  # as ASR detected (or was told)
 
 
 @dataclass
@@ -182,6 +184,16 @@ def _suggest_name(source: Path) -> str:
     return re.sub(r"[^\w.\-]+", "_", stem).strip("._-") or "dataset"
 
 
+def _probe(path: Path) -> tuple[float, int]:
+    """(seconds, sample rate); soundfile's header read is fast, other formats
+    (m4a, mp3, ...) go through the decoder."""
+    try:
+        info = sf.info(str(path))
+        return info.duration, info.samplerate
+    except Exception:
+        return slicer.probe(path)
+
+
 def _scan(source: Path, audio_dir: Path | None, data_dir: Path) -> tuple[ImportPreview, list[Row]]:
     """Summary, and the importable rows in source order (with or without text)."""
     kind = detect(source)
@@ -200,16 +212,16 @@ def _scan(source: Path, audio_dir: Path | None, data_dir: Path) -> tuple[ImportP
             preview.duplicates += 1
             continue
         try:
-            info = sf.info(str(row.audio))
+            seconds, rate = _probe(row.audio)
         except Exception:
             preview.unreadable += 1
             continue
         seen.add(row.audio)
-        row.seconds = info.duration
+        row.seconds = seconds
         keep.append(row)
-        durations.append(info.duration)
-        rates[info.samplerate] += 1
-        preview.long_recordings += info.duration > LONG_RECORDING_S
+        durations.append(seconds)
+        rates[rate] += 1
+        preview.long_recordings += seconds > LONG_RECORDING_S
         if row.text:
             preview.found += 1
             if len(preview.examples) < EXAMPLES:
@@ -248,37 +260,57 @@ def check_name(name: str, data_dir: Path) -> None:
         raise FileExistsError(f"A dataset named '{name}' already exists.")
 
 
-def _transcribe(rows: list[Row], transcriber: Transcriber, progress: Progress) -> dict[int, str | None]:
-    """Fill in missing texts; returns {row index: detected language} of transcribed rows."""
+def _transcribe(rows: list[Row], transcriber: Transcriber, progress: Progress) -> None:
+    """Fill in missing texts, marking them as made by ASR."""
     todo = [i for i, row in enumerate(rows) if not row.text]
-    languages: dict[int, str | None] = {}
     for start in range(0, len(todo), TRANSCRIBE_CHUNK):
         progress("transcribing", start, len(todo))
         chunk = todo[start : start + TRANSCRIBE_CHUNK]
         for i, (text, language) in zip(chunk, transcriber([rows[i].audio for i in chunk]), strict=True):
             rows[i].text = text.strip()
-            if rows[i].text:
-                languages[i] = language
+            rows[i].asr, rows[i].language = bool(rows[i].text), language
     progress("transcribing", len(todo), len(todo))
-    return languages
 
 
-def _slice(rows: list[Row], out_dir: Path, opts: SliceOptions, vad: Vad, progress: Progress) -> tuple[list[Row], int]:
-    """Replace recordings longer than LONG_RECORDING_S by their clips (without
-    text: a recording's transcript cannot be split without alignment).
+def _slice(
+    rows: list[Row], out_dir: Path, opts: SliceOptions, vad: Vad, guide: slicer.Guide | None, progress: Progress
+) -> tuple[list[Row], int]:
+    """Replace recordings longer than LONG_RECORDING_S by their clips. With a
+    ``guide`` the clips are cut between words and keep their ASR text; without
+    one they have no text. (A recording's own transcript is not kept: it is not
+    known which part of it each chunk holds.) Progress counts seconds of audio.
     Returns the new rows and the number of recordings sliced."""
-    long_rows = [row for row in rows if row.seconds > LONG_RECORDING_S]
+    total = int(sum(row.seconds for row in rows if row.seconds > LONG_RECORDING_S))
     out: list[Row] = []
-    done = 0
+    done, seconds = 0, 0.0
     for row in rows:
         if row.seconds <= LONG_RECORDING_S:
             out.append(row)
             continue
-        progress("slicing", done, len(long_rows))
-        for clip in slicer.slice_recording(row.audio, out_dir / f"{done:05d}", opts, vad):
-            out.append(Row(ref=str(clip), text="", audio=clip, seconds=sf.info(str(clip)).duration))
+        progress("slicing", int(seconds), total)
+        base = seconds
+        clips = slicer.slice_recording(
+            row.audio,
+            out_dir / f"{done:05d}",
+            opts,
+            vad,
+            guide,
+            progress=lambda at, base=base: progress("slicing", int(base + at), total),
+        )
+        for clip in clips:
+            out.append(
+                Row(
+                    ref=str(clip.path),
+                    text=clip.text,
+                    audio=clip.path,
+                    seconds=sf.info(str(clip.path)).duration,
+                    asr=bool(clip.text),
+                    language=clip.language,
+                )
+            )
         done += 1
-    progress("slicing", done, len(long_rows))
+        seconds += row.seconds
+    progress("slicing", total, total)
     return out, done
 
 
@@ -296,8 +328,8 @@ def _check(rows: list[Row], checker: Checker, progress: Progress) -> list[ClipCh
 
 
 def _write_trimmed(source: Path, target: Path, start: float, end: float) -> None:
-    audio, rate = slicer._read_native(source)
-    sf.write(target, audio[int(start * rate) : int(end * rate)], rate, subtype="PCM_16")
+    src = slicer.Source(source)
+    sf.write(target, src.read(start, end), src.rate, subtype="PCM_16")
 
 
 def import_dataset(
@@ -313,6 +345,7 @@ def import_dataset(
     checker: Checker | None = None,
     aligner: str = "qwen3",
     trim: bool = False,
+    guide: slicer.Guide | None = None,
 ) -> ImportResult:
     """Write ``data_dir/<name>/train.jsonl``.
 
@@ -345,8 +378,9 @@ def import_dataset(
     try:
         sliced = 0
         if slicing:
-            rows, sliced = _slice(rows, staging / "_slices", slicing, vad, progress)
-        languages = _transcribe(rows, transcriber, progress) if transcriber else {}
+            rows, sliced = _slice(rows, staging / "_slices", slicing, vad, guide, progress)
+        if transcriber:
+            _transcribe(rows, transcriber, progress)
         rows_kept = [(i, row) for i, row in enumerate(rows) if row.text]
         if not rows_kept:
             raise ValueError("No clips with both audio and a transcript; nothing to import.")
@@ -377,7 +411,7 @@ def import_dataset(
             paths = [str(row.audio) for _, row in rows_kept]
         pairs = list(zip(paths, rows_kept, strict=True))
         write_manifest([{"audio": p, "text": row.text} for p, (_, row) in pairs], staging / "train.jsonl")
-        asr_rows = {p: {"language": languages[i]} for p, (i, _) in pairs if i in languages}
+        asr_rows = {p: {"language": row.language} for p, (_, row) in pairs if row.asr}
         if asr_rows:
             (staging / ASR_FILE).write_text(json.dumps(asr_rows, ensure_ascii=False, indent=1), encoding="utf-8")
         if clip_checks:

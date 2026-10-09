@@ -1,10 +1,11 @@
 import { cancelJob } from '../api'
 import type { Job } from '../api'
+import { formatDuration } from '../format'
 import { ProgressBar } from './RunList'
 
 const PHASE_LABEL: Record<string, string> = {
   scanning: 'Scanning',
-  slicing: 'Slicing recordings',
+  slicing: 'Transcribing and slicing recordings',
   transcribing: 'Transcribing',
   aligning: 'Checking clips against their text',
   copying: 'Copying audio',
@@ -22,7 +23,10 @@ export function JobProgress({ job, what }: { job: Job; what: string }) {
             {job.total > 0 && (
               <span className="muted">
                 {' '}
-                {job.done} / {job.total}
+                {/* Slicing counts seconds of audio; the other phases count clips. */}
+                {job.phase === 'slicing'
+                  ? `${formatDuration(job.done)} / ${formatDuration(job.total)}`
+                  : `${job.done} / ${job.total}`}
               </span>
             )}
           </span>

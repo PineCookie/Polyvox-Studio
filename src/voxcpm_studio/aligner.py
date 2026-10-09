@@ -104,24 +104,30 @@ def _is_cjk(char: str) -> bool:
     )
 
 
-def split_words(text: str) -> list[str]:
-    """Alignment units: each CJK character on its own, other scripts by spaces;
-    punctuation dropped (as Qwen3-ForcedAligner's own splitter, plus kana)."""
-    words: list[str] = []
-    buf: list[str] = []
-    for char in text:
+def word_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) character offsets of the alignment units in ``text``: each
+    CJK character on its own, other scripts by spaces; punctuation dropped (as
+    Qwen3-ForcedAligner's own splitter, plus kana)."""
+    spans: list[tuple[int, int]] = []
+    start = None
+    for i, char in enumerate(text):
         kept = char == "'" or unicodedata.category(char)[0] in "LN"
         if _is_cjk(char) or not kept:
-            if buf:
-                words.append("".join(buf))
-                buf = []
+            if start is not None:
+                spans.append((start, i))
+                start = None
             if _is_cjk(char):
-                words.append(char)
-        else:
-            buf.append(char)
-    if buf:
-        words.append("".join(buf))
-    return words
+                spans.append((i, i + 1))
+        elif start is None:
+            start = i
+    if start is not None:
+        spans.append((start, len(text)))
+    return spans
+
+
+def split_words(text: str) -> list[str]:
+    """Alignment units of ``text`` (see word_spans)."""
+    return [text[s:e] for s, e in word_spans(text)]
 
 
 class Backend(Protocol):
@@ -308,6 +314,13 @@ def _frame_db(wav: np.ndarray) -> np.ndarray:
         return np.full(1, -120.0)
     rms = np.sqrt(np.mean(wav[: n * FRAME].reshape(n, FRAME) ** 2, axis=1) + 1e-12)
     return 20 * np.log10(rms)
+
+
+def edge_levels(wav: np.ndarray) -> tuple[float, float]:
+    """dB of the first and last 10 ms relative to the clip's loud frames (p95)."""
+    db = _frame_db(wav)
+    loud = np.percentile(db, 95)
+    return float(db[0] - loud), float(db[-1] - loud)
 
 
 def loud_frames(wav: np.ndarray) -> np.ndarray:
