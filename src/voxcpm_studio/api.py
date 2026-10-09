@@ -683,6 +683,7 @@ def create_app(
         q: str = "",
         flag: str | None = None,
         order: Literal["file", "worst"] = "file",
+        keep: Annotated[list[int] | None, Query()] = None,
     ) -> ClipPageOut:
         """A page of a dataset's clips for review. ``flag``: a check flag, "any"
         flag, or "dropped" clips; ``order=worst`` puts the lowest scores first."""
@@ -696,6 +697,7 @@ def create_app(
             flag or None,
             order == "worst",
             trim_of,
+            frozenset(keep or ()),
         )
         return ClipPageOut(
             total=page.total,

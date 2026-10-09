@@ -447,6 +447,7 @@ export interface ClipFilter {
   query: string
   flag: FlagFilter
   worstFirst: boolean // lowest alignment scores first
+  keep?: number[] // clip indices listed whatever the filter (just edited)
 }
 
 export async function getDatasetRows(
@@ -463,6 +464,7 @@ export async function getDatasetRows(
     flag: filter.flag,
     order: filter.worstFirst ? 'worst' : 'file',
   })
+  for (const index of filter.keep ?? []) q.append('keep', String(index))
   return (await request(`/api/dataset-rows?${q}`)).json()
 }
 

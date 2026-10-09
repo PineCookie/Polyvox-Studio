@@ -318,6 +318,7 @@ def read_rows(
     flag: str | None = None,
     worst_first: bool = False,
     trim_of: TrimOf | None = None,
+    keep: frozenset[int] = frozenset(),
 ) -> ClipPage:
     """One page of a manifest's clips for review.
 
@@ -325,6 +326,8 @@ def read_rows(
     clips with that check flag, "any" with any flag (both: not dropped), or
     "dropped" the clips dropped in review. ``worst_first`` orders by alignment
     score (unchecked clips last). Dropped clips don't count in the summary.
+    Clips in ``keep`` are listed whatever the search and filter (just edited
+    ones stay in view).
     """
     manifest_dir = path.resolve().parent
     entries = _entries_for_review(path, root)
@@ -351,6 +354,9 @@ def read_rows(
             summary["flagged"] += bool(check["flags"])
             for f in check["flags"]:
                 summary["flags"][f] = summary["flags"].get(f, 0) + 1
+        if i in keep:  # just edited: stays in the list, flags or not
+            matches.append((i, audio, text, key, check))
+            continue
         if q and q not in text.lower() and q not in Path(audio).name.lower():
             continue
         if flag == "dropped" and not dropped:

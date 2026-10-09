@@ -30,6 +30,8 @@ export function DatasetClips({ source }: Props) {
   const [open, setOpen] = useState<number | null>(null) // clip shown with its words
   // Bumped after an edit or drop, so the page reloads.
   const [version, setVersion] = useState(0)
+  // Clips edited under the current filter: they stay listed, so the result can be seen.
+  const [stay, setStay] = useState<number[]>([])
   const audio = useRef<HTMLAudioElement>(null)
   const loaded = useRef<number | null>(null) // clip index the player holds
   const openPos = useRef(0) // the open clip's row on the page
@@ -39,13 +41,16 @@ export function DatasetClips({ source }: Props) {
     const timer = setTimeout(() => {
       setSearch(query)
       setOffset(0)
+      setStay([])
     }, SEARCH_DELAY_MS)
     return () => clearTimeout(timer)
   }, [query])
 
+  const stayKey = stay.join(',')
   useEffect(() => {
     let cancelled = false
-    getDatasetRows(JSON.parse(sourceKey), offset, PAGE, { query: search, flag, worstFirst }).then(
+    const keep = stayKey ? stayKey.split(',').map(Number) : []
+    getDatasetRows(JSON.parse(sourceKey), offset, PAGE, { query: search, flag, worstFirst, keep }).then(
       (p) => {
         if (cancelled) return
         setPage(p)
@@ -58,7 +63,7 @@ export function DatasetClips({ source }: Props) {
     return () => {
       cancelled = true
     }
-  }, [sourceKey, offset, search, flag, worstFirst, version])
+  }, [sourceKey, offset, search, flag, worstFirst, stayKey, version])
 
   // `at`: start from this second (a click on the waveform); otherwise play / pause.
   function play(index: number, at?: number) {
@@ -114,8 +119,10 @@ export function DatasetClips({ source }: Props) {
     }
   }
 
-  // After an edit, drop, or trim: reload the page and fetch audio afresh.
-  function changed() {
+  // After an edit, drop, or trim: reload the page and fetch audio afresh. An edited clip (`index`)
+  // stays listed even if it no longer matches the filter.
+  function changed(index?: number) {
+    if (index !== undefined) setStay((s) => (s.includes(index) ? s : [...s, index]))
     loaded.current = null
     setVersion((v) => v + 1)
   }
@@ -128,6 +135,7 @@ export function DatasetClips({ source }: Props) {
   function filter(apply: () => void) {
     apply()
     setOffset(0)
+    setStay([])
   }
 
   const total = page?.total ?? 0
@@ -232,7 +240,7 @@ export function DatasetClips({ source }: Props) {
                           index={row.index}
                           audio={row.index === playing ? audio.current : null}
                           onSeek={(at) => play(row.index, at)}
-                          onChanged={changed}
+                          onChanged={() => changed(row.index)}
                         />
                       </td>
                     </tr>

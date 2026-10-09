@@ -274,6 +274,11 @@ def test_trim_and_hear_endpoints(service, training, asr_service, align_service, 
     trimmed = client.post("/api/dataset-clip/trim", json={"id": ds, "index": 0}).json()
     assert trimmed["flags"] == [] and trimmed["trim"] is None and trimmed["seconds"] == pytest.approx(1.3, abs=0.03)
     assert client.post("/api/dataset-clip/trim", json={"id": ds, "index": 0}).status_code == 409
+    # The fixed clip left the flag's list, but stays in it while kept in view.
+    flagged = {"id": ds, "flag": "edge_sound"}
+    assert [r["index"] for r in client.get("/api/dataset-rows", params=flagged).json()["rows"]] == [1]
+    kept = client.get("/api/dataset-rows", params={**flagged, "keep": [0]}).json()["rows"]
+    assert [(r["index"], r["flags"]) for r in kept] == [(0, []), (1, ["edge_sound"])]
 
     # A range of one's own, on a clip trimmed before: cut further.
     ranged = client.post("/api/dataset-clip/trim", json={"id": ds, "index": 0, "start": 0.1, "end": 1.2}).json()

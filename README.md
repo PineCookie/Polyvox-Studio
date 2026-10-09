@@ -220,8 +220,9 @@ Filter the clips table by flag, worst match first, and open a clip:
   on leave it out (listed in `data/<name>/excluded.json`); **Restore** brings it
   back. The manifest itself keeps every clip.
 
-In a filtered list, a fixed clip leaves the list and the next one opens. With one
-flag shown, **Drop all** drops every clip that has it, e.g. all sung clips.
+In a filtered list, a clip you edit, trim or drop stays listed (with its new flags)
+until the filter or search changes. With one flag shown, **Drop all** drops every
+clip that has it, e.g. all sung clips.
 
 Singing is detected with an AudioSet audio tagger (AST, run through
 transformers; `VOXCPM_STUDIO_SINGING_MODEL`) by its singing scores together
