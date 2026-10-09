@@ -11,7 +11,14 @@ export const FLAG_LABEL: Record<CheckFlag, [string, string]> = {
   mismatch: ['Mismatch', 'Part of the text does not match the audio'],
   asr_more: ['Missing words?', 'Speech recognition hears words the transcript does not have'],
   filler: ['Filler?', 'A filler or laugh (嗯, 哈哈, 呵呵, ...) may not be in the audio, or not as written'],
-  extra_speech: ['Untranscribed', 'Speech outside the transcribed words: the text may miss something'],
+  edge_sound: [
+    'Edge sound',
+    'Sound before or after the transcribed words, a pause apart (嗯, a laugh, or words the text misses): trim it off or add it to the text',
+  ],
+  extra_speech: [
+    'Untranscribed',
+    'Speech right next to the transcribed words, too close to cut off: the text may miss something',
+  ],
   cut_edge: ['Cut edge', 'The sound runs into the start or end of the file: a word may be cut'],
   long_silence: [
     'Long silence',

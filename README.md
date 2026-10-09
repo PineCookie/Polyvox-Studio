@@ -166,7 +166,8 @@ Forced alignment places each word of a transcript in its audio. The import (and
 | Singing | a sung clip (karaoke, a cover): not wanted in training data |
 | Mismatch | part of the text does not match the audio (low confidence over a few words; fillers not counted) |
 | Filler? | a filler or laugh (嗯, 哈哈, 呵呵, ...) the audio seems to lack, e.g. one 呵 too many |
-| Untranscribed | voice activity outside the aligned words: the text may miss something |
+| Edge sound | sound before or after the words, a pause apart (嗯, a laugh, or words the text misses) |
+| Untranscribed | voice activity right next to the aligned words: the text may miss something |
 | Cut edge | the sound is still loud at the start or end of the file: a word may be cut |
 | Long silence | over 0.5 s of silence after the speech (VoxCPM's guide: the model learns when to stop from it), or over 1 s before it |
 
@@ -176,6 +177,12 @@ vocabulary (sharper on single wrong words; Chinese by default, set
 `VOXCPM_STUDIO_CTC_ALIGN_MODEL` for another language). The import can also trim
 the copied clips' edges: long silence, and sound before the first or after the
 last transcribed word (a laugh, 嗯) when a pause separates it, keeping 0.15 s.
+
+For an existing dataset, the clip view trims one clip (**Trim edges**) or
+transcribes just its edge sound (**Add to text**), and **Trim all** trims every
+clip flagged Edge sound or Long silence, leaving those also flagged Mismatch or
+Missing words for review. Clips are rewritten in place (WAV / FLAC / OGG inside
+the dataset folder); the originals are kept in `originals/` next to the manifest.
 
 **Fillers and laughs.** ASR and aligners are unsure of them (is it 呵呵呵 or
 呵呵呵呵?), and for TTS training the count does not matter, only consistency. By

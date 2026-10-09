@@ -1,6 +1,7 @@
 """Alignment checks on synthetic audio: tones stand in for speech."""
 
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -34,8 +35,11 @@ def test_flags_mismatch_extra_speech_cut_edges_and_silence():
 
     check = checks.check_clip(wav, aligned(0.0, 1.0, score=0.2), "qwen3", [(0.0, 1.0), (1.8, 2.4)])
 
-    assert check.flags == ["mismatch", "extra_speech", "cut_edge", "long_silence"]
+    assert check.flags == ["mismatch", "edge_sound", "cut_edge", "long_silence"]
     assert check.unaligned == pytest.approx(0.6, abs=0.02)
+    # Sound right after the words (no pause to cut in) is untranscribed speech instead.
+    close = tone([(0.3, 1.0), (1.1, 1.6)], 1.8)
+    assert checks.check_clip(close, aligned(0.3, 1.0), "qwen3", [(0.3, 1.0), (1.1, 1.6)]).flags == ["extra_speech"]
     # Thresholds are per aligner: the same score passes for CTC's scale.
     assert "mismatch" not in checks.check_clip(wav, aligned(0.0, 1.0, score=0.2), "ctc", [(0.0, 1.0)]).flags
     assert checks.check_clip(wav, Alignment([], 0.0), "ctc", []).flags[0] == "mismatch"
@@ -69,7 +73,7 @@ def test_fillers_count_only_when_the_audio_lacks_them():
 def test_trim_cuts_off_untranscribed_sound_a_pause_separates():
     wav = tone([(0.2, 0.6), (1.0, 2.0)], 2.6)  # a laugh, a pause, then the transcribed words
     check = checks.check_clip(wav, aligned(1.0, 2.0), "qwen3", [(0.2, 0.6), (1.0, 2.0)])
-    assert "extra_speech" in check.flags and check.sound_before == pytest.approx((0.8, 0.4), abs=0.02)
+    assert "edge_sound" in check.flags and check.sound_before == pytest.approx((0.8, 0.4), abs=0.02)
 
     start, end = check.trim_range()
     after = check.trimmed(start, end)
@@ -138,6 +142,7 @@ def test_check_dataset_writes_results_the_review_shows(data_dir, align_service):
             "mismatch": 1,
             "asr_more": 0,
             "filler": 0,
+            "edge_sound": 0,
             "extra_speech": 0,
             "cut_edge": 0,
             "long_silence": 0,
@@ -171,6 +176,79 @@ def test_import_checks_and_trims_the_copies(tmp_path, data_dir, align_service):
 
     with pytest.raises(ValueError, match="needs copying and checking"):
         importer.import_dataset(str(src), None, "x", data_dir, trim=True)
+
+
+def laugh_then_words(data_dir, flags_of_second=("edge_sound",)):
+    """A dataset of two clips with a laugh before the words, checked as such
+    (the second also with ``flags_of_second``)."""
+    folder = data_dir / "speaker_a"
+    (folder / "wavs").mkdir(parents=True)
+    wav = tone([(0.2, 0.6), (1.0, 2.0)], 2.4)
+    check = checks.check_clip(wav, aligned(1.0, 2.0), "qwen3", [(0.2, 0.6), (1.0, 2.0)])
+    stereo = np.stack([wav, wav], axis=1)
+    sf.write(folder / "wavs" / "0.wav", stereo, 16000, subtype="PCM_24")
+    sf.write(folder / "wavs" / "1.flac", wav, 16000)
+    texts = ["第一句", "第二句"]
+    (folder / "train.jsonl").write_text(
+        "".join(
+            json.dumps({"audio": f"wavs/{f}", "text": t}) + "\n"
+            for f, t in zip(["0.wav", "1.flac"], texts, strict=True)
+        ),
+        encoding="utf-8",
+    )
+    second = replace(check, flags=sorted(set(check.flags) | set(flags_of_second)))
+    checks.write_checks(folder, "qwen3", {"wavs/0.wav": (texts[0], check), "wavs/1.flac": (texts[1], second)})
+    return folder / "train.jsonl"
+
+
+def test_trim_in_place_keeps_the_original_and_updates_the_check(data_dir):
+    manifest = laugh_then_words(data_dir)
+    folder = manifest.parent
+
+    result = checks.trim_clips(manifest, None, lambda i, c: i == 0)
+
+    assert result == {"trimmed": 1, "skipped": 0}
+    info = sf.info(str(folder / "wavs" / "0.wav"))
+    assert (info.channels, info.subtype) == (2, "PCM_24")  # written back as it was
+    assert info.duration == pytest.approx(1.3, abs=0.03)  # the laugh and the silence are gone
+    assert sf.info(str(folder / checks.ORIGINALS_DIR / "wavs" / "0.wav")).duration == pytest.approx(2.4)
+    saved = json.loads((folder / manifests.ALIGN_FILE).read_text(encoding="utf-8"))["clips"]
+    assert saved["wavs/0.wav"]["flags"] == [] and saved["wavs/0.wav"]["duration"] == pytest.approx(1.3, abs=0.03)
+    page = manifests.read_rows(manifest)
+    assert page.rows[0].seconds == pytest.approx(1.3, abs=0.03)  # the cached duration follows the file
+    assert sf.info(str(folder / "wavs" / "1.flac")).duration == pytest.approx(2.4)  # not picked
+
+    # Trimming again keeps the first original.
+    checks.trim_clips(manifest, None, lambda i, c: True)
+    assert sf.info(str(folder / checks.ORIGINALS_DIR / "wavs" / "0.wav")).duration == pytest.approx(2.4)
+    assert sf.info(str(folder / "wavs" / "1.flac")).duration == pytest.approx(1.3, abs=0.03)
+
+
+def test_trim_flagged_leaves_doubtful_clips_for_review(data_dir):
+    manifest = laugh_then_words(data_dir, flags_of_second=("edge_sound", "asr_more"))
+
+    assert checks.trim_flagged(manifest, None, "edge_sound") == {"trimmed": 1, "skipped": 0, "review": 1}
+    assert sf.info(str(manifest.parent / "wavs" / "1.flac")).duration == pytest.approx(2.4)
+
+
+def test_trim_and_hear_endpoints(service, training, asr_service, align_service, data_dir):
+    laugh_then_words(data_dir)
+    client = TestClient(create_app(service.settings, service, training, asr_service, align=align_service))
+    ds = "speaker_a/train.jsonl"
+
+    clip = client.get("/api/dataset-clip", params={"id": ds, "index": 0}).json()
+    assert clip["flags"] == ["edge_sound"] and clip["sound_before"] == pytest.approx(0.8, abs=0.02)
+    assert clip["sound_after"] is None and clip["trim"] == pytest.approx([0.85, 2.15], abs=0.02)
+    heard = client.post("/api/dataset-clip/hear", json={"id": ds, "index": 0, "start": 0, "end": 0.8}).json()
+    assert heard == {"text": f"clip of {int(0.8 * 16000)} samples"}
+
+    trimmed = client.post("/api/dataset-clip/trim", json={"id": ds, "index": 0}).json()
+    assert trimmed["flags"] == [] and trimmed["trim"] is None and trimmed["seconds"] == pytest.approx(1.3, abs=0.03)
+    assert client.post("/api/dataset-clip/trim", json={"id": ds, "index": 0}).status_code == 409
+
+    result = client.post("/api/datasets/trim-flagged", json={"id": ds, "flag": "edge_sound"}).json()
+    assert result == {"trimmed": 1, "skipped": 0, "review": 0}
+    assert client.post("/api/datasets/trim-flagged", json={"id": ds, "flag": "mismatch"}).status_code == 422
 
 
 def test_check_job_endpoint(service, training, asr_service, align_service, align_loader, data_dir, monkeypatch):

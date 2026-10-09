@@ -1276,6 +1276,29 @@ input[type='search']:focus {
   opacity: 0.3;
 }
 
+/* What trimming would cut away. */
+.waveform-cut {
+  fill: var(--text);
+  opacity: 0.08;
+}
+
+.edge-sound,
+.edge-sound-part {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 0.85rem;
+}
+
+.edge-sound-part {
+  display: inline-flex;
+}
+
+.cut-legend {
+  border-bottom: 2px solid color-mix(in srgb, var(--text) 25%, transparent);
+}
+
 @media (max-width: 640px) {
   .clip-table .clip-wave {
     display: none;

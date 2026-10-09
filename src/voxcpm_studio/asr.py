@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -30,6 +31,19 @@ MAX_NEW_TOKENS = 512
 class Transcript:
     text: str
     language: str | None  # detected (e.g. "Chinese"), or None when it was forced
+
+
+def language_of(text: str) -> str | None:
+    """The language a transcript's script points to (kana: Japanese, hangul:
+    Korean, other Han: Chinese), else None. Short sounds like 嗯 are no clue
+    for language detection: transcribed alone they come back in any script."""
+    if re.search(r"[぀-ヿ]", text):
+        return "Japanese"
+    if re.search(r"[가-힯]", text):
+        return "Korean"
+    if re.search(r"[一-鿿]", text):
+        return "Chinese"
+    return None
 
 
 # (model, device) -> (processor, model)

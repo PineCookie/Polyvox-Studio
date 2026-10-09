@@ -249,7 +249,11 @@ export type CleanupOption = 'separate' | 'dereverb' | 'denoise'
 // Forced aligners (src/voxcpm_studio/aligner.py).
 export type Aligner = 'qwen3' | 'ctc'
 
-export type CheckFlag = 'singing' | 'mismatch' | 'asr_more' | 'filler' | 'extra_speech' | 'cut_edge' | 'long_silence'
+export type CheckFlag =
+  'singing' | 'mismatch' | 'asr_more' | 'filler' | 'edge_sound' | 'extra_speech' | 'cut_edge' | 'long_silence'
+
+// Flags trimming fixes (trim-flagged).
+export const TRIMMABLE_FLAGS: CheckFlag[] = ['edge_sound', 'long_silence']
 
 // Alignment checks over a whole dataset (checks.summarize).
 export interface CheckSummary {
@@ -333,6 +337,17 @@ export async function dropFlagged(id: string, flag: CheckFlag): Promise<number> 
   return (await (await postJson('/api/datasets/drop-flagged', { id, flag })).json()).dropped
 }
 
+export interface TrimResult {
+  trimmed: number
+  skipped: number // can't be rewritten in place (format, or outside the dataset folder)
+  review: number // also flagged Mismatch / Missing words: left for review
+}
+
+/** Trim every clip with one flag at its checked edges (originals kept in originals/). */
+export async function trimFlagged(id: string, flag: CheckFlag): Promise<TrimResult> {
+  return (await postJson('/api/datasets/trim-flagged', { id, flag })).json()
+}
+
 export async function getJob<J extends Job>(id: string): Promise<J> {
   return (await request(`/api/jobs/${encodeURIComponent(id)}`)).json()
 }
@@ -375,6 +390,20 @@ export interface ClipDetail extends ClipRow {
   aligner: Aligner | null
   words: AlignedWord[] // empty when not checked (or checked before word timings were kept)
   heard: Heard | null // when the check compared with ASR
+  // Untranscribed sound a pause separates from the words lies before / after this second.
+  sound_before: number | null
+  sound_after: number | null
+  trim: [number, number] | null // what trimming keeps; null: little to trim
+}
+
+/** Trim one clip at its checked edges, in place (the original is kept). */
+export async function trimClip(id: string, index: number): Promise<ClipDetail> {
+  return (await postJson('/api/dataset-clip/trim', { id, index })).json()
+}
+
+/** What ASR hears in part of a clip. */
+export async function hearClipPart(id: string, index: number, start: number, end: number): Promise<string> {
+  return (await (await postJson('/api/dataset-clip/hear', { id, index, start, end })).json()).text
 }
 
 /** Change a clip's transcript; it is checked again when the dataset has checks. */
@@ -431,8 +460,9 @@ export async function getDatasetRows(
   return (await request(`/api/dataset-rows?${q}`)).json()
 }
 
-export function datasetAudioUrl(source: DatasetSource, index: number): string {
-  return `/api/dataset-audio?${new URLSearchParams({ ...source, index: String(index) })}`
+// `version` changes the URL after a clip was trimmed, so the browser fetches it again.
+export function datasetAudioUrl(source: DatasetSource, index: number, version = 0): string {
+  return `/api/dataset-audio?${new URLSearchParams({ ...source, index: String(index), v: String(version) })}`
 }
 
 export async function listRuns(): Promise<RunSummary[]> {

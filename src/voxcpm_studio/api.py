@@ -20,7 +20,8 @@ from starlette.background import BackgroundTask
 
 from . import checks, fillers, importer, lora_library, manifests, sharing, slicer
 from .aligner import AlignService
-from .asr import AsrService, load_audio
+from .asr import SAMPLE_RATE as ASR_RATE
+from .asr import AsrService, language_of, load_audio
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .jobs import Job, JobRunner
@@ -128,6 +129,18 @@ class ClipDropIn(BaseModel):
     dropped: bool = True
 
 
+class ClipIn(BaseModel):
+    id: str
+    index: int
+
+
+class ClipRangeIn(BaseModel):
+    id: str
+    index: int
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+
+
 class ImportPreviewOut(BaseModel):
     kind: str
     source: str
@@ -180,6 +193,12 @@ class ClipDetailOut(ClipRowOut):
     aligner: str | None
     words: list[WordOut]  # empty when not checked, or checked before word timings were saved
     heard: HeardOut | None  # when the check compared with ASR
+    # Untranscribed sound a pause separates from the words (edge_sound): it lies
+    # before / after this second. None when there is none.
+    sound_before: float | None
+    sound_after: float | None
+    # What trimming keeps, (start, end) seconds; None when there is little to trim.
+    trim: tuple[float, float] | None
 
 
 class ClipPageOut(BaseModel):
@@ -541,6 +560,45 @@ def create_app(
             raise HTTPException(422, f"Unknown flag '{body.flag}'.")
         return {"dropped": manifests.drop_flagged(manifest, manifests.legacy_root(settings.data_dir), body.flag)}
 
+    @app.post("/api/datasets/trim-flagged")
+    def trim_flagged(body: DropFlaggedIn) -> dict:
+        """Trim every clip with ``flag`` (edge_sound or long_silence) at its
+        checked edges, in place (originals kept in originals/). Clips also
+        flagged mismatch / asr_more are left for review. Returns {"trimmed",
+        "skipped" (format or location can't be rewritten), "review"}."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        if body.flag not in ("edge_sound", "long_silence"):
+            raise HTTPException(422, "Only clips flagged for edge sound or long silence can be trimmed.")
+        refuse_if_busy(gpu=False)
+        return checks.trim_flagged(manifest, manifests.legacy_root(settings.data_dir), body.flag)
+
+    @app.post("/api/dataset-clip/trim")
+    def trim_clip(body: ClipIn) -> ClipDetailOut:
+        """Trim one clip at its checked edges, in place (see trim-flagged)."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        refuse_if_busy(gpu=False)
+        result = checks.trim_clips(manifest, manifests.legacy_root(settings.data_dir), lambda i, _: i == body.index)
+        if result["skipped"]:
+            raise HTTPException(
+                422, "This clip can't be trimmed in place (outside the dataset folder, or not WAV / FLAC / OGG)."
+            )
+        if not result["trimmed"]:
+            raise HTTPException(409, "Nothing to trim: check the clip first.")
+        return dataset_clip(body.index, id=body.id)
+
+    @app.post("/api/dataset-clip/hear")
+    def hear_clip_part(body: ClipRangeIn) -> dict:
+        """What ASR hears in [start, end) seconds of one clip, e.g. an edge sound
+        the transcript lacks: {"text"}."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        audio = _found(manifests.clip_audio, manifest, manifests.legacy_root(settings.data_dir), body.index)
+        refuse_if_busy(gpu=True)
+        part = load_audio(audio)[int(body.start * ASR_RATE) : int(body.end * ASR_RATE)]
+        if len(part) < ASR_RATE // 10:
+            raise HTTPException(422, "That part is too short to hear.")
+        text = manifests.clip_detail(manifest, manifests.legacy_root(settings.data_dir), body.index).row.text
+        return {"text": asr.transcribe([part], language=language_of(text))[0].text}
+
     @app.post("/api/dataset-clip/drop")
     def drop_clip(body: ClipDropIn) -> dict:
         """Leave one clip out of training (``dropped``), or bring it back."""
@@ -590,7 +648,11 @@ def create_app(
         path = review_manifest(id, run)
         detail = _found(manifests.clip_detail, path, manifests.legacy_root(settings.data_dir), index)
         weak_below = checks.WEAK_WORD_BELOW.get(detail.aligner or "", 0.0)
+        check = checks.ClipCheck.from_saved(detail.check) if detail.check else None
         return ClipDetailOut(
+            sound_before=check.sound_before[0] if check and check.sound_before else None,
+            sound_after=check.sound_after[0] if check and check.sound_after else None,
+            trim=check.trim_range() if check else None,
             **dataclasses.asdict(detail.row),
             aligner=detail.aligner,
             words=[WordOut(text=t, start=s, end=e, confidence=c, weak=c < weak_below) for t, s, e, c in detail.words],

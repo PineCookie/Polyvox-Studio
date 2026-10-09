@@ -7,9 +7,12 @@ For each clip with a transcript:
 - ``filler``: a filler or laugh (嗯, 哈哈, 呵呵, ...) the aligner doubts: it may
   not be in the audio, or not as written. Aligners are unsure of fillers in
   general, so these do not count as a mismatch.
-- ``extra_speech``: voice activity outside the aligned words, i.e. the text
-  misses something said (a dropped phrase, an untranscribed filler or laugh).
-  The aligner score cannot see this: the remaining words still align well.
+- ``edge_sound``: voice activity before the first or after the last aligned
+  word, with a pause between (an untranscribed 嗯 or laugh, or words the text
+  misses). Trimming (``trim_range``) can cut it off cleanly.
+- ``extra_speech``: other voice activity outside the aligned words, too close
+  to them to cut off. The aligner score cannot see either: the remaining words
+  still align well.
 - ``cut_edge``: the sound is still loud at the start or end of the file (within
   CUT_EDGE_DB of the speech); a word may be cut. Measured on the waveform:
   Silero VAD keeps a segment open to the end of a clip that ends shortly after
@@ -25,13 +28,15 @@ transcript makes its check stale instead of wrong.
 from __future__ import annotations
 
 import json
+import shutil
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from difflib import SequenceMatcher
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 
 from . import slicer
 from .aligner import SAMPLE_RATE, Alignment, edge_levels, loud_frames, refine_edges, split_words, words_score
@@ -69,7 +74,12 @@ FILLER_LOUD_SHARE = 0.3
 # while rarely flagging a correct transcript.
 ASR_MORE_MIN = 2
 ASR_MORE_SHARE = 0.1
-FLAGS = ("singing", "mismatch", "asr_more", "filler", "extra_speech", "cut_edge", "long_silence")
+FLAGS = ("singing", "mismatch", "asr_more", "filler", "edge_sound", "extra_speech", "cut_edge", "long_silence")
+# Trimming many clips at once leaves these for review: the "sound" at an edge
+# may be words of the transcript the aligner misplaced, or words it misses.
+TRIM_REVIEW_FIRST = ("mismatch", "asr_more")
+ORIGINALS_DIR = "originals"  # next to a manifest: clips as they were before trimming in place
+TRIM_IN_PLACE_FORMATS = (".wav", ".flac", ".ogg")  # soundfile writes these back as they were
 
 
 @dataclass
@@ -119,9 +129,10 @@ class ClipCheck:
         unaligned = self.unaligned
         unaligned -= self.sound_before[1] if cut_before else 0.0
         unaligned -= self.sound_after[1] if cut_after else 0.0
-        flags = [f for f in self.flags if f not in ("long_silence", "extra_speech")]
-        if unaligned >= EXTRA_SPEECH_S:
-            flags.append("extra_speech")
+        sound_before = None if cut_before else _shift(self.sound_before, start)
+        sound_after = None if cut_after else _shift(self.sound_after, start)
+        flags = [f for f in self.flags if f not in ("long_silence", "edge_sound", "extra_speech")]
+        flags += _sound_flags(unaligned, sound_before, sound_after)
         if _long_silence(lead, trail):
             flags.append("long_silence")
         return replace(
@@ -134,9 +145,15 @@ class ClipCheck:
             unaligned=round(max(0.0, unaligned), 3),
             flags=[f for f in FLAGS if f in flags],
             words=[[w, round(s - start, 3), round(e - start, 3), c] for w, s, e, c in self.words],
-            sound_before=None if cut_before else _shift(self.sound_before, start),
-            sound_after=None if cut_after else _shift(self.sound_after, start),
+            sound_before=sound_before,
+            sound_after=sound_after,
         )
+
+    @classmethod
+    def from_saved(cls, saved: dict) -> ClipCheck:
+        """A check as align.json holds it (older entries lack the newer fields)."""
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in saved.items() if k in names})
 
 
 def _units(text: str) -> list[str]:
@@ -175,6 +192,12 @@ def compare_asr(text: str, heard: str) -> dict:
 
 def _hears_more(asr: dict) -> bool:
     return asr["extra"] >= max(ASR_MORE_MIN, ASR_MORE_SHARE * asr["words"])
+
+
+def _sound_flags(unaligned: float, before: tuple | None, after: tuple | None) -> list[str]:
+    """edge_sound for sound a pause separates from the words, extra_speech for the rest."""
+    separable = sum(s[1] for s in (before, after) if s)
+    return (["edge_sound"] if separable else []) + (["extra_speech"] if unaligned - separable >= EXTRA_SPEECH_S else [])
 
 
 def _long_silence(lead: float, trail: float) -> bool:
@@ -246,8 +269,7 @@ def check_clip(wav: np.ndarray, alignment: Alignment, kind: str, segments: list[
         flags.append("mismatch")
     if doubtful_filler:
         flags.append("filler")
-    if unaligned >= EXTRA_SPEECH_S:
-        flags.append("extra_speech")
+    flags += _sound_flags(unaligned, sound_before, sound_after)
     first, last = edge_levels(wav)
     if (loud[0] and first > -CUT_EDGE_DB) or (loud[-1] and last > -CUT_EDGE_DB):
         flags.append("cut_edge")
@@ -395,8 +417,74 @@ def check_one(
     saved = read_sidecar(manifest_dir / ALIGN_FILE)
     clips = dict(saved.get("clips", {}))
     clips[key] = {"text": text_key(entry["text"]), **asdict(check)}
+    _write_align(manifest_dir, {"aligner": saved.get("aligner", kind), "clips": clips})
+    return check
+
+
+def _write_align(manifest_dir: Path, data: dict) -> None:
     tmp = manifest_dir / f".{ALIGN_FILE}.tmp"
-    data = {"aligner": saved.get("aligner", kind), "clips": clips}
     tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     tmp.replace(manifest_dir / ALIGN_FILE)
-    return check
+
+
+def _trim_file(audio: Path, backup: Path, start: float, end: float) -> None:
+    """Cut ``audio`` to [start, end) seconds in place, in its own format and
+    channels; the first time, the original is copied to ``backup``."""
+    info = sf.info(str(audio))
+    data, rate = sf.read(
+        str(audio), start=round(start * info.samplerate), stop=round(end * info.samplerate), always_2d=True
+    )
+    if not backup.exists():
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(audio, backup)
+    tmp = audio.with_name(f".{audio.name}.tmp")
+    sf.write(str(tmp), data, rate, subtype=info.subtype, format=info.format)
+    tmp.replace(audio)
+
+
+def trim_clips(manifest: Path, root: Path | None, pick: Callable[[int, ClipCheck], bool]) -> dict:
+    """Trim the checked clips that ``pick(index, check)`` selects at their
+    checked edges (ClipCheck.trim_range), in place, and update their checks.
+    Originals are kept under ORIGINALS_DIR next to the manifest (the first
+    version only). Clips outside the manifest's folder or in a format soundfile
+    can't write back are skipped. Returns {"trimmed", "skipped"}."""
+    entries, _ = read_manifest(manifest, root)
+    manifest_dir = manifest.resolve().parent
+    saved = read_sidecar(manifest_dir / ALIGN_FILE)
+    clips = dict(saved.get("clips", {}))
+    trimmed = skipped = 0
+    for index, entry in enumerate(entries):
+        audio = Path(entry["audio"])
+        key = row_key(str(audio), manifest_dir)
+        stored = clips.get(key)
+        if not stored or stored.get("text") != text_key(entry["text"]):
+            continue  # not checked, or checked for an earlier transcript
+        check = ClipCheck.from_saved(stored)
+        if not pick(index, check) or (cut := check.trim_range()) is None:
+            continue
+        if not audio.is_relative_to(manifest_dir) or audio.suffix.lower() not in TRIM_IN_PLACE_FORMATS:
+            skipped += 1
+            continue
+        _trim_file(audio, manifest_dir / ORIGINALS_DIR / key, *cut)
+        clips[key] = {"text": stored["text"], **asdict(check.trimmed(*cut))}
+        trimmed += 1
+    if trimmed:
+        _write_align(manifest_dir, {**saved, "clips": clips})
+    return {"trimmed": trimmed, "skipped": skipped}
+
+
+def trim_flagged(manifest: Path, root: Path | None, flag: str) -> dict:
+    """``trim_clips`` for every clip with ``flag``, except those also flagged
+    TRIM_REVIEW_FIRST (counted as "review")."""
+    review = 0
+
+    def pick(_: int, check: ClipCheck) -> bool:
+        nonlocal review
+        if flag not in check.flags:
+            return False
+        if any(f in check.flags for f in TRIM_REVIEW_FIRST):
+            review += 1
+            return False
+        return True
+
+    return {**trim_clips(manifest, root, pick), "review": review}

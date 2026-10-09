@@ -11,13 +11,15 @@ interface Props {
   onSeek: (seconds: number) => void
   // Spans to mark (unsure words), in seconds.
   marks?: [number, number][]
+  // Spans trimming would cut away, in seconds.
+  cuts?: [number, number][]
   large?: boolean
 }
 
 const MAX_GAIN = 8 // quiet clips are scaled up for visibility, near-silence stays flat
 
 /** A clip's waveform outline; click to play from a point. */
-export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], large = false }: Props) {
+export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], cuts = [], large = false }: Props) {
   const playhead = useRef<SVGLineElement>(null)
   const width = peaks.length
 
@@ -71,6 +73,16 @@ export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], la
           x={(start / seconds) * width}
           y={0}
           width={Math.max(((end - start) / seconds) * width, width / 400)}
+          height={2}
+        />
+      ))}
+      {cuts.map(([start, end]) => (
+        <rect
+          key={`cut-${start}`}
+          className="waveform-cut"
+          x={(start / seconds) * width}
+          y={0}
+          width={((end - start) / seconds) * width}
           height={2}
         />
       ))}

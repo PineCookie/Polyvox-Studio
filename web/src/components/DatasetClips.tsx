@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { datasetAudioUrl, dropFlagged, getDatasetRows } from '../api'
+import { datasetAudioUrl, dropFlagged, getDatasetRows, TRIMMABLE_FLAGS, trimFlagged } from '../api'
 import type { CheckFlag, CheckSummary, ClipPage, DatasetSource, FlagFilter } from '../api'
 import { ALIGNER_LABEL, FLAG_LABEL } from '../format'
 import { ClipView } from './ClipView'
@@ -25,6 +25,7 @@ export function DatasetClips({ source }: Props) {
   const [offset, setOffset] = useState(0)
   const [page, setPage] = useState<ClipPage | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null) // outcome of a bulk action
   const [playing, setPlaying] = useState<number | null>(null)
   const [open, setOpen] = useState<number | null>(null) // clip shown with its words
   // Bumped after an edit or drop, so the page reloads.
@@ -68,7 +69,7 @@ export function DatasetClips({ source }: Props) {
       return
     }
     if (loaded.current !== index) {
-      el.src = datasetAudioUrl(source, index)
+      el.src = datasetAudioUrl(source, index, version)
       loaded.current = index
     }
     if (at !== undefined) el.currentTime = at
@@ -85,10 +86,37 @@ export function DatasetClips({ source }: Props) {
       return
     try {
       await dropFlagged(source.id, f)
-      setVersion((v) => v + 1)
+      changed()
     } catch (e) {
       setError((e as Error).message)
     }
+  }
+
+  async function trimAll(f: CheckFlag, count: number) {
+    if (!('id' in source)) return
+    const label = FLAG_LABEL[f][0]
+    const ask =
+      `Trim the edges of the ${count} clips flagged “${label}”? Each keeps 0.15 s around its transcribed speech; ` +
+      'clips also flagged Mismatch or Missing words? are left for review. The originals are kept in the ' +
+      "dataset's originals folder."
+    if (!window.confirm(ask)) return
+    try {
+      const r = await trimFlagged(source.id, f)
+      const notes = [
+        r.review > 0 && `${r.review} left for review`,
+        r.skipped > 0 && `${r.skipped} can't be rewritten in place`,
+      ].filter(Boolean)
+      setNotice(`Trimmed ${r.trimmed} clips${notes.length ? ` (${notes.join(', ')})` : ''}.`)
+      changed()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  // After an edit, drop, or trim: reload the page and fetch audio afresh.
+  function changed() {
+    loaded.current = null
+    setVersion((v) => v + 1)
   }
 
   function toggle(index: number) {
@@ -115,8 +143,10 @@ export function DatasetClips({ source }: Props) {
           onFlag={(v) => filter(() => setFlag(v))}
           onWorstFirst={(v) => filter(() => setWorstFirst(v))}
           onDropAll={'id' in source ? dropAll : undefined}
+          onTrimAll={'id' in source ? trimAll : undefined}
         />
       )}
+      {notice && <p className="muted hint">{notice}</p>}
       <div className="clips-head">
         <input
           type="search"
@@ -199,7 +229,7 @@ export function DatasetClips({ source }: Props) {
                           index={row.index}
                           audio={row.index === playing ? audio.current : null}
                           onSeek={(at) => play(row.index, at)}
-                          onChanged={() => setVersion((v) => v + 1)}
+                          onChanged={changed}
                         />
                       </td>
                     </tr>
@@ -259,10 +289,12 @@ interface CheckBarProps {
   onWorstFirst: (value: boolean) => void
   // Drop every clip with one flag (a dataset, not a run's copy).
   onDropAll?: (flag: CheckFlag, count: number) => void
+  // Trim every clip with one flag (TRIMMABLE_FLAGS only).
+  onTrimAll?: (flag: CheckFlag, count: number) => void
 }
 
 /** What the alignment check found, with the review filters. */
-function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst, onDropAll }: CheckBarProps) {
+function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst, onDropAll, onTrimAll }: CheckBarProps) {
   const counts = checks ? (Object.keys(FLAG_LABEL) as CheckFlag[]).filter((f) => checks.flags[f]) : []
   const one = flag !== '' && flag !== 'any' && flag !== 'dropped' ? flag : null // a single flag shown
   const oneCount = one ? (checks?.flags[one] ?? 0) : 0
@@ -296,6 +328,11 @@ function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst, onD
             <input type="checkbox" checked={worstFirst} onChange={(e) => onWorstFirst(e.target.checked)} /> Worst match
             first
           </label>
+        )}
+        {one && onTrimAll && oneCount > 0 && TRIMMABLE_FLAGS.includes(one) && (
+          <button type="button" className="ghost small" onClick={() => onTrimAll(one, oneCount)}>
+            Trim all {oneCount.toLocaleString()}
+          </button>
         )}
         {one && onDropAll && oneCount > 0 && (
           <button type="button" className="ghost small" onClick={() => onDropAll(one, oneCount)}>

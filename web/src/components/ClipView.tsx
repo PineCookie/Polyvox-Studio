@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { getDatasetClip, setClipDropped, setClipText } from '../api'
+import { getDatasetClip, hearClipPart, setClipDropped, setClipText, TRIMMABLE_FLAGS, trimClip } from '../api'
 import type { ClipDetail, DatasetSource, Heard } from '../api'
 import { ALIGNER_LABEL } from '../format'
 import { Waveform } from './Waveform'
+
+// Untranscribed sound at one end of a clip, in seconds.
+interface Edge {
+  side: 'before' | 'after'
+  start: number
+  end: number
+}
 
 interface Props {
   source: DatasetSource
@@ -22,6 +29,7 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | null>(null) // the text being edited
   const [saving, setSaving] = useState(false)
+  const [busy, setBusy] = useState<'trim' | Edge['side'] | null>(null)
   const track = useRef<HTMLDivElement>(null)
   const datasetId = 'id' in source ? source.id : null // a run's copy is read-only
 
@@ -37,6 +45,36 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
       setError((e as Error).message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function trimEdges() {
+    if (!datasetId) return
+    setBusy('trim')
+    setError(null)
+    try {
+      setClip(await trimClip(datasetId, index))
+      onChanged?.()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Put what ASR hears in an edge sound into the editor, on that side of the text.
+  async function addHeard(edge: Edge) {
+    if (!datasetId || !clip) return
+    setBusy(edge.side)
+    setError(null)
+    try {
+      const heard = (await hearClipPart(datasetId, index, edge.start, edge.end)).trim()
+      if (!heard) setError('ASR heard nothing there; type it in, or trim it off.')
+      else setDraft(edge.side === 'before' ? heard + clip.text : clip.text + heard)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(null)
     }
   }
 
@@ -95,6 +133,20 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
   if (!clip.peaks || clip.seconds === null) return <p className="muted hint">The audio file can't be read.</p>
   const seconds = clip.seconds
   const weak = clip.words.filter((w) => w.weak)
+  const edges: Edge[] = [
+    ...(clip.sound_before !== null ? [{ side: 'before' as const, start: 0, end: clip.sound_before }] : []),
+    ...(clip.sound_after !== null ? [{ side: 'after' as const, start: clip.sound_after, end: seconds }] : []),
+  ]
+  // Trimming is offered for the flags it fixes; it would shorten most clips' silence a little.
+  const trim = clip.trim && clip.flags.some((f) => TRIMMABLE_FLAGS.includes(f)) ? clip.trim : null
+  const cuts: [number, number][] = trim
+    ? (
+        [
+          [0, trim[0]],
+          [trim[1], seconds],
+        ] as [number, number][]
+      ).filter(([a, b]) => b - a > 0.01)
+    : []
 
   return (
     <div className="clip-view">
@@ -138,6 +190,7 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
         audio={audio}
         onSeek={onSeek}
         marks={weak.map((w) => [w.start, w.end])}
+        cuts={cuts}
         large
       />
       {clip.words.length > 0 && (
@@ -173,6 +226,39 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
           'Not checked yet: check the dataset to see where each word is.'
         )}
       </p>
+      {datasetId && (edges.length > 0 || trim) && (
+        <div className="edge-sound">
+          {edges.map((edge) => (
+            <span key={edge.side} className="edge-sound-part">
+              <span className="muted">Sound {edge.side} the words, not in the text:</span>
+              <button type="button" className="ghost small" onClick={() => onSeek(edge.start)}>
+                ▶ Play
+              </button>
+              <button
+                type="button"
+                className="ghost small"
+                onClick={() => addHeard(edge)}
+                disabled={busy !== null}
+                title="Transcribe just this sound and add it to the text in the editor"
+              >
+                {busy === edge.side ? 'Listening…' : 'Add to text'}
+              </button>
+            </span>
+          ))}
+          {trim && (
+            <button
+              type="button"
+              className="ghost small"
+              onClick={trimEdges}
+              disabled={busy !== null}
+              title={`Keep ${trim[0].toFixed(2)}–${trim[1].toFixed(2)} s: 0.15 s around the transcribed speech. The original is kept in the dataset's originals folder.`}
+            >
+              {busy === 'trim' ? 'Trimming…' : 'Trim edges'}
+            </button>
+          )}
+          {cuts.length > 0 && <span className="muted cut-legend">grey: what trimming cuts</span>}
+        </div>
+      )}
       {clip.heard && <HeardLine heard={clip.heard} onUse={datasetId ? () => setDraft(clip.heard!.text) : undefined} />}
     </div>
   )

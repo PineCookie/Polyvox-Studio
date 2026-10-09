@@ -260,10 +260,18 @@ def _entries_for_review(path: Path, root: Path | None) -> tuple[tuple[str, str],
 
 
 @functools.lru_cache(maxsize=200_000)
-def _clip_seconds(audio: str) -> float | None:
+def _seconds(audio: str, mtime_ns: int) -> float | None:
     try:
         return sf.info(audio).duration
     except Exception:
+        return None
+
+
+def _clip_seconds(audio: str) -> float | None:
+    """A clip's duration, cached until the file changes (trimming rewrites clips)."""
+    try:
+        return _seconds(audio, Path(audio).stat().st_mtime_ns)
+    except OSError:
         return None
 
 
@@ -376,6 +384,7 @@ class ClipDetail:
     aligner: str | None  # that made `words`
     words: list[list]  # [text, start, end, confidence] from the check; [] when not checked
     asr: dict | None = None  # what ASR heard (checks.compare_asr), when the check compared
+    check: dict | None = None  # the clip's current check as align.json holds it
 
 
 def clip_detail(path: Path, root: Path | None, index: int) -> ClipDetail:
@@ -407,6 +416,7 @@ def clip_detail(path: Path, root: Path | None, index: int) -> ClipDetail:
         aligned.get("aligner") if check else None,
         check.get("words", []) if check else [],
         check.get("asr") if check else None,
+        check,
     )
 
 
