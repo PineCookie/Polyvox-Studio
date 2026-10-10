@@ -38,7 +38,10 @@ CUT_WEIGHT = 2.0
 WINDOW_S = 600.0  # audio decoded at a time
 WINDOW_SLACK_S = 60.0  # a window ends at the longest pause in its last minute
 CHUNK_MAX_S = 28.0  # per ASR call (Qwen3-ASR's features cover 30 s)
-CHUNK_PAD_S = 0.3
+# Silence kept around an ASR chunk (at most halfway to the next). Generous:
+# Silero can mark a phrase's onset ~0.5 s late, and a clip can't start before
+# its chunk, so a short pad cut clips into their first word.
+CHUNK_PAD_S = 1.0
 SENTENCE_END = set("。！？!?…")
 WORD_CUT_COST = 1.0  # a clause mark alone does not justify a short clip
 MIN_PAUSE_S = 0.08  # quieter stretch between words that counts as a pause
