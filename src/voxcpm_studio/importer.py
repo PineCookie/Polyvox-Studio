@@ -32,7 +32,7 @@ from pathlib import Path, PureWindowsPath
 
 import soundfile as sf
 
-from . import checks, fillers, slicer
+from . import checks, fillers, loudness, slicer
 from .checks import Checker, ClipCheck
 from .manifests import ASR_FILE, legacy_root, write_manifest
 from .slicer import SliceOptions, Vad
@@ -352,9 +352,13 @@ def _check(rows: list[Row], checker: Checker, progress: Progress) -> list[ClipCh
     return out
 
 
-def _write_trimmed(source: Path, target: Path, start: float, end: float) -> None:
+def _write_clip(source: Path, target: Path, cut: tuple[float, float] | None, normalize: float | None) -> None:
+    """``source`` (mono) as PCM16 WAV: cut to [start, end) seconds, at ``normalize`` LUFS."""
     src = slicer.Source(source)
-    sf.write(target, src.read(start, end), src.rate, subtype="PCM_16")
+    audio = src.read(*(cut or (0.0, src.duration)))
+    if normalize is not None:
+        audio = loudness.normalize(audio, src.rate, normalize)
+    sf.write(target, audio, src.rate, subtype="PCM_16")
 
 
 def import_dataset(
@@ -373,6 +377,7 @@ def import_dataset(
     guide: slicer.Guide | None = None,
     separation=None,
     tidy_fillers: bool = False,
+    normalize: float | None = None,
 ) -> ImportResult:
     """Write ``data_dir/<name>/train.jsonl``.
 
@@ -384,8 +389,9 @@ def import_dataset(
     from ASR; otherwise they are left out. With a ``checker`` (made for the
     ``aligner`` named), every clip is checked against its text and the results
     saved as align.json; ``trim`` then cuts long silent edges from the copies
-    (needs ``copy``; trimmed clips are written as PCM16 WAV). ``progress`` may
-    raise to cancel; nothing is left behind then.
+    (needs ``copy``; trimmed clips are written as PCM16 WAV). ``normalize``
+    brings each copied clip to that many LUFS (loudness.normalize; mono PCM16
+    WAV). ``progress`` may raise to cancel; nothing is left behind then.
     """
     progress = progress or (lambda phase, done, total: None)
     if slicing and not (copy and transcriber):
@@ -394,6 +400,8 @@ def import_dataset(
         raise ValueError("Separation writes new audio: it needs copying.")
     if trim and not (copy and checker):
         raise ValueError("Trimming rewrites the copied clips at their checked edges: it needs copying and checking.")
+    if normalize is not None and not copy:
+        raise ValueError("Normalizing loudness rewrites the clips: it needs copying.")
     check_name(name, data_dir)
     data_dir = data_dir.resolve()
     target = data_dir / name
@@ -424,17 +432,19 @@ def import_dataset(
 
         if copy:
             (staging / "wavs").mkdir(parents=True, exist_ok=True)
-            # Trimmed clips are rewritten as WAV, whatever the source format.
+            # Rewritten clips (trimmed, normalized) are WAV, whatever the source format.
             names = [
-                r.audio.with_suffix(".wav") if cut else r.audio for (_, r), cut in zip(rows_kept, cuts, strict=True)
+                r.audio.with_suffix(".wav") if cut or normalize is not None else r.audio
+                for (_, r), cut in zip(rows_kept, cuts, strict=True)
             ]
             files = _unique_names(names)
             for n, ((_, row), file, cut) in enumerate(zip(rows_kept, files, cuts, strict=True)):
                 if n % 50 == 0:
                     progress("copying", n, len(rows_kept))
-                if cut:
-                    _write_trimmed(row.audio, staging / "wavs" / file, *cut)
-                    clip_checks[n] = clip_checks[n].trimmed(*cut)
+                if cut or normalize is not None:
+                    _write_clip(row.audio, staging / "wavs" / file, cut, normalize)
+                    if cut:
+                        clip_checks[n] = clip_checks[n].trimmed(*cut)
                 elif row.audio.is_relative_to(staging):
                     row.audio.replace(staging / "wavs" / file)  # a fresh slice: move, don't copy
                 else:

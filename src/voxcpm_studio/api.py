@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import audio_io, checks, fillers, importer, lora_library, manifests, models, sharing, slicer
+from . import audio_io, checks, fillers, importer, lora_library, loudness, manifests, models, sharing, slicer
 from .aligner import AlignService
 from .asr import SAMPLE_RATE as ASR_RATE
 from .asr import AsrService, language_of, load_audio
@@ -98,10 +98,17 @@ class ImportIn(ImportSourceIn):
     denoise: bool = False
     # Shorten runs of fillers / laughs (哈哈哈哈 -> 哈哈) in every transcript.
     tidy_fillers: bool = True
+    # Bring each copied clip to this loudness in LUFS (needs copy_audio); None = as recorded.
+    normalize_lufs: float | None = Field(None, ge=-40, le=-10)
 
 
 class DatasetIn(BaseModel):
     id: str  # dataset manifest id
+
+
+class NormalizeIn(BaseModel):
+    id: str  # dataset manifest id
+    target_lufs: float = Field(loudness.TARGET_LUFS, ge=-40, le=-10)
 
 
 class CheckIn(BaseModel):
@@ -486,6 +493,8 @@ def create_app(
                     raise ValueError(f"The model for '{option}' is not downloaded (see Models).")
             if cleanup and not body.copy_audio:
                 raise ValueError("Clean-up writes new audio: it needs copying.")
+            if body.normalize_lufs is not None and not body.copy_audio:
+                raise ValueError("Normalizing loudness rewrites the clips: it needs copying.")
             importer.check_name(body.name, settings.data_dir)
             importer.detect(importer.clean_path(body.source))
         except FileExistsError as e:
@@ -528,6 +537,7 @@ def create_app(
                 else None,
                 separation=separation.chain([available[k] for k in cleanup]) if cleanup else None,
                 tidy_fillers=body.tidy_fillers,
+                normalize=body.normalize_lufs,
             )
             return {
                 "id": result.id,
@@ -553,7 +563,7 @@ def create_app(
 
     def refuse_if_busy(gpu: bool) -> None:
         """One preparation job at a time; GPU stages wait for training on their GPU."""
-        if running := jobs.running("import") or jobs.running("check"):
+        if running := jobs.running("import") or jobs.running("check") or jobs.running("normalize"):
             raise HTTPException(409, f"Wait for “{running.title}” to finish.")
         if gpu and training.active_run and _cuda_index(asr.device) == (settings.train_gpu or 0):
             raise HTTPException(
@@ -589,6 +599,20 @@ def create_app(
             )
 
         return JobOut(**jobs.start("check", f"Check {body.id}", run).public())
+
+    @app.post("/api/datasets/normalize", status_code=202)
+    def normalize_dataset(body: NormalizeIn) -> JobOut:
+        """Bring every clip of a dataset to ``target_lufs`` in place (originals
+        kept in originals/; checks stay valid). The job's result is
+        loudness.normalize_dataset's summary."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        refuse_if_busy(gpu=False)
+
+        def run(job: Job) -> dict:
+            root = manifests.legacy_root(settings.data_dir)
+            return loudness.normalize_dataset(manifest, root, body.target_lufs, job.progress)
+
+        return JobOut(**jobs.start("normalize", f"Normalize {body.id}", run).public())
 
     @app.post("/api/dataset-clip/text")
     def set_clip_text(body: ClipTextIn) -> ClipDetailOut:

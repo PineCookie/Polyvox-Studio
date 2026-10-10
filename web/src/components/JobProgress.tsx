@@ -11,6 +11,7 @@ const PHASE_LABEL: Record<string, string> = {
   transcribing: 'Transcribing',
   aligning: 'Checking clips against their text',
   copying: 'Copying audio',
+  normalizing: 'Normalizing loudness',
 }
 
 // Phases that count seconds of audio; the others count clips.

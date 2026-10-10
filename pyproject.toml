@@ -18,6 +18,7 @@ dependencies = [
     "silero-vad>=6.2.3",
     "rotary-embedding-torch>=0.9.1",
     "beartype>=0.22.9",
+    "pyloudnorm>=0.2.0",
 ]
 
 [project.scripts]

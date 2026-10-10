@@ -318,6 +318,7 @@ export interface ImportOptions {
   cleanup: CleanupOption[] // applied first, in this order: separate, dereverb, denoise
   tidyFillers: boolean // 哈哈哈哈 -> 哈哈 in every transcript
   detectSinging: boolean // with check: flag sung clips
+  normalizeLufs: number | null // bring each clip to this loudness; null = as recorded
 }
 
 export type ImportJob = Job<{
@@ -349,6 +350,7 @@ export async function importDataset(o: ImportOptions): Promise<ImportJob> {
     denoise: o.cleanup.includes('denoise'),
     tidy_fillers: o.tidyFillers,
     detect_singing: o.detectSinging,
+    normalize_lufs: o.normalizeLufs,
   }
   return (await postJson('/api/datasets/import', body)).json()
 }
@@ -358,6 +360,23 @@ export type CheckJob = Job<CheckSummary>
 /** Shorten runs of fillers in a dataset's transcripts, in place (the original manifest is kept). */
 export async function tidyFillers(id: string): Promise<{ changed: number }> {
   return (await postJson('/api/datasets/tidy-fillers', { id })).json()
+}
+
+// Loudness normalization (src/voxcpm_studio/loudness.py); levels are [p10, median, p90] LUFS.
+export const DEFAULT_LUFS = -20
+
+export type NormalizeJob = Job<{
+  normalized: number
+  unchanged: number
+  peak_limited: number
+  skipped: number
+  before: [number, number, number] | null
+  after: [number, number, number] | null
+}>
+
+/** Bring every clip of a dataset to a loudness in place (originals kept; checks stay valid). */
+export async function normalizeDataset(id: string, targetLufs: number): Promise<NormalizeJob> {
+  return (await postJson('/api/datasets/normalize', { id, target_lufs: targetLufs })).json()
 }
 
 export async function checkDataset(

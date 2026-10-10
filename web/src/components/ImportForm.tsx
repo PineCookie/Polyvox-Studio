@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { getStatus, importDataset, previewImport } from '../api'
+import { DEFAULT_LUFS, getStatus, importDataset, previewImport } from '../api'
 import type { Aligner, CleanupOption, ImportJob, ImportPreview } from '../api'
 import { ALIGNER_LABEL, formatDuration, formatRates } from '../format'
 import { useJob } from '../useJob'
@@ -57,6 +57,8 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [aligner, setAligner] = useState<Aligner>('qwen3')
   const [trim, setTrim] = useState(true)
   const [tidy, setTidy] = useState(true)
+  const [normalize, setNormalize] = useState(true)
+  const [lufs, setLufs] = useState(DEFAULT_LUFS)
   const [detectSinging, setDetectSinging] = useState(false)
   // Optional clean-up, off by default; which ones have a model installed.
   const [cleanup, setCleanup] = useState<CleanupOption[]>([])
@@ -117,6 +119,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
           cleanup: copyAudio || willSlice ? cleanup : [],
           tidyFillers: tidy,
           detectSinging: check && detectSinging,
+          normalizeLufs: normalize && (copyAudio || willSlice) && Number.isFinite(lufs) ? lufs : null,
         }),
       )
     } catch (err) {
@@ -409,6 +412,29 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                 Tidy fillers: shorten runs to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯); counts are unreliable and only need
                 to be consistent
               </label>
+
+              <div className="inline-field">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={normalize && (copyAudio || willSlice)}
+                    disabled={running || !(copyAudio || willSlice)}
+                    onChange={(e) => setNormalize(e.target.checked)}
+                  />{' '}
+                  Normalize loudness to
+                </label>
+                <input
+                  type="number"
+                  min={-40}
+                  max={-10}
+                  step={1}
+                  value={lufs}
+                  onChange={(e) => setLufs(e.target.valueAsNumber)}
+                  disabled={running || !normalize || !(copyAudio || willSlice)}
+                  aria-label="Target loudness (LUFS)"
+                />
+                <span className="muted hint">LUFS (EBU R128; peaks stay below -1 dBFS)</span>
+              </div>
 
               <label className="field">
                 <span>Dataset name {nameError && !running && <span className="field-error">{nameError}</span>}</span>

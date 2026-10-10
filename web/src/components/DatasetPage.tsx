@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { checkDataset, tidyFillers } from '../api'
-import type { Aligner, CheckJob, ImportJob } from '../api'
+import { DEFAULT_LUFS, checkDataset, normalizeDataset, tidyFillers } from '../api'
+import type { Aligner, CheckJob, ImportJob, NormalizeJob } from '../api'
 import { ALIGNER_LABEL, datasetName } from '../format'
 import { useJob } from '../useJob'
 import { DatasetReview } from './DatasetReview'
@@ -11,6 +11,23 @@ interface Props {
   // The import that just made this dataset, if any.
   imported: ImportJob['result'] | null
   onTrain: (id: string) => void
+}
+
+function spread(levels: [number, number, number]): string {
+  return `${levels[0]} … ${levels[2]} LUFS (median ${levels[1]})`
+}
+
+function NormalizeSummary({ result }: { result: NormalizeJob['result'] }) {
+  const parts = [`${result.normalized.toLocaleString()} clips normalized`]
+  if (result.unchanged) parts.push(`${result.unchanged.toLocaleString()} already there`)
+  if (result.peak_limited) parts.push(`${result.peak_limited.toLocaleString()} kept quieter by their peaks`)
+  if (result.skipped) parts.push(`${result.skipped.toLocaleString()} skipped`)
+  return (
+    <span className="muted hint">
+      {parts.join(', ')}.
+      {result.before && result.after && ` Before ${spread(result.before)}; now ${spread(result.after)}.`}
+    </span>
+  )
 }
 
 /** A prepared dataset: check its clips against their text, review, then train. */
@@ -25,13 +42,27 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
     if (j.state === 'done') setVersion((v) => v + 1)
     else if (j.state === 'failed') setError(j.error ?? 'Check failed.')
   })
-  const running = job?.state === 'running'
+  const [lufs, setLufs] = useState(DEFAULT_LUFS)
+  const [normalizing, setNormalizing] = useJob<NormalizeJob>((j) => {
+    if (j.state === 'done') setVersion((v) => v + 1)
+    else if (j.state === 'failed') setError(j.error ?? 'Normalizing failed.')
+  })
+  const running = job?.state === 'running' || normalizing?.state === 'running'
   const [tidied, setTidied] = useState<number | null>(null) // clips the last tidy changed
 
   async function check() {
     setError(null)
     try {
       setJob(await checkDataset(id, aligner, compareAsr, detectSinging))
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  async function normalize() {
+    setError(null)
+    try {
+      setNormalizing(await normalizeDataset(id, lufs))
     } catch (e) {
       setError((e as Error).message)
     }
@@ -126,7 +157,32 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
             </span>
           )}
         </div>
+        <div className="inline-field check-action">
+          <button
+            type="button"
+            className="ghost"
+            onClick={normalize}
+            disabled={running}
+            title="One gain per clip (EBU R128 loudness), lowered where the peak would pass -1 dBFS. Originals are kept in originals/; checks stay valid."
+          >
+            {normalizing?.state === 'running' ? 'Normalizing…' : 'Normalize loudness'}
+          </button>
+          <span className="muted hint">to</span>
+          <input
+            type="number"
+            min={-40}
+            max={-10}
+            step={1}
+            value={lufs}
+            onChange={(e) => setLufs(Number(e.target.value))}
+            disabled={running}
+            aria-label="Target loudness (LUFS)"
+          />
+          <span className="muted hint">LUFS</span>
+          {normalizing?.state === 'done' && <NormalizeSummary result={normalizing.result} />}
+        </div>
         {job && <JobProgress job={job} what="Check" />}
+        {normalizing && <JobProgress job={normalizing} what="Normalizing" />}
         {error && <p className="field-error">{error}</p>}
       </section>
 
