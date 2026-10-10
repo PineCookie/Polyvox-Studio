@@ -15,6 +15,9 @@ if mirror := os.environ.get("VOXCPM_STUDIO_HF_ENDPOINT", "").strip():
     os.environ.setdefault("HF_ENDPOINT", mirror.rstrip("/"))
 
 
+SHUTDOWN_GRACE_S = 3
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="VoxCPM Studio server")
     parser.add_argument("--host", default="127.0.0.1")
@@ -30,7 +33,10 @@ def main() -> None:
 
     from .api import create_app
 
-    uvicorn.run(create_app(), host=args.host, port=args.port)
+    # Ctrl+C waits at most this long for open responses: a paused <audio> player
+    # (e.g. a run's samples) holds its download open, and uvicorn would wait for it
+    # forever. A running training job still saves its checkpoint afterwards.
+    uvicorn.run(create_app(), host=args.host, port=args.port, timeout_graceful_shutdown=SHUTDOWN_GRACE_S)
 
 
 if __name__ == "__main__":

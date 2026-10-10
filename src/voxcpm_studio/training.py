@@ -575,6 +575,9 @@ class TrainingManager:
         stop_file.unlink(missing_ok=True)
         cmd = self._command(run_dir / CONFIG_FILE, run_dir / "samples", stop_file)
         env = {**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
+        # Less fragmentation: a run that generates validation samples between steps
+        # otherwise filled the GPU's cache and hit allocation retries (same speed).
+        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
         if self.settings.train_gpu is not None:
             env["CUDA_VISIBLE_DEVICES"] = str(self.settings.train_gpu)
 
