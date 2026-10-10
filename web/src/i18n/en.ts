@@ -75,6 +75,9 @@ export const en = {
   transcribeTitle: 'Fill in the transcript with speech recognition (Qwen3-ASR)',
   advanced: 'Advanced',
   guidance: 'Guidance',
+  guidanceHint:
+    'Lower sounds more natural and closer to the voice; raise toward 2.0 if words get dropped or sounds added. Above 2 the voice drifts away.',
+  stepsHint: 'Detail passes per sound chunk: 10 is enough; more is slower and rarely better.',
   steps: 'Steps',
   seed: 'Seed',
   random: 'Random',

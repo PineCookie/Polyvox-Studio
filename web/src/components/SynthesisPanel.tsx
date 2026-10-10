@@ -85,7 +85,9 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
   const [control, setControl] = useState('')
   const [referenceAudio, setReferenceAudio] = useState<File | null>(null)
   const [promptText, setPromptText] = useState('')
-  const [cfgValue, setCfgValue] = useState(2.0)
+  // Below VoxCPM's 2.0: with a voice LoRA, 1.6 sounded more natural and closer to the
+  // voice, and the occasional added sound at 1.5 was gone.
+  const [cfgValue, setCfgValue] = useState(1.6)
   const [steps, setSteps] = useState(10)
   const [normalize, setNormalize] = useState(true)
   const [denoise, setDenoise] = useState(true)
@@ -245,12 +247,14 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
               value={cfgValue}
               onChange={(e) => setCfgValue(Number(e.target.value))}
             />
+            <span className="muted hint">{t.guidanceHint}</span>
           </label>
           <label className="field">
             <span>
               {t.steps} <output>{steps}</output>
             </span>
             <input type="range" min={1} max={50} value={steps} onChange={(e) => setSteps(Number(e.target.value))} />
+            <span className="muted hint">{t.stepsHint}</span>
           </label>
           <label className="field">
             <span>{t.seed}</span>

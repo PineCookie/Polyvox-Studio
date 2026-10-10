@@ -74,6 +74,8 @@ export const zh: Messages = {
   transcribeTitle: '用语音识别（Qwen3-ASR）填写文本',
   advanced: '高级',
   guidance: '引导强度',
+  guidanceHint: '较低更自然、更像目标声音；若出现漏字或多出声音，可调高到 2.0。高于 2 时声音会偏离。',
+  stepsHint: '每段声音的细化次数：10 已足够；更多会更慢，几乎没有提升。',
   steps: '步数',
   seed: '随机种子',
   random: '随机',
