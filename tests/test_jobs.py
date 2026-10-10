@@ -28,6 +28,24 @@ def test_job_result_and_progress():
     assert job.finished is not None and "_cancel" not in job.public()
 
 
+def test_seconds_left_from_the_phase_rate(monkeypatch):
+    from voxcpm_studio import jobs
+
+    now = [1000.0]
+    monkeypatch.setattr(jobs.time, "time", lambda: now[0])
+    job = jobs.Job(id="x", kind="demo", title="Demo")
+    job.progress("slicing", 0, 100)
+    assert job.seconds_left is None  # no rate yet
+    now[0] += 10
+    job.progress("slicing", 25, 100)
+    assert job.seconds_left == pytest.approx(30)  # 25 per 10 s, 75 to go
+    job.progress("aligning", 0, 8)  # a new phase starts over
+    assert job.seconds_left is None
+    now[0] += 4
+    job.progress("aligning", 8, 8)
+    assert job.seconds_left == 0
+
+
 def test_job_failure_and_cancel():
     runner = JobRunner()
     failed = wait(runner.start("demo", "Fails", lambda job: 1 / 0))

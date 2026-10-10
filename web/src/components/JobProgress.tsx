@@ -7,10 +7,14 @@ const PHASE_LABEL: Record<string, string> = {
   scanning: 'Scanning',
   separating: 'Separating the voice',
   slicing: 'Transcribing and slicing recordings',
+  separating_slicing: 'Separating, transcribing and slicing recordings',
   transcribing: 'Transcribing',
   aligning: 'Checking clips against their text',
   copying: 'Copying audio',
 }
+
+// Phases that count seconds of audio; the others count clips.
+const AUDIO_PHASES = new Set(['slicing', 'separating_slicing'])
 
 /** Phase, count, bar and Cancel for a running job; a short note once it failed or was cancelled. */
 export function JobProgress({ job, what }: { job: Job; what: string }) {
@@ -24,10 +28,10 @@ export function JobProgress({ job, what }: { job: Job; what: string }) {
             {job.total > 0 && (
               <span className="muted">
                 {' '}
-                {/* Slicing counts seconds of audio; the other phases count clips. */}
-                {job.phase === 'slicing'
-                  ? `${formatDuration(job.done)} / ${formatDuration(job.total)}`
+                {AUDIO_PHASES.has(job.phase)
+                  ? `${formatDuration(job.done)} of ${formatDuration(job.total)} audio`
                   : `${job.done} / ${job.total}`}
+                {job.seconds_left != null && job.seconds_left > 0 && ` · ~${formatDuration(job.seconds_left)} left`}
               </span>
             )}
           </span>

@@ -285,7 +285,9 @@ def _slice(
     ``guide`` the clips are cut between words and keep their ASR text; without
     one they have no text. (A recording's own transcript is not kept: it is not
     known which part of it each chunk holds.) Progress counts seconds of audio.
-    Returns the new rows and the number of recordings sliced."""
+    Returns the new rows and the number of recordings sliced. With a ``chain``
+    the voice is separated window by window too (phase "separating_slicing")."""
+    phase = "separating_slicing" if chain is not None else "slicing"
     total = int(sum(row.seconds for row in rows if row.seconds > LONG_RECORDING_S))
     out: list[Row] = []
     done, seconds = 0, 0.0
@@ -293,7 +295,7 @@ def _slice(
         if row.seconds <= LONG_RECORDING_S:
             out.append(row)
             continue
-        progress("slicing", int(seconds), total)
+        progress(phase, int(seconds), total)
         base = seconds
         clips = slicer.slice_recording(
             row.audio,
@@ -301,7 +303,7 @@ def _slice(
             opts,
             vad,
             guide,
-            progress=lambda at, base=base: progress("slicing", int(base + at), total),
+            progress=lambda at, base=base: progress(phase, int(base + at), total),
             chain=chain,
         )
         for clip in clips:
@@ -317,7 +319,7 @@ def _slice(
             )
         done += 1
         seconds += row.seconds
-    progress("slicing", total, total)
+    progress(phase, total, total)
     return out, done
 
 

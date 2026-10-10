@@ -36,10 +36,21 @@ class Job:
     result: dict = field(default_factory=dict)
     started: float = field(default_factory=time.time)
     finished: float | None = None
+    seconds_left: float | None = None  # of the current phase, from its rate so far
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
+    _phase_start: tuple[float, int] = (0.0, 0)  # (time, done) when the phase began
 
     def progress(self, phase: str, done: int, total: int) -> None:
         """Report progress; raises JobCancelled if cancellation was requested."""
+        now = time.time()
+        if phase != self.phase:
+            self._phase_start, self.seconds_left = (now, done), None
+        else:
+            since, done0 = self._phase_start
+            if done > done0 and total > done:
+                self.seconds_left = (now - since) / (done - done0) * (total - done)
+            elif total <= done:
+                self.seconds_left = 0.0
         self.phase, self.done, self.total = phase, done, total
         if self._cancel.is_set():
             raise JobCancelled()

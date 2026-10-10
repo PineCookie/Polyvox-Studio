@@ -275,6 +275,8 @@ export interface Job<R = unknown> {
   phase: string
   done: number
   total: number
+  /** Estimate for the current phase, from its rate so far; null until it has one. */
+  seconds_left: number | null
   error: string | null
   result: R
 }
