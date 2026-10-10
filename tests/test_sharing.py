@@ -71,6 +71,17 @@ def test_export_contains_only_the_essentials_without_local_info(lora_dir):
         assert b"someone" not in data and str(lora_dir).encode() not in data and b"__metadata__" not in data
 
 
+def test_export_carries_no_time_and_packs_the_same_bytes_each_time(lora_dir):
+    import zipfile
+
+    ckpt = make_checkpoint(lora_dir)
+    first = sharing.export_package(ckpt, "voice", "openbmb/VoxCPM2")
+    with zipfile.ZipFile(first) as zf:
+        assert {i.date_time for i in zf.infolist()} == {sharing.ZIP_EPOCH}
+        assert {i.external_attr >> 16 for i in zf.infolist()} == {0o644}
+    assert sharing.export_package(ckpt, "voice", "openbmb/VoxCPM2").read_bytes() == first.read_bytes()
+
+
 def test_export_keeps_float32_on_request_and_validates_input(lora_dir):
     ckpt = make_checkpoint(lora_dir)
 

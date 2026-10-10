@@ -22,6 +22,7 @@ from pathlib import Path, PurePosixPath
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
 
 README_FILE = "README.md"
+ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)  # zip's earliest date: entries carry no export time
 PACKAGE_NAME = r"^[^\W_][\w.-]{0,79}$"  # Unicode letters allowed, like run names
 HUB_ID = re.compile(r"[A-Za-z0-9][\w.-]*/[\w.-]+")
 MAX_PACKAGE_BYTES = 2 * 1024**3
@@ -121,10 +122,20 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
     fd, tmp = tempfile.mkstemp(prefix="voxcpm_lora_", suffix=".zip")
     os.close(fd)
     with zipfile.ZipFile(tmp, "w") as zf:
-        zf.writestr(f"{name}/{WEIGHTS_FILE}", weights, compress_type=zipfile.ZIP_STORED)  # incompressible
-        zf.writestr(f"{name}/{CONFIG_FILE}", json.dumps(info, indent=2) + "\n", compress_type=zipfile.ZIP_DEFLATED)
-        zf.writestr(f"{name}/{README_FILE}", readme, compress_type=zipfile.ZIP_DEFLATED)
+        zf.writestr(_entry(f"{name}/{WEIGHTS_FILE}", zipfile.ZIP_STORED), weights)  # incompressible
+        zf.writestr(_entry(f"{name}/{CONFIG_FILE}", zipfile.ZIP_DEFLATED), json.dumps(info, indent=2) + "\n")
+        zf.writestr(_entry(f"{name}/{README_FILE}", zipfile.ZIP_DEFLATED), readme)
     return Path(tmp)
+
+
+def _entry(path: str, compress_type: int) -> zipfile.ZipInfo:
+    """A zip entry without the time it was made (zip's earliest date) and with
+    plain file permissions: a package tells nothing about when or where it was
+    exported, and the same checkpoint always packs to the same bytes."""
+    info = zipfile.ZipInfo(path, date_time=ZIP_EPOCH)
+    info.compress_type = compress_type
+    info.external_attr = 0o644 << 16
+    return info
 
 
 def _check_weights(data: bytes) -> None:
