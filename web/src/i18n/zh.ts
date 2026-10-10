@@ -475,7 +475,7 @@ export const zh: Messages = {
   runName: '任务名称',
   chooseDatasetFirst: '请先选择数据集',
   scheduleHint: (steps, per, batch, accum, gpu, clips, approx, every, warmup) =>
-    `= ${steps} 步，每步 ${per} 条（${batch} × ${accum} 梯度累积${gpu ? `，按这块 ${gpu} GB 显卡选择的批大小` : ''}），共 ${clips} 条训练片段${approx ? `（约 ${approx} 轮）` : ''}；每 ${every} 步保存检查点并验证，预热 ${warmup} 步。VoxCPM 建议单个说话人训练 1–3 轮；请试听比较各个检查点。`,
+    `= ${steps} 步，每步 ${per} 条（${batch} × ${accum} 梯度累积${gpu ? `，按这块 ${gpu} GB 显卡选择的批大小` : ''}），共 ${clips} 条训练片段${approx ? `（约 ${approx} 轮）` : ''}；每 ${every} 步保存检查点并验证，预热 ${warmup} 步。单个说话人通常训练 3–6 轮最像本人；请试听比较各个检查点。`,
   stepsFollow: '选择数据集后，步数会根据轮数自动计算。',
 
   // 参数
@@ -487,6 +487,7 @@ export const zh: Messages = {
     learning_rate: '学习率',
     lr_multiplier: '学习率倍数',
     optimizer: '优化器',
+    prodigy_steps: '固定步长于（步，0 = 不固定）',
     batch_size: '批大小',
     grad_accum_steps: '梯度累积',
     warmup_steps: '预热步数',
@@ -503,9 +504,9 @@ export const zh: Messages = {
     enable_proj: 'LoRA 作用于投影层',
   },
   optimizers: {
-    adamw: 'AdamW（余弦调度）',
-    prodigy: 'Prodigy（自动学习率）',
-    prodigy_sf: 'Prodigy Schedule-Free',
+    adamw: 'AdamW',
+    prodigy: 'Prodigy',
+    prodigy_sf: 'Prodigy-SF',
   },
 
   // 模型

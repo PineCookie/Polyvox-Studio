@@ -47,11 +47,12 @@ def train_steps(model, opt, steps=5):
 def test_optimizer_key_is_read_and_hidden_from_the_script(tmp_path, restore_patches):
     config = tmp_path / "train_config.yaml"
     config.write_text("optimizer: prodigy_sf\nlearning_rate: 1.0\n", encoding="utf-8")
-    assert train_worker.optimizer_from_config(config) == "prodigy_sf"
+    assert train_worker.optimizer_from_config(config) == ("prodigy_sf", 0)
     assert config_module.load_yaml_config(str(config)) == {"learning_rate": 1.0}
 
-    config.write_text("learning_rate: 0.0001\n", encoding="utf-8")
-    assert train_worker.optimizer_from_config(config) == "adamw"
+    config.write_text("learning_rate: 0.0001\nprodigy_steps: 40\n", encoding="utf-8")
+    assert train_worker.optimizer_from_config(config) == ("adamw", 40)
+    assert config_module.load_yaml_config(str(config)) == {"learning_rate": 0.0001}
 
 
 @pytest.mark.parametrize("name", ["prodigy", "prodigy_sf"])

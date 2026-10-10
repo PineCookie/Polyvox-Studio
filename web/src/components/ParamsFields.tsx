@@ -104,7 +104,9 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
           {epochs && numberField('num_iters', { min: 1 })}
           {numberField('batch_size', { min: 1 })}
           {numberField('grad_accum_steps', { min: 1 })}
-          {numberField('warmup_steps', { min: 0 })}
+          {params.optimizer === 'adamw' || params.optimizer === 'prodigy'
+            ? numberField('warmup_steps', { min: 0 })
+            : numberField('prodigy_steps', { min: 0 })}
           {numberField('max_batch_tokens', { min: 0, step: 1024 })}
           {numberField('weight_decay', { min: 0, step: 'any' })}
           {numberField('max_grad_norm', { min: 0, step: 'any' })}

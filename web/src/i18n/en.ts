@@ -510,7 +510,7 @@ export const en = {
     every: string,
     warmup: string,
   ) =>
-    `= ${steps} steps of ${per} clips (${batch} × ${accum} accumulated${gpu ? `, the batch that fits this ${gpu} GB GPU` : ''}) over ${clips} training clips${approx ? ` (≈ ${approx} epochs)` : ''}; checkpoint and validation every ${every} steps, warmup ${warmup}. VoxCPM recommends 1–3 epochs for one speaker; compare the checkpoints by listening.`,
+    `= ${steps} steps of ${per} clips (${batch} × ${accum} accumulated${gpu ? `, the batch that fits this ${gpu} GB GPU` : ''}) over ${clips} training clips${approx ? ` (≈ ${approx} epochs)` : ''}; checkpoint and validation every ${every} steps, warmup ${warmup}. For one speaker, 3–6 epochs usually sound most like them; compare the checkpoints by listening.`,
   stepsFollow: 'Steps follow from the epochs once a dataset is chosen.',
 
   // Parameters
@@ -522,6 +522,7 @@ export const en = {
     learning_rate: 'Learning rate',
     lr_multiplier: 'Learning rate multiplier',
     optimizer: 'Optimizer',
+    prodigy_steps: 'Fix step size after (steps, 0 = never)',
     batch_size: 'Batch size',
     grad_accum_steps: 'Gradient accumulation',
     warmup_steps: 'Warmup steps',
@@ -538,9 +539,9 @@ export const en = {
     enable_proj: 'LoRA on projections',
   },
   optimizers: {
-    adamw: 'AdamW (cosine schedule)',
-    prodigy: 'Prodigy (finds its own learning rate)',
-    prodigy_sf: 'Prodigy Schedule-Free',
+    adamw: 'AdamW',
+    prodigy: 'Prodigy',
+    prodigy_sf: 'Prodigy-SF',
   },
 
   // Models

@@ -76,6 +76,8 @@ class TrainParams(BaseModel):
     # their own step size; learning_rate is then a multiplier, 1.0 as their authors
     # recommend (see train_worker.use_optimizer).
     optimizer: Literal["adamw", "prodigy", "prodigy_sf"] = "adamw"
+    # prodigy_sf: keep its step size fixed after this many steps (0 = adapt throughout).
+    prodigy_steps: int = Field(0, ge=0)
     weight_decay: float = Field(0.01, ge=0)
     warmup_steps: int = Field(100, ge=0)
     max_grad_norm: float = Field(1.0, ge=0)
@@ -260,7 +262,9 @@ def build_config(
         "valid_interval": params.valid_interval,
         "save_interval": params.save_interval,
         "learning_rate": params.learning_rate,
-        "optimizer": params.optimizer,  # read (and removed) by train_worker
+        # Read (and removed) by train_worker.
+        "optimizer": params.optimizer,
+        "prodigy_steps": params.prodigy_steps,
         "weight_decay": params.weight_decay,
         "warmup_steps": params.warmup_steps,
         "max_steps": params.num_iters,

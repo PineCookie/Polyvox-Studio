@@ -3,11 +3,13 @@ import { OPTIMIZERS, type Optimizer, type TrainParams } from './api'
 
 export type Params = Omit<TrainParams, 'name' | 'dataset'>
 
-// Following VoxCPM's fine-tuning guide: an effective batch of 16 (4 clips x 4
-// accumulated on a 16 GB card; see forGpu), max_batch_tokens 8192, and 1-3 epochs
-// for one speaker. Steps, warmup and checkpoint intervals follow from the epochs
-// and the dataset's size (scheduleFor).
-export const DEFAULT_EPOCHS = 2
+// An effective batch of 16 (4 clips x 4 accumulated on a 16 GB card; see forGpu)
+// and max_batch_tokens 8192, as in VoxCPM's fine-tuning guide. Its AdamW at 1e-4
+// for 1-3 epochs left voices close to the base model; Prodigy Schedule-Free finds a
+// larger step size itself and sounds like the speaker within a few epochs. Steps,
+// warmup and checkpoint intervals follow from the epochs and the dataset's size
+// (scheduleFor).
+export const DEFAULT_EPOCHS = 4
 export const WARMUP_SHARE = 0.05 // of the steps
 export const CHECKPOINTS_PER_EPOCH = 2
 
@@ -18,8 +20,9 @@ export const DEFAULT_PARAMS: Params = {
   batch_size: 4,
   grad_accum_steps: 4,
   max_batch_tokens: 8192,
-  learning_rate: 1e-4,
-  optimizer: 'adamw',
+  learning_rate: 1,
+  optimizer: 'prodigy_sf',
+  prodigy_steps: 0,
   weight_decay: 0.01,
   warmup_steps: 10,
   max_grad_norm: 1.0,
@@ -83,8 +86,10 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     batch_size: num(config.batch_size, 1),
     grad_accum_steps: num(config.grad_accum_steps, 1),
     max_batch_tokens: num(config.max_batch_tokens, 0),
-    learning_rate: num(config.learning_rate, d.learning_rate),
+    // Runs from before the optimizer option used AdamW.
+    learning_rate: num(config.learning_rate, OPTIMIZER_LR.adamw),
     optimizer: OPTIMIZERS.find((o) => o === config.optimizer) ?? 'adamw',
+    prodigy_steps: num(config.prodigy_steps, 0),
     weight_decay: num(config.weight_decay, d.weight_decay),
     warmup_steps: num(config.warmup_steps, d.warmup_steps),
     max_grad_norm: num(config.max_grad_norm, d.max_grad_norm),

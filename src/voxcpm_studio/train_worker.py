@@ -128,7 +128,7 @@ def checkpoint_layers() -> None:
     print("[studio] Gradient checkpointing on (transformer layers).", file=sys.stderr)
 
 
-def use_optimizer(name: str) -> None:
+def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
     """Swap the script's AdamW (and its schedule) for a Prodigy variant.
 
     - ``prodigy`` (prodigyopt): estimates its own step size; ``lr`` is a multiplier
@@ -139,6 +139,7 @@ def use_optimizer(name: str) -> None:
       keeps the average elsewhere: the model's train() / eval() switch the
       optimizer too (validation and samples use the average), checkpoints hold the
       average, and loading a checkpoint switches back to training weights.
+      ``prodigy_steps`` > 0 keeps its step size fixed from that step on.
 
     The logged learning rate is the effective one (Prodigy's d x lr).
     """
@@ -174,7 +175,14 @@ def use_optimizer(name: str) -> None:
         def make(params, lr, weight_decay=0.0, **_):
             # A shorter averaging window than the package default (schedulefree_c 0)
             # and beta1 0.95, as its docs suggest for Schedule-Free.
-            opt = ScheduleFree(params, lr=lr, weight_decay=weight_decay, betas=(0.95, 0.99), schedulefree_c=20)
+            opt = ScheduleFree(
+                params,
+                lr=lr,
+                weight_decay=weight_decay,
+                betas=(0.95, 0.99),
+                schedulefree_c=20,
+                prodigy_steps=prodigy_steps,
+            )
             active.append(opt)
             return opt
 
@@ -221,9 +229,12 @@ def use_optimizer(name: str) -> None:
     print(f"[studio] Optimizer: {name}.", file=sys.stderr)
 
 
-def optimizer_from_config(config_path: Path) -> str:
-    """The run config's ``optimizer`` (adamw if absent). The script never sees the
-    key: its train() takes no such argument."""
+OPTIMIZER_KEYS = ("optimizer", "prodigy_steps")  # config keys for use_optimizer, not the script
+
+
+def optimizer_from_config(config_path: Path) -> tuple[str, int]:
+    """The run config's ``optimizer`` (adamw if absent) and ``prodigy_steps``. The
+    script never sees these keys: its train() takes no such arguments."""
     import yaml
     from voxcpm.training import config as config_module
 
@@ -232,11 +243,12 @@ def optimizer_from_config(config_path: Path) -> str:
 
     def without_optimizer(*args, **kwargs):
         data = load_yaml_config(*args, **kwargs)
-        data.pop("optimizer", None)
+        for key in OPTIMIZER_KEYS:
+            data.pop(key, None)
         return data
 
     config_module.load_yaml_config = without_optimizer
-    return str(config.get("optimizer") or "adamw")
+    return str(config.get("optimizer") or "adamw"), int(config.get("prodigy_steps") or 0)
 
 
 def process_alive(pid: int) -> bool:
@@ -286,7 +298,7 @@ def main() -> None:
     vram.apply_limit("cuda")  # VOXCPM_STUDIO_VRAM_GB, as in the server
     if os.environ.get("VOXCPM_STUDIO_TRAIN_CHECKPOINT") == "1" or vram.detect("cuda")[1].train_checkpointing:
         checkpoint_layers()
-    use_optimizer(optimizer_from_config(args.config_path))
+    use_optimizer(*optimizer_from_config(args.config_path))
     threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid), daemon=True).start()
     sys.argv = [str(SCRIPT), "--config_path", str(args.config_path)]
     runpy.run_path(str(SCRIPT), run_name="__main__")

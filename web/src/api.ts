@@ -244,6 +244,7 @@ export interface TrainParams {
   max_batch_tokens: number // clips too long for this per-batch budget are left out; 0 = no limit
   learning_rate: number
   optimizer: Optimizer
+  prodigy_steps: number // prodigy_sf: step size fixed from this step on; 0 = adapts throughout
   weight_decay: number
   warmup_steps: number
   max_grad_norm: number
