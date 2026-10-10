@@ -156,8 +156,10 @@ def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
       settle apart (text LM highest, decoder lowest), and results held up
       better across epochs than with one shared step size.
 
-    The logged learning rate is the effective one (Prodigy's d x lr), also per
-    group as ``lr_<network>``.
+    The logged learning rate is Prodigy's d x lr, also per group as
+    ``lr_<network>``. Schedule-Free moves the training weights by less: d x lr x
+    (1 - beta1 (1 - c)), c the averaging weight, which shrinks as the average
+    builds up; logged as ``elr_<network>`` (the package's ``effective_lr`` x d).
     """
     if name == "adamw":
         return
@@ -250,13 +252,27 @@ def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
 
     log_metrics = TrainingTracker.log_metrics
 
+    class Rate(float):
+        """Printed in scientific notation: the tracker's fixed 6 decimals would
+        round Prodigy's small early rates to 0."""
+
+        def __format__(self, spec):
+            return format(float(self), ".4e")
+
     def log_with_effective_lr(self, metrics, *args, **kwargs):
         if active and "lr" in metrics:
             group = active[0].param_groups[0]
             metrics = {**metrics, "lr": float(group.get("d", 1.0)) * float(group["lr"])}
             for g in active[0].param_groups:
                 if "name" in g:
-                    metrics[f"lr_{g['name']}"] = float(g.get("d", 1.0)) * float(g["lr"])
+                    d = float(g.get("d", 1.0))
+                    metrics[f"lr_{g['name']}"] = d * float(g["lr"])
+                    if "effective_lr" in g:  # Schedule-Free: the step of the training weights
+                        metrics[f"elr_{g['name']}"] = d * float(g["effective_lr"])
+            rates: dict[str, float] = {
+                k: Rate(v) if k == "lr" or k.startswith(("lr_", "elr_")) else v for k, v in metrics.items()
+            }
+            metrics = rates
         return log_metrics(self, metrics, *args, **kwargs)
 
     TrainingTracker.log_metrics = log_with_effective_lr

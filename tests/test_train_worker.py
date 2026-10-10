@@ -114,6 +114,29 @@ def test_schedule_free_trains_one_group_per_network(restore_patches, monkeypatch
     train_steps(model, opt)
 
 
+def test_schedule_free_logs_step_sizes_per_network_without_rounding(restore_patches, monkeypatch, tmp_path):
+    from voxcpm_studio import training
+
+    train_worker.use_optimizer("prodigy_sf")
+    model = Toy()
+    model.feat_decoder = torch.nn.Linear(4, 4)
+    monkeypatch.setattr(model, "train", v2.VoxCPM2Model.train.__get__(model))
+    model.train()
+    opt = torch.optim.AdamW(list(model.parameters()), lr=1.0)
+    train_steps(model, opt, steps=3)
+
+    log = tmp_path / "train.log"
+    tracker = TrainingTracker(writer=None, log_file=str(log), rank=0)
+    tracker.step = 3
+    tracker.log_metrics({"loss/diff": 0.5, "lr": 1.0}, split="train")
+
+    (point,) = training.parse_metrics(log)["train"]
+    group = opt.param_groups[0]
+    assert point["lr_lora_A"] == pytest.approx(group["d"] * group["lr"], rel=1e-3)  # d is ~1e-6: not rounded to 0
+    assert 0 < point["elr_lora_A"] <= point["lr_lora_A"]
+    assert {"lr_feat_decoder", "elr_feat_decoder", "loss/diff"} <= set(point)
+
+
 def test_schedule_free_resumes_a_single_group_checkpoint_with_fresh_state(restore_patches):
     train_worker.use_optimizer("prodigy_sf")
     old = Toy()

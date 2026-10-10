@@ -450,6 +450,10 @@ export const en = {
   samples: 'Samples',
   lrTitle: 'Learning rate',
   lrSingle: 'Learning rate',
+  lrDashed: 'd × lr',
+  lrDashedTitle:
+    'Dashed: Prodigy’s step size (d × lr). Solid: the effective rate the training weights move by, smaller once Schedule-Free’s average builds up.',
+  lrDashedValue: (v: string) => `d × lr ${v}`,
   similarityHeading: 'Speaker similarity',
   similarityHint:
     'How much each validation sample sounds like the training set’s voice (CAM++ speaker embeddings; 1 = identical). The dashed line is how real clips of the set score. With two samples per checkpoint, single values are noisy: use the trend to pick checkpoints to listen to.',

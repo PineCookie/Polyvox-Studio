@@ -781,7 +781,9 @@ select {
 
 .legend {
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 14px;
   color: var(--muted);
   font-size: 0.8rem;
 }
@@ -873,6 +875,16 @@ select {
   fill: none;
   stroke-width: 2;
   stroke-linejoin: round;
+}
+
+.chart .series-lr.dashed {
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  stroke-opacity: 0.6;
+}
+
+.swatch.dashed-swatch {
+  background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 7px);
 }
 
 .chart .series-sample {

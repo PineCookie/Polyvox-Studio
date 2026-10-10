@@ -7,23 +7,46 @@ import { useT } from '../i18n'
 
 const M = { ...MARGIN, left: 60 } // room for 1.0e-4 style ticks
 const COLORS = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)']
-const GROUP_PREFIX = 'lr_' // per-network rates (Prodigy-SF), else the single "lr"
+// Prodigy-SF logs per network: lr_<name> (d x lr) and elr_<name> (the step of
+// the training weights, smaller once Schedule-Free's average builds up).
+const STEP_PREFIX = 'lr_'
+const EFFECTIVE_PREFIX = 'elr_'
 
 const fmt = (v: number) => (v === 0 ? '0' : v.toExponential(1))
 
-/** The learning rate over the steps: one line per parameter group when the run
- * logs them (Prodigy-SF's per-network step sizes), else the logged rate. */
+interface Series {
+  key: string
+  label: string
+  color: string
+  dashed: boolean
+}
+
+/** The learning rate over the steps: per network when the run logs it
+ * (Prodigy-SF: the effective rate solid, its d x lr dashed), else the logged rate. */
 export function LrChart({ train }: { train: MetricPoint[] }) {
   const t = useT()
   const [ref, width] = useWidth<HTMLDivElement>()
   const height = chartHeight(width)
   const [hoverStep, setHoverStep] = useState<number | null>(null)
 
-  const keys = useMemo(() => {
-    const groups = new Set<string>()
-    for (const p of train) for (const k of Object.keys(p)) if (k.startsWith(GROUP_PREFIX)) groups.add(k)
-    return groups.size > 0 ? [...groups] : ['lr']
-  }, [train])
+  const series = useMemo<Series[]>(() => {
+    const names: string[] = []
+    let effective = false
+    for (const p of train)
+      for (const k of Object.keys(p)) {
+        if (k.startsWith(EFFECTIVE_PREFIX)) effective = true
+        const name = k.startsWith(STEP_PREFIX) ? k.slice(STEP_PREFIX.length) : null
+        if (name && !names.includes(name)) names.push(name)
+      }
+    if (names.length === 0) return [{ key: 'lr', label: t.lrSingle, color: COLORS[0], dashed: false }]
+    return names.flatMap((name, i) => {
+      const color = COLORS[i % COLORS.length]
+      const step = { key: STEP_PREFIX + name, label: name, color, dashed: effective }
+      return effective ? [{ key: EFFECTIVE_PREFIX + name, label: name, color, dashed: false }, step] : [step]
+    })
+  }, [train, t])
+  const keys = useMemo(() => series.map((s) => s.key), [series])
+  const dashed = series.some((s) => s.dashed)
   const points = useMemo(() => train.filter((p) => keys.some((k) => Number.isFinite(p[k]))), [train, keys])
 
   const geometry = useMemo(() => {
@@ -62,19 +85,25 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
     setHoverStep(best?.step ?? null)
   }
 
-  const label = (key: string) => (key === 'lr' ? t.lrSingle : key.slice(GROUP_PREFIX.length))
   const hover = hoverStep === null ? null : points.find((p) => p.step === hoverStep)
+  const solid = series.filter((s) => !s.dashed)
+  const value = (p: MetricPoint, key: string) => (Number.isFinite(p[key]) ? fmt(p[key]) : '–')
   return (
     <figure className="chart">
       <figcaption className="chart-head">
         <span className="chart-title">{t.lrTitle}</span>
         <span className="spacer" />
         <span className="legend">
-          {keys.map((k, i) => (
-            <span key={k} className="legend-item">
-              <span className="swatch line" style={{ background: COLORS[i % COLORS.length] }} aria-hidden /> {label(k)}
+          {solid.map((s) => (
+            <span key={s.key} className="legend-item">
+              <span className="swatch line" style={{ background: s.color }} aria-hidden /> {s.label}
             </span>
           ))}
+          {dashed && (
+            <span className="legend-item" title={t.lrDashedTitle}>
+              <span className="swatch line dashed-swatch" aria-hidden /> {t.lrDashed}
+            </span>
+          )}
         </span>
       </figcaption>
       <div className="chart-body" ref={ref}>
@@ -95,8 +124,13 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
                 {formatStep(v)}
               </text>
             ))}
-            {keys.map((k, i) => (
-              <path key={k} className="series-lr" style={{ stroke: COLORS[i % COLORS.length] }} d={geometry.path(k)} />
+            {series.map((s) => (
+              <path
+                key={s.key}
+                className={s.dashed ? 'series-lr dashed' : 'series-lr'}
+                style={{ stroke: s.color }}
+                d={geometry.path(s.key)}
+              />
             ))}
             {hover && (
               <line
@@ -122,12 +156,16 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
         {geometry && hover && (
           <div className="tooltip" style={{ left: Math.min(geometry.x(hover.step) + 12, width - 190), top: M.top }}>
             <strong>{t.stepLabel(formatStep(hover.step))}</strong>
-            {keys.map((k, i) => (
-              <span key={k}>
-                <span className="swatch line" style={{ background: COLORS[i % COLORS.length] }} aria-hidden />{' '}
-                {label(k)} {Number.isFinite(hover[k]) ? fmt(hover[k]) : '–'}
-              </span>
-            ))}
+            {solid.map((s) => {
+              const step = series.find((d) => d.dashed && d.label === s.label)
+              return (
+                <span key={s.key}>
+                  <span className="swatch line" style={{ background: s.color }} aria-hidden /> {s.label}{' '}
+                  {value(hover, s.key)}
+                  {step && <span className="muted"> ({t.lrDashedValue(value(hover, step.key))})</span>}
+                </span>
+              )
+            })}
           </div>
         )}
       </div>
