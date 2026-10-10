@@ -128,6 +128,17 @@ def checkpoint_layers() -> None:
     print("[studio] Gradient checkpointing on (transformer layers).", file=sys.stderr)
 
 
+def by_network(model, params) -> list[dict]:
+    """``params`` as parameter groups, one per top-level submodule of ``model``
+    (VoxCPM2: base_lm, residual_lm, feat_decoder), each named after it."""
+    params = list(params)
+    names = {id(p): name.split(".")[0] for name, p in model.named_parameters()}
+    groups: dict[str, list] = {}
+    for p in params:
+        groups.setdefault(names.get(id(p), "other"), []).append(p)
+    return [{"params": ps, "name": name} for name, ps in groups.items()]
+
+
 def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
     """Swap the script's AdamW (and its schedule) for a Prodigy variant.
 
@@ -139,9 +150,14 @@ def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
       keeps the average elsewhere: the model's train() / eval() switch the
       optimizer too (validation and samples use the average), checkpoints hold the
       average, and loading a checkpoint switches back to training weights.
-      ``prodigy_steps`` > 0 keeps its step size fixed from that step on.
+      ``prodigy_steps`` > 0 keeps its step size fixed from that step on. Each
+      network (text LM, residual LM, diffusion decoder) is its own parameter
+      group, so Prodigy estimates a step size for each (``by_network``): they
+      settle apart (text LM highest, decoder lowest), and results held up
+      better across epochs than with one shared step size.
 
-    The logged learning rate is the effective one (Prodigy's d x lr).
+    The logged learning rate is the effective one (Prodigy's d x lr), also per
+    group as ``lr_<network>``.
     """
     if name == "adamw":
         return
@@ -152,6 +168,7 @@ def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
     from voxcpm.training import TrainingTracker
 
     active: list[torch.optim.Optimizer] = []
+    models: list[torch.nn.Module] = []  # the model, seen in its first train() call
 
     if name == "prodigy":
         from prodigyopt import Prodigy
@@ -166,13 +183,21 @@ def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
 
         class ScheduleFree(ProdigyPlusScheduleFree):
             def load_state_dict(self, state_dict):
-                super().load_state_dict(state_dict)
+                try:
+                    super().load_state_dict(state_dict)
+                except ValueError as e:  # saved with other groups (before by_network)
+                    print(f"[studio] Optimizer state not resumed ({e}); starting it afresh.", file=sys.stderr)
+                    return  # the averaged weights train on; the state builds up again
                 # The model was just loaded with the checkpoint's averaged weights.
                 for group in self.param_groups:
                     group["train_mode"] = False
                 self.train()
 
         def make(params, lr, weight_decay=0.0, **_):
+            if models:
+                params = by_network(models[-1], params)
+                sizes = {g["name"]: len(g["params"]) for g in params}
+                print(f"[studio] Parameter groups: {sizes}", file=sys.stderr)
             # A shorter averaging window than the package default (schedulefree_c 0)
             # and beta1 0.95, as its docs suggest for Schedule-Free.
             opt = ScheduleFree(
@@ -186,14 +211,20 @@ def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
             active.append(opt)
             return opt
 
+        class Constant(torch.optim.lr_scheduler.LambdaLR):
+            def load_state_dict(self, state_dict):
+                pass  # nothing to resume (a checkpoint's may hold other groups)
+
         def constant(optimizer, **_):
-            return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
+            return Constant(optimizer, lambda _: 1.0)
 
         transformers.get_cosine_schedule_with_warmup = constant
 
         for cls in (v2.VoxCPM2Model, v1.VoxCPMModel):
 
             def train(self, mode=True, _train=cls.train):
+                if self not in models:
+                    models.append(self)
                 result = _train(self, mode)
                 for opt in active:
                     opt.train() if mode else opt.eval()
@@ -223,6 +254,9 @@ def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
         if active and "lr" in metrics:
             group = active[0].param_groups[0]
             metrics = {**metrics, "lr": float(group.get("d", 1.0)) * float(group["lr"])}
+            for g in active[0].param_groups:
+                if "name" in g:
+                    metrics[f"lr_{g['name']}"] = float(g.get("d", 1.0)) * float(g["lr"])
         return log_metrics(self, metrics, *args, **kwargs)
 
     TrainingTracker.log_metrics = log_with_effective_lr

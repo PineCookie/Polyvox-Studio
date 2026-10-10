@@ -90,6 +90,46 @@ def test_schedule_free_checkpoints_hold_the_average_and_resume_exactly(restore_p
     assert (resumed.lora_A.weight - training).abs().max().item() < gap / 100
 
 
+def test_parameter_groups_per_network():
+    model = torch.nn.Module()
+    model.base_lm = torch.nn.Linear(2, 2)
+    model.feat_decoder = torch.nn.Linear(2, 2)
+    model.feat_decoder.bias.requires_grad_(False)
+    stray = torch.nn.Parameter(torch.zeros(1))
+    trainable = [p for p in model.parameters() if p.requires_grad] + [stray]
+
+    groups = train_worker.by_network(model, iter(trainable))
+
+    assert {g["name"]: len(g["params"]) for g in groups} == {"base_lm": 2, "feat_decoder": 1, "other": 1}
+
+
+def test_schedule_free_trains_one_group_per_network(restore_patches, monkeypatch):
+    train_worker.use_optimizer("prodigy_sf")
+    model = Toy()
+    model.feat_decoder = torch.nn.Linear(4, 4)
+    monkeypatch.setattr(model, "train", v2.VoxCPM2Model.train.__get__(model))
+    model.train()  # the script calls this before creating the optimizer
+    opt = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=1.0)
+    assert [g["name"] for g in opt.param_groups] == ["lora_A", "feat_decoder"]
+    train_steps(model, opt)
+
+
+def test_schedule_free_resumes_a_single_group_checkpoint_with_fresh_state(restore_patches):
+    train_worker.use_optimizer("prodigy_sf")
+    old = Toy()
+    old_opt = torch.optim.AdamW(old.parameters(), lr=1.0)  # no train() seen: one group
+    train_steps(old, old_opt)
+    saved = v2.VoxCPM2Model.state_dict(old)
+
+    model = Toy()
+    model.feat_decoder = torch.nn.Linear(4, 4)
+    model.load_state_dict(saved, strict=False)
+    opt = torch.optim.AdamW(train_worker.by_network(model, model.parameters()), lr=1.0)
+    opt.load_state_dict(old_opt.state_dict())
+    assert torch.equal(model.lora_A.weight, saved["lora_A.weight"])
+    train_steps(model, opt)
+
+
 def test_schedule_free_follows_the_models_train_and_eval(restore_patches, monkeypatch):
     train_worker.use_optimizer("prodigy_sf")
     model = Toy()
