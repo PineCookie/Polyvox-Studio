@@ -374,9 +374,10 @@ def plan_word_clips(
 def _quietest(wav16k: np.ndarray, lo: float, hi: float) -> float:
     """The quietest 10 ms in [lo, hi] seconds (the middle when too short)."""
     frame = VAD_RATE // 100
-    a, b = int(lo * VAD_RATE), int(hi * VAD_RATE)
+    b = min(int(hi * VAD_RATE), len(wav16k))
+    a = min(int(lo * VAD_RATE), b)
     if b - a < 2 * frame:
-        return (lo + hi) / 2
+        return (a + b) / 2 / VAD_RATE
     n = (b - a) // frame
     rms = np.sqrt(np.mean(wav16k[a : a + n * frame].reshape(n, frame) ** 2, axis=1))
     # Of the (near-)quietest frames, the one nearest the middle: in digital
@@ -436,11 +437,13 @@ def word_clips(wav16k: np.ndarray, text: str, alignment, opts: SliceOptions) -> 
     words = alignment.words
     if not words or len(words) != len(spans):
         return []
-    times = [(w.start, max(w.end, w.start)) for w in words]
+    duration = len(wav16k) / VAD_RATE
+    # The aligner can place trailing words past the audio (text ASR heard beyond
+    # the chunk's speech); such words end at the chunk's end.
+    times = [(min(w.start, duration), min(max(w.end, w.start), duration)) for w in words]
     pauses = _pauses(loud_frames(wav16k), times)
     breaks = [_break_score(text[spans[k][1] : spans[k + 1][0]], pauses[k][0]) for k in range(len(words) - 1)]
     plan = plan_word_clips(times, breaks, opts, [p[0] for p in pauses])
-    duration = len(wav16k) / VAD_RATE
     # Cut at the quietest moment of the pause after a clip's last word: a
     # pause found while the previous word still fades has its middle too early,
     # and the next clip would open with that word's tail. Words that run

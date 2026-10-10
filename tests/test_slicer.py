@@ -169,6 +169,20 @@ def test_word_plan_cuts_at_sentence_ends_even_without_a_longer_pause():
     assert slicer.plan_word_clips(times, breaks, opts) == [(0, 4), (5, 9)]
 
 
+def test_word_clips_survive_words_placed_past_the_audio():
+    from voxcpm_studio.aligner import Alignment, Word
+
+    wav = bursts([(0.5, 0.9), (1.1, 1.5), (1.7, 2.1), (2.3, 2.7)], 4.0, 16000)
+    # The aligner put the second sentence (text ASR heard) after the chunk's end.
+    spans = [(0.5, 0.9), (1.1, 1.5), (1.7, 2.1), (2.3, 2.7), (5.0, 5.5), (5.7, 6.2), (6.4, 6.9), (11.0, 11.8)]
+    alignment = Alignment([Word(c, s, e, 0.9) for c, (s, e) in zip("一二三四五六七八", spans, strict=True)], 0.9)
+    opts = SliceOptions(min_seconds=0.5, max_seconds=6.0, target_seconds=2.0, pad_seconds=0.1)
+
+    clips = slicer.word_clips(wav, "一二三四。五六七八。", alignment, opts)
+
+    assert clips and all(0 <= c.start < c.end <= 4.0 for c in clips)
+
+
 def test_guided_slicing_cuts_between_words_and_splits_the_text(tmp_path):
     # Two sentences of four words; the comma pause inside the second (0.4 s) is
     # longer than the one between them (0.2 s), yet the sentence end wins.
