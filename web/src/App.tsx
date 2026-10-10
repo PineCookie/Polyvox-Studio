@@ -8,21 +8,24 @@ import type { Clip } from './components/History'
 import { PrepareView } from './components/PrepareView'
 import { StatusBar } from './components/StatusBar'
 import { ThemeToggle } from './components/ThemeToggle'
+import { LanguageToggle } from './components/LanguageToggle'
+import { useT } from './i18n'
 import { SynthesisPanel } from './components/SynthesisPanel'
 import { TrainingView } from './components/TrainingView'
 import { VoicePanel } from './components/VoicePanel'
 
 // Workflow order: raw audio -> dataset -> LoRA -> speech.
-const TABS = { synthesize: 'Synthesize', prepare: 'Prepare', train: 'Train', models: 'Models' } as const
-type Tab = keyof typeof TABS
+const TABS = ['synthesize', 'prepare', 'train', 'models'] as const
+type Tab = (typeof TABS)[number]
 
 function tabFromHash(): Tab {
   const t = location.hash.slice(1)
   if (t === 'data') return 'prepare' // the tab's earlier name
-  return t in TABS ? (t as Tab) : 'synthesize'
+  return (TABS as readonly string[]).includes(t) ? (t as Tab) : 'synthesize'
 }
 
 export default function App() {
+  const t = useT()
   const [tab, setTab] = useState<Tab>(tabFromHash)
   // Set by the Data tab's "Train on this"; opens New run with that dataset.
   const [trainDataset, setTrainDataset] = useState<{ id: string; key: number } | null>(null)
@@ -70,7 +73,7 @@ export default function App() {
         id: nextClipId.current++,
         url: URL.createObjectURL(out.audio),
         text: params.text.trim(),
-        voice: selectedLora ?? 'Base model',
+        voice: selectedLora ?? t.baseModel,
         seed: out.seed,
         elapsedMs: performance.now() - started,
         createdAt: new Date(),
@@ -140,21 +143,22 @@ export default function App() {
         <h1>
           VoxCPM <span>Studio</span>
         </h1>
-        <nav className="tabs" aria-label="Sections">
-          {(Object.keys(TABS) as Tab[]).map((t) => (
+        <nav className="tabs" aria-label={t.sections}>
+          {TABS.map((name) => (
             <button
-              key={t}
+              key={name}
               type="button"
-              className={tab === t ? 'active' : ''}
-              aria-current={tab === t ? 'page' : undefined}
-              onClick={() => switchTab(t)}
+              className={tab === name ? 'active' : ''}
+              aria-current={tab === name ? 'page' : undefined}
+              onClick={() => switchTab(name)}
             >
-              {TABS[t]}
+              {t.tabs[name]}
             </button>
           ))}
         </nav>
         <span className="spacer" />
         <StatusBar status={status} onUnload={unload} />
+        <LanguageToggle />
         <ThemeToggle />
       </header>
 
@@ -162,19 +166,16 @@ export default function App() {
         <div className="error" role="alert">
           <span>{error}</span>
           <button type="button" className="ghost small" onClick={() => setError(null)}>
-            Dismiss
+            {t.dismiss}
           </button>
         </div>
       )}
 
       {tab !== 'models' && (status?.missing_required.length ?? 0) > 0 && (
         <div className="notice">
-          <span>
-            {status!.missing_required.join(', ')} is not downloaded yet. Download it in Models (with progress), or it
-            downloads from Hugging Face the first time it is needed.
-          </span>
+          <span>{t.missingModels(status!.missing_required.join(', '))}</span>
           <button type="button" className="ghost small" onClick={() => switchTab('models')}>
-            Open Models
+            {t.openModels}
           </button>
         </div>
       )}

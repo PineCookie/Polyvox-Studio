@@ -3,6 +3,7 @@ import type { FormEvent, KeyboardEvent } from 'react'
 import { getTtsProgress, transcribe } from '../api'
 import type { SynthesisParams, TtsProgress } from '../api'
 import { formatDuration } from '../format'
+import { useT } from '../i18n'
 import { forgetPeaks } from '../peaks'
 import { AudioPlayer } from './AudioPlayer'
 import { FilePicker } from './FilePicker'
@@ -15,7 +16,7 @@ const TAGS: [string, string][] = [
   ['[sigh]', 'sigh'],
   ['[Uhm]', 'uhm'],
   ['[Shh]', 'shh'],
-]
+] // [tag, its name in t.tagNames]
 const MORE_TAGS = [
   '[Question-ah]',
   '[Question-ei]',
@@ -29,6 +30,7 @@ const POLL_MS = 400
 
 /** Phase and an estimated share of the generation, polled while it runs. */
 function SynthesisProgress() {
+  const t = useT()
   const [progress, setProgress] = useState<TtsProgress | null>(null)
   useEffect(() => {
     let alive = true
@@ -48,12 +50,12 @@ function SynthesisProgress() {
   const { phase, step, expected, attempt, elapsed } = progress
   const label =
     phase === 'loading'
-      ? 'Loading the model'
+      ? t.progressLoading
       : phase === 'compiling'
-        ? 'Compiling (first generation after loading, ~30 s)'
+        ? t.progressCompiling
         : phase === 'generating'
-          ? `Generating${attempt > 1 ? ` (attempt ${attempt}: the last ran far too long)` : ''}`
-          : 'Preparing'
+          ? t.progressGenerating + (attempt > 1 ? t.progressRetry(attempt) : '')
+          : t.progressPreparing
   // The estimate can be short or long; never show done before it is.
   const share = phase === 'generating' && expected ? Math.min(step / expected, 0.97) : 0
   return (
@@ -78,6 +80,7 @@ interface Props {
 }
 
 export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, onTranscribed }: Props) {
+  const t = useT()
   const [text, setText] = useState('')
   const [control, setControl] = useState('')
   const [referenceAudio, setReferenceAudio] = useState<File | null>(null)
@@ -145,69 +148,65 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
   return (
     <form className="panel" onSubmit={submit} onKeyDown={onKeyDown}>
       <header className="panel-head">
-        <h2>Synthesize</h2>
+        <h2>{t.synthesize}</h2>
       </header>
 
       <label className="field">
-        <span>Text</span>
+        <span>{t.text}</span>
         <textarea
           ref={textArea}
           rows={5}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="What should the voice say?"
+          placeholder={t.textPlaceholder}
           autoFocus
         />
       </label>
-      <div className="tag-row" role="group" aria-label="Insert a non-verbal tag">
+      <div className="tag-row" role="group" aria-label={t.tagGroup}>
         {TAGS.map(([tag, label]) => (
           <button
             key={tag}
             type="button"
             className="ghost small"
             onClick={() => insertTag(tag)}
-            title={`Insert ${tag}`}
+            title={t.insertTag(tag)}
           >
-            {label}
+            {t.tagNames[label]}
           </button>
         ))}
         <select
           value=""
           onChange={(e) => e.target.value && insertTag(e.target.value)}
-          aria-label="More tags"
+          aria-label={t.moreTagsLabel}
           className="small"
         >
-          <option value="">More…</option>
+          <option value="">{t.moreTags}</option>
           {MORE_TAGS.map((tag) => (
             <option key={tag} value={tag}>
               {tag}
             </option>
           ))}
         </select>
-        <span className="muted hint">VoxCPM2 tags; use sparingly</span>
+        <span className="muted hint">{t.tagsHint}</span>
       </div>
 
       <label className="field">
         <span>
-          Style <span className="muted">optional</span>
+          {t.style} <span className="muted">{t.optional}</span>
         </span>
-        <input
-          value={control}
-          onChange={(e) => setControl(e.target.value)}
-          placeholder="e.g. a calm, warm female voice, speaking slowly"
-        />
+        <input value={control} onChange={(e) => setControl(e.target.value)} placeholder={t.stylePlaceholder} />
       </label>
 
       <fieldset className="field reference">
         <legend>
-          Reference audio <span className="muted">optional · voice cloning</span>
+          {t.referenceAudio} <span className="muted">{t.referenceOptional}</span>
         </legend>
         <FilePicker
           file={referenceAudio}
           onChange={(f) => (f ? setReferenceAudio(f) : clearReference())}
           accept="audio/*"
-          label="Choose audio…"
-          empty="or drop a file here"
+          label={t.chooseAudio}
+          empty={t.orDropFile}
         >
           {referenceUrl && <AudioPlayer url={referenceUrl} />}
         </FilePicker>
@@ -216,27 +215,27 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
             <input
               value={promptText}
               onChange={(e) => setPromptText(e.target.value)}
-              placeholder="Transcript of the reference (improves cloning fidelity)"
+              placeholder={t.referenceTranscript}
             />
             <button
               type="button"
               className="ghost small"
               onClick={transcribeReference}
               disabled={transcribing}
-              title="Fill in the transcript with speech recognition (Qwen3-ASR)"
+              title={t.transcribeTitle}
             >
-              {transcribing ? 'Transcribing…' : 'Transcribe'}
+              {transcribing ? t.transcribing : t.transcribe}
             </button>
           </div>
         )}
       </fieldset>
 
       <details className="advanced">
-        <summary>Advanced</summary>
+        <summary>{t.advanced}</summary>
         <div className="advanced-grid">
           <label className="field">
             <span>
-              Guidance <output>{cfgValue.toFixed(1)}</output>
+              {t.guidance} <output>{cfgValue.toFixed(1)}</output>
             </span>
             <input
               type="range"
@@ -249,27 +248,27 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
           </label>
           <label className="field">
             <span>
-              Steps <output>{steps}</output>
+              {t.steps} <output>{steps}</output>
             </span>
             <input type="range" min={1} max={50} value={steps} onChange={(e) => setSteps(Number(e.target.value))} />
           </label>
           <label className="field">
-            <span>Seed</span>
+            <span>{t.seed}</span>
             <input
               type="number"
               value={seed ?? ''}
-              placeholder="Random"
+              placeholder={t.random}
               onChange={(e) => onSeedChange(e.target.value === '' ? null : Number(e.target.value))}
             />
           </label>
           <div className="toggles">
             <label>
-              <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} /> Normalize
-              text
+              <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} />{' '}
+              {t.normalizeText}
             </label>
             <label>
-              <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} /> Denoise
-              reference
+              <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} />{' '}
+              {t.denoiseReference}
             </label>
           </div>
         </div>
@@ -277,9 +276,9 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
 
       {busy && <SynthesisProgress />}
       <div className="actions">
-        <span className="muted hint">Ctrl + Enter</span>
+        <span className="muted hint">{t.ctrlEnter}</span>
         <button type="submit" className="primary" disabled={!canSubmit}>
-          {busy ? 'Generating…' : 'Generate'}
+          {busy ? t.generating : t.generate}
         </button>
       </div>
     </form>

@@ -1,3 +1,4 @@
+import { useT } from '../i18n'
 import { AudioPlayer } from './AudioPlayer'
 
 export interface Clip {
@@ -25,13 +26,14 @@ function fileName(clip: Clip): string {
 }
 
 export function History({ clips, onUseSeed, onRemove }: Props) {
+  const t = useT()
   if (clips.length === 0) {
     return (
       <section className="panel">
         <header className="panel-head">
-          <h2>History</h2>
+          <h2>{t.history}</h2>
         </header>
-        <p className="muted empty">Generated clips from this session appear here.</p>
+        <p className="muted empty">{t.historyEmpty}</p>
       </section>
     )
   }
@@ -39,7 +41,7 @@ export function History({ clips, onUseSeed, onRemove }: Props) {
   return (
     <section className="panel">
       <header className="panel-head">
-        <h2>History</h2>
+        <h2>{t.history}</h2>
         <span className="muted">{clips.length}</span>
       </header>
       <ol className="history">
@@ -52,25 +54,26 @@ export function History({ clips, onUseSeed, onRemove }: Props) {
 }
 
 function HistoryClip({ clip, onUseSeed, onRemove }: { clip: Clip } & Omit<Props, 'clips'>) {
+  const t = useT()
   return (
     <li className="clip">
       <p className="clip-text">{clip.text}</p>
       <AudioPlayer url={clip.url} />
       <div className="clip-meta">
         <span className="tag">{clip.voice}</span>
-        {clip.seed !== null && <span className="muted">seed {clip.seed}</span>}
-        <span className="muted">{(clip.elapsedMs / 1000).toFixed(1)} s</span>
+        {clip.seed !== null && <span className="muted">{t.seedValue(clip.seed)}</span>}
+        <span className="muted">{t.seconds((clip.elapsedMs / 1000).toFixed(1))}</span>
         <span className="spacer" />
         {clip.seed !== null && (
           <button type="button" className="ghost small" onClick={() => onUseSeed(clip.seed!)}>
-            Use seed
+            {t.useSeed}
           </button>
         )}
         <a className="button ghost small" href={clip.url} download={fileName(clip)}>
-          Download
+          {t.download}
         </a>
-        <button type="button" className="ghost small" onClick={() => onRemove(clip.id)} aria-label="Remove clip">
-          Remove
+        <button type="button" className="ghost small" onClick={() => onRemove(clip.id)} aria-label={t.removeClip}>
+          {t.remove}
         </button>
       </div>
     </li>

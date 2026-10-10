@@ -1,5 +1,6 @@
 import type { RunStatus, RunSummary } from '../api'
 import { formatStep } from '../format'
+import { useT } from '../i18n'
 
 interface Props {
   runs: RunSummary[]
@@ -11,16 +12,9 @@ interface Props {
 
 export const NEW_RUN = '\0new'
 
-const STATUS_LABEL: Record<RunStatus, string> = {
-  running: 'Training',
-  stopping: 'Stopping',
-  complete: 'Complete',
-  incomplete: 'Paused',
-  failed: 'Failed',
-}
-
 export function StatusPill({ status }: { status: RunStatus }) {
-  return <span className={`pill ${status}`}>{STATUS_LABEL[status]}</span>
+  const t = useT()
+  return <span className={`pill ${status}`}>{t.runStatus[status]}</span>
 }
 
 export function ProgressBar({ value, max }: { value: number; max: number }) {
@@ -33,12 +27,13 @@ export function ProgressBar({ value, max }: { value: number; max: number }) {
 }
 
 export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
+  const t = useT()
   return (
     <section className="panel">
       <header className="panel-head">
-        <h2>Runs</h2>
+        <h2>{t.runs}</h2>
         <button type="button" className={`small ${selected === NEW_RUN ? 'primary' : 'ghost'}`} onClick={onNew}>
-          New run
+          {t.newRun}
         </button>
       </header>
 
@@ -57,12 +52,12 @@ export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
             </span>
             <ProgressBar value={run.step ?? 0} max={run.num_iters} />
             <span className="muted">
-              {run.step !== null ? formatStep(run.step) : '–'} / {formatStep(run.num_iters)} steps
-              {run.lora_rank !== null && ` · rank ${run.lora_rank}`}
+              {t.runSteps(run.step !== null ? formatStep(run.step) : '–', formatStep(run.num_iters))}
+              {run.lora_rank !== null && t.rankSuffix(run.lora_rank)}
             </span>
           </button>
         ))}
-        {!loading && runs.length === 0 && <p className="muted empty">No training runs yet.</p>}
+        {!loading && runs.length === 0 && <p className="muted empty">{t.noRuns}</p>}
       </div>
     </section>
   )

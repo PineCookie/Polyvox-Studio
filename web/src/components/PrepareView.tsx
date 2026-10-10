@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { listDatasets } from '../api'
 import type { ImportJob } from '../api'
 import { datasetName } from '../format'
+import { useT } from '../i18n'
 import { DatasetPage } from './DatasetPage'
 import { ImportForm } from './ImportForm'
 
@@ -15,6 +16,7 @@ const IMPORT = '\0import'
 
 /** Raw recordings and lists in, checked datasets out: import (slice, transcribe, align), then review. */
 export function PrepareView({ onError, onTrain }: Props) {
+  const t = useT()
   const [datasets, setDatasets] = useState<string[] | null>(null)
   const [selected, setSelected] = useState(IMPORT)
   const [imported, setImported] = useState<ImportJob['result'] | null>(null)
@@ -59,13 +61,13 @@ export function PrepareView({ onError, onTrain }: Props) {
       <aside className="side-col">
         <section className="panel voice-panel">
           <header className="panel-head">
-            <h2>Datasets</h2>
+            <h2>{t.datasets}</h2>
             <button
               type="button"
               className={`small ${selected === IMPORT ? 'primary' : 'ghost'}`}
               onClick={() => setSelected(IMPORT)}
             >
-              Import
+              {t.import}
             </button>
           </header>
           <div className="voice-list">
@@ -80,7 +82,7 @@ export function PrepareView({ onError, onTrain }: Props) {
                 <span className="voice-row-name">{datasetName(id)}</span>
               </button>
             ))}
-            {datasets?.length === 0 && <p className="muted empty">None yet. Import one.</p>}
+            {datasets?.length === 0 && <p className="muted empty">{t.noDatasets}</p>}
           </div>
         </section>
       </aside>

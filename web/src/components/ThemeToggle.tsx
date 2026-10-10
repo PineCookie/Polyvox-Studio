@@ -1,11 +1,11 @@
 import { useState } from 'react'
+import { useT } from '../i18n'
 
 type Theme = 'auto' | 'light' | 'dark'
 
 // Also read in index.html, which applies it before the page renders.
 const STORAGE_KEY = 'voxcpm-studio.theme'
 const NEXT: Record<Theme, Theme> = { auto: 'light', light: 'dark', dark: 'auto' }
-const LABEL: Record<Theme, string> = { auto: '◐ Auto', light: '☀ Light', dark: '☾ Dark' }
 
 function stored(): Theme {
   try {
@@ -18,6 +18,7 @@ function stored(): Theme {
 
 /** Light / dark / follow the system; remembered in this browser. */
 export function ThemeToggle() {
+  const t = useT()
   const [theme, setTheme] = useState<Theme>(stored)
 
   function cycle() {
@@ -34,13 +35,8 @@ export function ThemeToggle() {
   }
 
   return (
-    <button
-      type="button"
-      className="ghost small"
-      onClick={cycle}
-      title={`Theme: ${theme === 'auto' ? 'follows the system' : theme}. Click for ${NEXT[theme]}.`}
-    >
-      {LABEL[theme]}
+    <button type="button" className="ghost small" onClick={cycle} title={t.themeTitle(theme, NEXT[theme])}>
+      {t.themeLabel[theme]}
     </button>
   )
 }

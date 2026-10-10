@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { datasetAudioUrl, dropFlagged, getDatasetRows, TRIMMABLE_FLAGS, trimFlagged } from '../api'
 import type { CheckFlag, CheckSummary, ClipPage, DatasetSource, FlagFilter } from '../api'
-import { ALIGNER_LABEL, FLAG_LABEL } from '../format'
+import { ALIGNER_LABEL, FLAGS, flagLabel } from '../format'
+import { useT } from '../i18n'
 import { ClipView } from './ClipView'
 import { Waveform } from './Waveform'
 
@@ -16,6 +17,7 @@ const fileName = (path: string) => path.split(/[\\/]/).at(-1) ?? path
 
 /** Browse a dataset's clips: play, read the transcript, spot ASR-made texts and flagged clips. */
 export function DatasetClips({ source }: Props) {
+  const t = useT()
   // Effects follow the source's value, not the object passed in each render.
   const sourceKey = JSON.stringify(source)
   const [query, setQuery] = useState('')
@@ -86,9 +88,7 @@ export function DatasetClips({ source }: Props) {
 
   async function dropAll(f: CheckFlag, count: number) {
     if (!('id' in source)) return
-    const label = FLAG_LABEL[f][0]
-    if (!window.confirm(`Drop all ${count} clips flagged “${label}”? They stay listed and can be restored one by one.`))
-      return
+    if (!window.confirm(t.confirmDropAll(count, flagLabel(f)[0]))) return
     try {
       await dropFlagged(source.id, f)
       changed()
@@ -99,20 +99,11 @@ export function DatasetClips({ source }: Props) {
 
   async function trimAll(f: CheckFlag, count: number) {
     if (!('id' in source)) return
-    const label = FLAG_LABEL[f][0]
-    const ask =
-      `Trim the edges of the ${count} clips flagged “${label}”? Each keeps 0.15 s around its transcribed speech; ` +
-      'clips also flagged Mismatch or Missing words?, or starting / ending with a filler the aligner could not place, are ' +
-      'left for review. The originals are kept in the ' +
-      "dataset's originals folder."
-    if (!window.confirm(ask)) return
+    if (!window.confirm(t.confirmTrimAll(count, flagLabel(f)[0]))) return
     try {
       const r = await trimFlagged(source.id, f)
-      const notes = [
-        r.review > 0 && `${r.review} left for review`,
-        r.skipped > 0 && `${r.skipped} can't be rewritten in place`,
-      ].filter(Boolean)
-      setNotice(`Trimmed ${r.trimmed} clips${notes.length ? ` (${notes.join(', ')})` : ''}.`)
+      const notes = [r.review > 0 && t.leftForReview(r.review), r.skipped > 0 && t.cantRewrite(r.skipped)]
+      setNotice(t.trimmedClips(r.trimmed, notes.filter(Boolean).join(', ')))
       changed()
     } catch (e) {
       setError((e as Error).message)
@@ -161,12 +152,12 @@ export function DatasetClips({ source }: Props) {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search text or file name"
-          aria-label="Search clips"
+          placeholder={t.searchClips}
+          aria-label={t.searchClipsLabel}
         />
         <span className="muted hint">
-          {page ? `${total.toLocaleString()} clips` : 'Loading…'}
-          {asrOnPage > 0 && ' · ASR = transcript made by speech recognition'}
+          {page ? t.clipsCount(total.toLocaleString()) : t.loading}
+          {asrOnPage > 0 && t.asrLegend}
         </span>
       </div>
       {error && <p className="field-error">{error}</p>}
@@ -192,7 +183,7 @@ export function DatasetClips({ source }: Props) {
                         className="ghost small"
                         onClick={() => play(row.index)}
                         disabled={row.seconds === null}
-                        aria-label={`Play ${fileName(row.file)}`}
+                        aria-label={t.play(fileName(row.file))}
                         title={row.file}
                       >
                         {row.index === playing ? '❚❚' : '▶'}
@@ -213,7 +204,7 @@ export function DatasetClips({ source }: Props) {
                     </td>
                     <td className="clip-text" onClick={() => toggle(row.index)}>
                       {row.text}
-                      {row.dropped && <span className="tag subtle">Dropped</span>}
+                      {row.dropped && <span className="tag subtle">{t.dropped}</span>}
                       {row.asr && <span className="tag subtle">ASR</span>}
                       {row.flags.map((f) => (
                         <FlagTag key={f} flag={f} score={row.score} />
@@ -225,9 +216,9 @@ export function DatasetClips({ source }: Props) {
                         className="ghost small"
                         onClick={() => toggle(row.index)}
                         aria-expanded={row.index === open}
-                        title="Words and a larger waveform"
+                        title={t.wordsAndWaveform}
                       >
-                        {row.seconds === null ? 'missing' : `${row.seconds.toFixed(1)} s`}{' '}
+                        {row.seconds === null ? t.missing : t.seconds(row.seconds.toFixed(1))}{' '}
                         {row.index === open ? '▴' : '▾'}
                       </button>
                     </td>
@@ -251,7 +242,7 @@ export function DatasetClips({ source }: Props) {
           </table>
         </div>
       )}
-      {page && page.rows.length === 0 && <p className="muted empty">No clips match.</p>}
+      {page && page.rows.length === 0 && <p className="muted empty">{t.noClipsMatch}</p>}
 
       {total > PAGE && (
         <div className="pager">
@@ -261,10 +252,10 @@ export function DatasetClips({ source }: Props) {
             onClick={() => setOffset(offset - PAGE)}
             disabled={offset === 0}
           >
-            Previous
+            {t.previous}
           </button>
           <span className="muted hint">
-            {offset + 1}–{Math.min(offset + PAGE, total)} of {total.toLocaleString()}
+            {t.pageRange(offset + 1, Math.min(offset + PAGE, total), total.toLocaleString())}
           </span>
           <button
             type="button"
@@ -272,7 +263,7 @@ export function DatasetClips({ source }: Props) {
             onClick={() => setOffset(offset + PAGE)}
             disabled={offset + PAGE >= total}
           >
-            Next
+            {t.next}
           </button>
         </div>
       )}
@@ -282,8 +273,9 @@ export function DatasetClips({ source }: Props) {
 }
 
 function FlagTag({ flag, score }: { flag: CheckFlag; score: number | null }) {
-  const [label, meaning] = FLAG_LABEL[flag]
-  const detail = flag === 'mismatch' && score !== null ? ` (score ${score.toPrecision(2)})` : ''
+  const t = useT()
+  const [label, meaning] = t.flags[flag]
+  const detail = flag === 'mismatch' && score !== null ? t.scoreDetail(score.toPrecision(2)) : ''
   return (
     <span className="tag warn" title={meaning + detail}>
       {label}
@@ -306,7 +298,8 @@ interface CheckBarProps {
 
 /** What the alignment check found, with the review filters. */
 function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst, onDropAll, onTrimAll }: CheckBarProps) {
-  const counts = checks ? (Object.keys(FLAG_LABEL) as CheckFlag[]).filter((f) => checks.flags[f]) : []
+  const t = useT()
+  const counts = checks ? FLAGS.filter((f) => checks.flags[f]) : []
   const one = flag !== '' && flag !== 'any' && flag !== 'dropped' ? flag : null // a single flag shown
   const oneCount = one ? (checks?.flags[one] ?? 0) : 0
   return (
@@ -314,40 +307,39 @@ function CheckBar({ checks, dropped, flag, worstFirst, onFlag, onWorstFirst, onD
       <p>
         {checks ? (
           <>
-            <strong>{checks.flagged.toLocaleString()}</strong> of {checks.checked.toLocaleString()} checked clips
-            flagged
+            {t.flaggedOf(checks.flagged.toLocaleString(), checks.checked.toLocaleString())}
             {checks.aligner && <span className="muted"> · {ALIGNER_LABEL[checks.aligner]}</span>}
           </>
         ) : (
-          'Not checked yet'
+          t.notChecked
         )}
-        {dropped > 0 && <span className="muted"> · {dropped.toLocaleString()} dropped</span>}
+        {dropped > 0 && <span className="muted">{t.droppedCount(dropped.toLocaleString())}</span>}
       </p>
       <div className="check-filters">
-        <select value={flag} onChange={(e) => onFlag(e.target.value as FlagFilter)} aria-label="Clips shown">
-          <option value="">All clips</option>
-          {checks && <option value="any">Any flag ({checks.flagged.toLocaleString()})</option>}
+        <select value={flag} onChange={(e) => onFlag(e.target.value as FlagFilter)} aria-label={t.clipsShown}>
+          <option value="">{t.allClips}</option>
+          {checks && <option value="any">{t.anyFlag(checks.flagged.toLocaleString())}</option>}
           {counts.map((f) => (
             <option key={f} value={f}>
-              {FLAG_LABEL[f][0]} ({checks!.flags[f]!.toLocaleString()})
+              {t.flagCount(t.flags[f][0], checks!.flags[f]!.toLocaleString())}
             </option>
           ))}
-          {dropped > 0 && <option value="dropped">Dropped ({dropped.toLocaleString()})</option>}
+          {dropped > 0 && <option value="dropped">{t.droppedOption(dropped.toLocaleString())}</option>}
         </select>
         {checks && (
           <label className="check">
-            <input type="checkbox" checked={worstFirst} onChange={(e) => onWorstFirst(e.target.checked)} /> Worst match
-            first
+            <input type="checkbox" checked={worstFirst} onChange={(e) => onWorstFirst(e.target.checked)} />{' '}
+            {t.worstFirst}
           </label>
         )}
         {one && onTrimAll && oneCount > 0 && TRIMMABLE_FLAGS.includes(one) && (
           <button type="button" className="ghost small" onClick={() => onTrimAll(one, oneCount)}>
-            Trim all {oneCount.toLocaleString()}
+            {t.trimAll(oneCount.toLocaleString())}
           </button>
         )}
         {one && onDropAll && oneCount > 0 && (
           <button type="button" className="ghost small" onClick={() => onDropAll(one, oneCount)}>
-            Drop all {oneCount.toLocaleString()}
+            {t.dropAll(oneCount.toLocaleString())}
           </button>
         )}
       </div>

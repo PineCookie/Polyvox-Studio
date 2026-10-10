@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getStatus } from '../api'
 import type { DatasetReport, GpuProfile, TrainParams } from '../api'
 import { datasetName, formatStep } from '../format'
+import { useT } from '../i18n'
 import { DatasetReview } from './DatasetReview'
 import { DEFAULT_EPOCHS, DEFAULT_PARAMS, epochsOf, forGpu, scheduleFor } from '../trainParams'
 import type { Params, Schedule } from '../trainParams'
@@ -40,6 +41,7 @@ function suggestName(dataset: string, rank: number, taken: string[]): string {
 
 /** A run before it starts: the same page as an existing run, with editable sections. */
 export function NewRunForm({ datasets, runNames, activeRun, onStart, initialDataset }: Props) {
+  const t = useT()
   const [tab, setTab] = useState<Tab>('dataset')
   const [base, setBase] = useState<Params>(DEFAULT_PARAMS)
   const [epochTarget, setEpochTarget] = useState(DEFAULT_EPOCHS)
@@ -76,13 +78,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       ? setOverrides((o) => ({ ...o, [key]: value }))
       : setBase((p) => ({ ...p, [key]: value }))
 
-  const nameError = !name
-    ? null
-    : !NAME_PATTERN.test(name)
-      ? 'Letters, digits, ".", "_" and "-" only.'
-      : runNames.includes(name)
-        ? 'A run with this name exists.'
-        : null
+  const nameError = !name ? null : !NAME_PATTERN.test(name) ? t.nameChars : runNames.includes(name) ? t.runExists : null
   const numbersValid =
     Number.isFinite(epochTarget) && Object.values(params).every((v) => typeof v !== 'number' || Number.isFinite(v))
   const valValid = !useValDataset || !!params.val_dataset
@@ -94,19 +90,19 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
 
   // What still blocks the start, in the order the page is filled in.
   const blocker = !dataset
-    ? 'Choose a dataset'
+    ? t.chooseDataset
     : !report
-      ? 'Checking the dataset…'
+      ? t.checkingDataset
       : !datasetValid
-        ? 'The dataset has unreadable clips (see Dataset)'
+        ? t.unreadableClips
         : !name || nameError
-          ? `Run name: ${nameError ?? 'required'} (see Parameters)`
+          ? t.runNameBlocker(nameError ?? t.requiredLower)
           : !numbersValid
-            ? 'Fill in every parameter (see Parameters)'
+            ? t.fillEveryParam
             : !valValid
-              ? 'Choose a validation dataset (see Parameters)'
+              ? t.chooseValDataset
               : activeRun
-                ? `“${activeRun}” is training; one run at a time`
+                ? t.oneRunAtATime(activeRun)
                 : null
 
   async function start() {
@@ -121,18 +117,18 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
 
   const validation = (
     <fieldset className="field">
-      <legend>Validation</legend>
+      <legend>{t.validation}</legend>
       <div className="segmented" role="radiogroup">
         <label>
-          <input type="radio" checked={!useValDataset} onChange={() => setUseValDataset(false)} /> Hold out clips
+          <input type="radio" checked={!useValDataset} onChange={() => setUseValDataset(false)} /> {t.holdOutClips}
         </label>
         <label>
-          <input type="radio" checked={useValDataset} onChange={() => setUseValDataset(true)} /> Separate dataset
+          <input type="radio" checked={useValDataset} onChange={() => setUseValDataset(true)} /> {t.separateDataset}
         </label>
       </div>
       {useValDataset ? (
         <select value={params.val_dataset ?? ''} onChange={(e) => set('val_dataset', e.target.value || null)}>
-          <option value="">Choose a dataset…</option>
+          <option value="">{t.chooseDatasetOption}</option>
           {datasets
             .filter((d) => d !== dataset)
             .map((d) => (
@@ -150,9 +146,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             value={Number.isFinite(params.val_holdout) ? params.val_holdout : ''}
             onChange={(e) => set('val_holdout', e.target.valueAsNumber)}
           />
-          <span className="muted hint">
-            clips set aside for validation loss and audio samples every {params.valid_interval} steps (0 = none)
-          </span>
+          <span className="muted hint">{t.holdoutHint(params.valid_interval)}</span>
         </div>
       )}
     </fieldset>
@@ -163,11 +157,11 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       <section className="panel">
         <header className="panel-head">
           <h2 className="run-title">
-            {name || 'New run'} <span className="pill">New</span>
+            {name || t.newRun} <span className="pill">{t.newPill}</span>
           </h2>
           <div className="run-actions">
             <button type="button" className="primary" onClick={start} disabled={!!blocker || submitting}>
-              {submitting ? 'Starting…' : 'Start training'}
+              {submitting ? t.starting2 : t.startTraining}
             </button>
           </div>
         </header>
@@ -176,33 +170,22 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             <span className="muted">{blocker}</span>
           ) : (
             <>
-              <span>
-                <strong>{trainClips.toLocaleString()}</strong> training clips from {datasetName(dataset)}
-              </span>
-              {epochs !== null && <span>{epochs.toFixed(1)} epochs</span>}
-              <span className="muted">
-                {formatStep(params.num_iters)} steps × {perStep} clips
-              </span>
-              <span className="muted">
-                rank {params.lora_rank} · alpha {params.lora_alpha}
-              </span>
+              <span>{t.trainingClipsFrom(trainClips.toLocaleString(), datasetName(dataset))}</span>
+              {epochs !== null && <span>{t.epochsValue(epochs.toFixed(1))}</span>}
+              <span className="muted">{t.stepsTimesClips(formatStep(params.num_iters), perStep)}</span>
+              <span className="muted">{t.rankAlpha(params.lora_rank, params.lora_alpha)}</span>
             </>
           )}
         </p>
         {gpu?.note && <p className="notice">{gpu.note}</p>}
         <SubTabs
-          label="Run sections"
+          label={t.runSections}
           value={tab}
           onChange={setTab}
           tabs={[
-            {
-              id: 'progress',
-              label: 'Progress',
-              disabled: true,
-              title: 'Loss and samples appear once training starts',
-            },
-            { id: 'dataset', label: 'Dataset' },
-            { id: 'parameters', label: 'Parameters' },
+            { id: 'progress', label: t.subTabs.progress, disabled: true, title: t.progressDisabled },
+            { id: 'dataset', label: t.subTabs.dataset },
+            { id: 'parameters', label: t.subTabs.parameters },
           ]}
         />
       </section>
@@ -210,9 +193,9 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       {tab === 'dataset' && (
         <section className="panel">
           <label className="field">
-            <span>Dataset</span>
+            <span>{t.datasetLabel}</span>
             <select value={dataset} onChange={(e) => setDataset(e.target.value)}>
-              <option value="">Choose a dataset…</option>
+              <option value="">{t.chooseDatasetOption}</option>
               {datasets.map((d) => (
                 <option key={d} value={d}>
                   {d}
@@ -220,9 +203,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
               ))}
             </select>
           </label>
-          {datasets.length === 0 && (
-            <p className="muted empty">No datasets yet. Prepare one from raw recordings or lists in the Prepare tab.</p>
-          )}
+          {datasets.length === 0 && <p className="muted empty">{t.noDatasetsYet}</p>}
           {dataset && <DatasetReview source={{ id: dataset }} onReport={setReport} />}
         </section>
       )}
@@ -235,11 +216,13 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             validation={validation}
             header={
               <label className="field">
-                <span>Run name {nameError && <span className="field-error">{nameError}</span>}</span>
+                <span>
+                  {t.runName} {nameError && <span className="field-error">{nameError}</span>}
+                </span>
                 <input
                   value={name}
                   onChange={(e) => setCustomName(e.target.value)}
-                  placeholder="Choose a dataset first"
+                  placeholder={t.chooseDatasetFirst}
                 />
               </label>
             }
@@ -258,17 +241,20 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             hint={
               trainClips > 0 ? (
                 <p className="muted hint">
-                  = {formatStep(params.num_iters)} steps of {perStep} clips ({params.batch_size} ×{' '}
-                  {params.grad_accum_steps} accumulated
-                  {gpu?.total_gb ? `, the batch that fits this ${gpu.total_gb} GB GPU` : ''}) over{' '}
-                  {trainClips.toLocaleString()} training clips
-                  {epochs !== null && Math.abs(epochs - epochTarget) > 0.05 && ` (≈ ${epochs.toFixed(1)} epochs)`};
-                  checkpoint and validation every {formatStep(params.save_interval)} steps, warmup{' '}
-                  {formatStep(params.warmup_steps)}. VoxCPM recommends 1–3 epochs for one speaker; compare the
-                  checkpoints by listening.
+                  {t.scheduleHint(
+                    formatStep(params.num_iters),
+                    perStep,
+                    params.batch_size,
+                    params.grad_accum_steps,
+                    gpu?.total_gb ? String(gpu.total_gb) : '',
+                    trainClips.toLocaleString(),
+                    epochs !== null && Math.abs(epochs - epochTarget) > 0.05 ? epochs.toFixed(1) : '',
+                    formatStep(params.save_interval),
+                    formatStep(params.warmup_steps),
+                  )}
                 </p>
               ) : (
-                <p className="muted hint">Steps follow from the epochs once a dataset is chosen.</p>
+                <p className="muted hint">{t.stepsFollow}</p>
               )
             }
           />

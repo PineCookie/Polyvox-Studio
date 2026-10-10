@@ -1858,3 +1858,12 @@ fieldset.params:disabled input[type='checkbox'] {
 .sample-step-label {
   min-width: 5.5em;
 }
+
+/* Language picker in the top bar: compact, like the theme button. */
+.lang-select {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  background: transparent;
+  border: 1px solid var(--border);
+}

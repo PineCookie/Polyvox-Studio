@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { cancelJob, downloadModels, listModels } from '../api'
 import type { DownloadJob, ModelInfo, ModelList } from '../api'
+import { useT } from '../i18n'
+import type { Messages } from '../i18n'
 import { useJob } from '../useJob'
 import { ProgressBar } from './RunList'
 
@@ -10,10 +12,7 @@ interface Props {
   onChanged: () => void
 }
 
-const SOURCES = [
-  { value: '', label: 'Hugging Face (huggingface.co)' },
-  { value: 'https://hf-mirror.com', label: 'hf-mirror.com (a mirror, e.g. for mainland China)' },
-]
+const SOURCES = ['', 'https://hf-mirror.com'] // labels: t.sources
 const CUSTOM = 'custom'
 const SOURCE_KEY = 'voxcpm-studio.hf-endpoint'
 
@@ -27,21 +26,22 @@ function storedSource(): string | null {
 
 const formatSize = (mb: number) => (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`)
 
-function stateText(m: ModelInfo): [string, string] {
-  if (m.state === 'downloaded') return ['Downloaded', 'ok']
-  if (m.state === 'custom') return ['Set by environment', 'subtle']
-  return m.fallback ? ['Not downloaded', 'warn'] : ['Not downloaded · option unavailable', 'warn']
+function stateText(m: ModelInfo, t: Messages): [string, string] {
+  if (m.state === 'downloaded') return [t.downloaded, 'ok']
+  if (m.state === 'custom') return [t.setByEnv, 'subtle']
+  return m.fallback ? [t.notDownloaded, 'warn'] : [t.notDownloadedUnavailable, 'warn']
 }
 
 /** The models the studio uses: what is downloaded, and downloading the rest (from Hugging Face or a mirror). */
 export function ModelsView({ onError, onChanged }: Props) {
+  const t = useT()
   const [list, setList] = useState<ModelList | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [source, setSource] = useState<string | null>(storedSource)
   const [job, setJob] = useJob<DownloadJob>((j) => {
     refresh()
     onChanged()
-    if (j.state === 'failed') onError(`Download failed: ${j.error}`)
+    if (j.state === 'failed') onError(t.downloadFailed(j.error ?? ''))
   })
 
   const refresh = useCallback(() => {
@@ -57,11 +57,11 @@ export function ModelsView({ onError, onChanged }: Props) {
 
   useEffect(refresh, [refresh])
 
-  if (!list) return <section className="panel muted">Loading…</section>
+  if (!list) return <section className="panel muted">{t.loading}</section>
 
   // The server's default unless one was chosen in this browser.
   const chosen = source ?? list.endpoint
-  const isPreset = SOURCES.some((s) => s.value === chosen)
+  const isPreset = SOURCES.includes(chosen)
   const missing = list.models.filter((m) => m.state === 'missing')
   const total = list.models.filter((m) => selected.includes(m.setting)).reduce((sum, m) => sum + m.size_mb, 0)
   const running = job?.state === 'running'
@@ -91,22 +91,18 @@ export function ModelsView({ onError, onChanged }: Props) {
   return (
     <section className="panel models">
       <header className="panel-head">
-        <h2>Models</h2>
+        <h2>{t.models}</h2>
         <span className="muted hint" title="VOXCPM_STUDIO_MODELS_DIR">
           {list.models_dir}
         </span>
       </header>
-      <p className="muted hint">
-        Downloaded models live in the models folder and are used from there. A Hugging Face model that is not downloaded
-        still loads, downloading to Hugging Face's cache the first time (with no progress shown); the import's clean-up
-        options need their model downloaded here.
-      </p>
+      <p className="muted hint">{t.modelsIntro}</p>
 
       <div className="table-wrap">
         <table className="metrics models-table">
           <tbody>
             {list.models.map((m) => {
-              const [label, tone] = stateText(m)
+              const [label, tone] = stateText(m, t)
               const page =
                 m.hub === 'modelscope' ? `https://modelscope.cn/models/${m.repo}` : `https://huggingface.co/${m.repo}`
               return (
@@ -117,13 +113,13 @@ export function ModelsView({ onError, onChanged }: Props) {
                       checked={selected.includes(m.setting)}
                       disabled={m.state !== 'missing' || running}
                       onChange={() => toggle(m.setting)}
-                      aria-label={`Download ${m.name}`}
+                      aria-label={t.downloadModel(m.name)}
                     />
                   </td>
                   <td>
                     <strong>{m.name}</strong>
-                    {m.required && <span className="tag subtle">Required</span>}
-                    <div className="muted hint">{m.purpose}</div>
+                    {m.required && <span className="tag subtle">{t.requiredTag}</span>}
+                    <div className="muted hint">{t.modelPurpose[m.setting] ?? m.purpose}</div>
                   </td>
                   <td className="num">{formatSize(m.size_mb)}</td>
                   <td>
@@ -147,19 +143,19 @@ export function ModelsView({ onError, onChanged }: Props) {
 
       <div className="models-actions">
         <label className="field">
-          <span>Download from</span>
+          <span>{t.downloadFrom}</span>
           <select value={isPreset ? chosen : CUSTOM} onChange={(e) => chooseSource(e.target.value)} disabled={running}>
             {SOURCES.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
+              <option key={s} value={s}>
+                {t.sources[s]}
               </option>
             ))}
-            <option value={CUSTOM}>Another mirror…</option>
+            <option value={CUSTOM}>{t.anotherMirror}</option>
           </select>
         </label>
         {!isPreset && (
           <label className="field">
-            <span>Mirror URL</span>
+            <span>{t.mirrorUrl}</span>
             <input
               value={chosen}
               onChange={(e) => chooseSource(e.target.value)}
@@ -176,11 +172,11 @@ export function ModelsView({ onError, onChanged }: Props) {
               onClick={() => setSelected(missing.map((m) => m.setting))}
               disabled={running}
             >
-              Select all missing
+              {t.selectAllMissing}
             </button>
           )}
           <button type="button" className="primary" onClick={start} disabled={running || selected.length === 0}>
-            {selected.length ? `Download ${selected.length} (${formatSize(total)})` : 'Nothing selected'}
+            {selected.length ? t.downloadSelected(selected.length, formatSize(total)) : t.nothingSelected}
           </button>
         </div>
       </div>
@@ -188,7 +184,7 @@ export function ModelsView({ onError, onChanged }: Props) {
       {job && running && (
         <div className="job-progress">
           <span>
-            Downloading {current?.name ?? '…'}
+            {t.downloadingModel(current?.name ?? '…')}
             {job.total > 0 && (
               <span className="muted">
                 {' '}
@@ -198,14 +194,12 @@ export function ModelsView({ onError, onChanged }: Props) {
           </span>
           <ProgressBar value={job.done} max={job.total || 1} />
           <button type="button" className="ghost small" onClick={() => cancelJob(job.id)}>
-            Cancel
+            {t.cancel}
           </button>
         </div>
       )}
-      {job?.state === 'cancelled' && (
-        <p className="muted hint">Cancelled; a file in flight finishes in the background, and the rest resumes.</p>
-      )}
-      {job?.state === 'done' && <p className="muted hint">Downloaded.</p>}
+      {job?.state === 'cancelled' && <p className="muted hint">{t.downloadCancelled}</p>}
+      {job?.state === 'done' && <p className="muted hint">{t.downloadedDone}</p>}
     </section>
   )
 }

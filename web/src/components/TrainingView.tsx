@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getRun, listDatasets, listRuns, resumeRun, startRun, stopTraining } from '../api'
 import type { Lora, RunDetail as Run, RunSummary, TrainParams } from '../api'
+import { useT } from '../i18n'
 import { NewRunForm } from './NewRunForm'
 import { RunDetail } from './RunDetail'
 import { NEW_RUN, RunList } from './RunList'
@@ -19,6 +20,7 @@ const DETAIL_POLL_MS = 2000
 const isLive = (run: { status: string }) => run.status === 'running' || run.status === 'stopping'
 
 export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }: Props) {
+  const t = useT()
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [runsLoaded, setRunsLoaded] = useState(false)
   const [datasets, setDatasets] = useState<string[]>([])
@@ -115,7 +117,7 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
           />
         ) : (
           <section className="panel">
-            <p className="muted empty">Loading…</p>
+            <p className="muted empty">{t.loading}</p>
           </section>
         )}
       </div>

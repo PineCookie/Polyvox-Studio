@@ -1,40 +1,35 @@
 import type { Aligner, CheckFlag } from './api'
+import { messages } from './i18n'
 
 export const ALIGNER_LABEL: Record<Aligner, string> = {
   qwen3: 'Qwen3-ForcedAligner',
   ctc: 'wav2vec2 (CTC)',
 }
 
-// Alignment check flags (checks.py): short tag, and what it means.
-export const FLAG_LABEL: Record<CheckFlag, [string, string]> = {
-  singing: ['Singing', 'A sung clip (karaoke, a cover): not wanted in training data'],
-  mismatch: ['Mismatch', 'Part of the text does not match the audio'],
-  asr_more: ['Missing words?', 'Speech recognition hears words the transcript does not have'],
-  filler: [
-    'Filler?',
-    'A filler or laugh in the text (嗯, 哈哈, ...) sits on quiet audio: it may not have been said, e.g. one 呵 too many',
-  ],
-  edge_sound: [
-    'Edge sound',
-    'Sound before or after the transcribed words, a pause apart (a sigh, 嗯, a laugh, or words the text misses): trim it off or add it to the text',
-  ],
-  extra_speech: [
-    'Untranscribed',
-    'Speech right next to the transcribed words, too close to cut off: the text may miss something',
-  ],
-  cut_edge: ['Cut edge', 'The sound runs into the start or end of the file: a word may be cut'],
-  long_silence: [
-    'Long silence',
-    'Over 0.5 s of silence after the speech (the model learns when to stop from it), or over 1 s before it',
-  ],
+// Alignment check flags (checks.py), in display order.
+export const FLAGS: CheckFlag[] = [
+  'singing',
+  'mismatch',
+  'asr_more',
+  'filler',
+  'edge_sound',
+  'extra_speech',
+  'cut_edge',
+  'long_silence',
+]
+
+/** A flag's short tag and what it means, in the UI language. */
+export function flagLabel(flag: CheckFlag): [string, string] {
+  return messages().flags[flag]
 }
 
 export function formatDuration(seconds: number): string {
+  const t = messages()
   const s = Math.round(seconds)
-  if (s < 60) return `${s} s`
+  if (s < 60) return t.seconds(s)
   const m = Math.round(s / 60)
-  if (m < 60) return `${m} min`
-  return `${Math.floor(m / 60)} h ${m % 60} min`
+  if (m < 60) return t.minutes(m)
+  return t.hoursMinutes(Math.floor(m / 60), m % 60)
 }
 
 // { "32000": 650, "44100": 6 } -> "32 kHz, 44.1 kHz"
@@ -59,10 +54,11 @@ export function formatValue(v: number): string {
   return Math.abs(v) < 0.001 ? v.toExponential(1) : v.toFixed(4)
 }
 
-// { separation: 250, asr: 130, vad: 0.4 } -> "Took 6 min: separation 4 min, asr 2 min"
+// { separation: 250, asr: 130, vad: 0.4 } -> "Took 6 min: separation 4 min, ASR 2 min"
 export function formatTimings(timings: Record<string, number>): string {
+  const t = messages()
   const entries = Object.entries(timings)
   const total = entries.reduce((sum, [, s]) => sum + s, 0)
-  const parts = entries.filter(([, s]) => s >= 1).map(([stage, s]) => `${stage} ${formatDuration(s)}`)
-  return `Took ${formatDuration(total)}${parts.length ? `: ${parts.join(', ')}` : ''}`
+  const parts = entries.filter(([, s]) => s >= 1).map(([stage, s]) => `${t.stage[stage] ?? stage} ${formatDuration(s)}`)
+  return t.tookTotal(formatDuration(total), parts.join(', '))
 }

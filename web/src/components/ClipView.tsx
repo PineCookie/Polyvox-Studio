@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { checkClip, getDatasetClip, hearClipPart, setClipDropped, setClipText, TRIMMABLE_FLAGS, trimClip } from '../api'
 import type { ClipDetail, DatasetSource, Heard } from '../api'
 import { ALIGNER_LABEL } from '../format'
+import { useT } from '../i18n'
 import { Waveform } from './Waveform'
 
 const PREVIEW_S = 1.5 // played around a trim handle after it moves
@@ -26,6 +27,7 @@ interface Props {
 /** A closer look at one clip: a larger waveform with each checked word where the aligner put it,
  * what ASR heard, and (for a dataset, not a run's copy) editing its text or dropping it. */
 export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
+  const t = useT()
   const sourceKey = JSON.stringify(source)
   const [clip, setClip] = useState<ClipDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -86,7 +88,7 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
     setError(null)
     try {
       const heard = (await hearClipPart(datasetId, index, edge.start, edge.end)).trim()
-      if (!heard) setError('ASR heard nothing there; type it in, or trim it off.')
+      if (!heard) setError(t.asrHeardNothing)
       else setDraft(edge.side === 'before' ? heard + clip.text : clip.text + heard)
     } catch (e) {
       setError((e as Error).message)
@@ -176,8 +178,8 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
   }, [audio])
 
   if (!clip && error) return <p className="field-error">{error}</p>
-  if (!clip) return <p className="muted hint">Loading…</p>
-  if (!clip.peaks || clip.seconds === null) return <p className="muted hint">The audio file can't be read.</p>
+  if (!clip) return <p className="muted hint">{t.loading}</p>
+  if (!clip.peaks || clip.seconds === null) return <p className="muted hint">{t.cantRead}</p>
   const seconds = clip.seconds
   const weak = clip.words.filter((w) => w.weak)
   const edges: Edge[] = [
@@ -194,19 +196,14 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
             <>
               <p className="clip-edit-text">{clip.text}</p>
               <button type="button" className="ghost small" onClick={() => setDraft(clip.text)}>
-                Edit
+                {t.edit}
               </button>
               <button type="button" className="ghost small" onClick={() => drop(!clip.dropped)}>
-                {clip.dropped ? 'Restore' : 'Drop'}
+                {clip.dropped ? t.restore : t.drop}
               </button>
               {!keep && (
-                <button
-                  type="button"
-                  className="ghost small"
-                  onClick={() => setKeep(suggested)}
-                  title="Cut the clip's start or end"
-                >
-                  Trim…
+                <button type="button" className="ghost small" onClick={() => setKeep(suggested)} title={t.trimTitle}>
+                  {t.trimOpen}
                 </button>
               )}
             </>
@@ -218,18 +215,18 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
                 save(draft)
               }}
             >
-              <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Transcript" autoFocus />
+              <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label={t.transcript} autoFocus />
               <button type="submit" className="primary small" disabled={saving || !draft.trim()}>
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? t.saving : t.save}
               </button>
               <button type="button" className="ghost small" onClick={() => setDraft(null)} disabled={saving}>
-                Cancel
+                {t.cancel}
               </button>
             </form>
           )}
         </div>
       )}
-      {clip.dropped && <p className="muted hint">Dropped: left out of training runs started from now on.</p>}
+      {clip.dropped && <p className="muted hint">{t.droppedNote}</p>}
       {error && <p className="field-error">{error}</p>}
       <Waveform
         peaks={clip.peaks}
@@ -261,7 +258,7 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
               type="button"
               className={`word ${w.weak ? 'weak' : ''} ${i % 2 ? 'lower' : ''}`}
               style={{ left: `${(w.start / seconds) * 100}%`, width: `${((w.end - w.start) / seconds) * 100}%` }}
-              title={`${w.text} · ${w.start.toFixed(2)}–${w.end.toFixed(2)} s · confidence ${w.confidence.toPrecision(2)}`}
+              title={t.wordTitle(w.text, w.start.toFixed(2), w.end.toFixed(2), w.confidence.toPrecision(2))}
               onClick={() => seek(w.start)}
             >
               {w.text}
@@ -272,36 +269,37 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
       <p className="muted hint">
         {clip.words.length > 0 ? (
           <>
-            Shaded: the speech the text covers. Words sit where {ALIGNER_LABEL[clip.aligner ?? 'qwen3']} placed them
+            {t.shadedWords(ALIGNER_LABEL[clip.aligner ?? 'qwen3'])}
             {weak.length > 0 && (
               <>
-                ; <span className="weak-legend">{weak.length} unsure</span> (likely not what was said)
+                ; <span className="weak-legend">{t.unsure(weak.length)}</span>
+                {t.unsureNote}
               </>
             )}
-            . Click a word or the waveform to play from there.
+            {t.clickToPlay}
           </>
         ) : clip.speech ? (
-          'Checked before word timings were kept: check the dataset again to see each word.'
+          t.checkedBeforeWords
         ) : (
-          'Not checked yet: check the dataset to see where each word is.'
+          t.notCheckedWords
         )}
       </p>
       {datasetId && edges.length > 0 && (
         <div className="edge-sound">
           {edges.map((edge) => (
             <span key={edge.side} className="edge-sound-part">
-              <span className="muted">Sound {edge.side} the words, not in the text:</span>
+              <span className="muted">{t.edgeSound(edge.side)}</span>
               <button type="button" className="ghost small" onClick={() => seek(edge.start, edge.end)}>
-                ▶ Play
+                {t.playButton}
               </button>
               <button
                 type="button"
                 className="ghost small"
                 onClick={() => addHeard(edge)}
                 disabled={busy !== null}
-                title="Transcribe just this sound and add it to the text in the editor"
+                title={t.addToTextTitle}
               >
-                {busy === edge.side ? 'Listening…' : 'Add to text'}
+                {busy === edge.side ? t.listening : t.addToText}
               </button>
             </span>
           ))}
@@ -314,21 +312,21 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
             className="primary small"
             onClick={() => trimTo(keep)}
             disabled={busy !== null || (keep[0] < 0.01 && keep[1] > seconds - 0.01)}
-            title="Rewrite the clip; the original is kept in the dataset's originals folder"
+            title={t.rewriteTitle}
           >
-            {busy === 'trim' ? 'Trimming…' : `Trim to ${keep[0].toFixed(2)}–${keep[1].toFixed(2)} s`}
+            {busy === 'trim' ? t.trimming : t.trimTo(keep[0].toFixed(2), keep[1].toFixed(2))}
           </button>
           {clip.trim && (keep[0] !== clip.trim[0] || keep[1] !== clip.trim[1]) && (
             <button type="button" className="ghost small" onClick={() => setKeep(clip.trim)}>
-              Suggested
+              {t.suggested}
             </button>
           )}
           <button type="button" className="ghost small" onClick={() => setKeep(null)}>
-            Close
+            {t.close}
           </button>
           <span className="muted">
-            Drag the handles (grey is cut); letting go plays the new edge.
-            {clip.trim && ' Suggested: 0.15 s around the speech.'}
+            {t.dragHandles}
+            {clip.trim && t.suggestedNote}
           </span>
         </div>
       )}
@@ -340,18 +338,18 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
             className="ghost small"
             onClick={() => recheck(false)}
             disabled={busy !== null}
-            title="Align this clip's text again (after an edit, this happens by itself in a checked dataset)"
+            title={t.checkAgainTitle}
           >
-            {busy === 'check' ? 'Checking…' : clip.words.length > 0 ? 'Check again' : 'Check'}
+            {busy === 'check' ? t.checking : clip.words.length > 0 ? t.checkAgain : t.checkButton}
           </button>
           <button
             type="button"
             className="ghost small"
             onClick={() => recheck(true)}
             disabled={busy !== null}
-            title="Transcribe this clip and compare with its text"
+            title={t.askAsrTitle}
           >
-            {busy === 'asr' ? 'Listening…' : clip.heard ? 'Ask ASR again' : 'Ask ASR'}
+            {busy === 'asr' ? t.listening : clip.heard ? t.askAsrAgain : t.askAsr}
           </button>
         </div>
       )}
@@ -361,29 +359,30 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
 
 /** What ASR heard, with the stretches that differ from the transcript marked. */
 function HeardLine({ heard, onUse }: { heard: Heard; onUse?: () => void }) {
+  const t = useT()
   const same = heard.diff.every(([op]) => op === 'equal')
   return (
     <div className="heard">
-      <span className="muted">ASR heard:</span>{' '}
+      <span className="muted">{t.asrHeard}</span>{' '}
       {heard.diff.map(([op, mine, theirs], i) =>
         op === 'equal' ? (
           <span key={i}>{theirs} </span>
         ) : op === 'missing' ? (
-          <del key={i} title="In the transcript, not heard">
+          <del key={i} title={t.notHeard}>
             {mine}{' '}
           </del>
         ) : (
-          <ins key={i} className={op} title={op === 'extra' ? 'Heard, not in the transcript' : `Transcript: ${mine}`}>
+          <ins key={i} className={op} title={op === 'extra' ? t.heardNotInText : t.transcriptWas(mine)}>
             {theirs}{' '}
           </ins>
         ),
       )}
       {same ? (
-        <span className="muted">(same as the transcript)</span>
+        <span className="muted">{t.sameAsTranscript}</span>
       ) : (
         onUse && (
-          <button type="button" className="ghost small" onClick={onUse} title="Put ASR's text in the editor">
-            Use ASR text
+          <button type="button" className="ghost small" onClick={onUse} title={t.useAsrTitle}>
+            {t.useAsrText}
           </button>
         )
       )}

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react'
+import { useT } from '../i18n'
 
 // The part of a clip to keep when trimming, set with two handles.
 export interface KeepRange {
@@ -48,6 +49,7 @@ const tickLabel = (t: number) => (Number.isInteger(Math.round(t * 1000) / 1000) 
 
 /** A clip's waveform outline with a time ruler; click to play from a point. */
 export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], trim, keep, large = false }: Props) {
+  const t = useT()
   const playhead = useRef<SVGLineElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
   const width = peaks.length
@@ -116,7 +118,7 @@ export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], tr
       preserveAspectRatio="none"
       onClick={seek}
       role="img"
-      aria-label="Waveform; click to play from a point"
+      aria-label={t.waveformLabel}
     >
       {speech && (
         <rect
@@ -173,12 +175,12 @@ export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], tr
             style={{ left: `${(keep.value[handle] / seconds) * 100}%` }}
             role="slider"
             tabIndex={0}
-            aria-label={handle === 0 ? 'Keep from' : 'Keep until'}
+            aria-label={handle === 0 ? t.keepFrom : t.keepUntil}
             aria-valuemin={0}
             aria-valuemax={seconds}
             aria-valuenow={keep.value[handle]}
             aria-valuetext={`${keep.value[handle].toFixed(2)} s`}
-            title={`${handle === 0 ? 'Keep from' : 'Keep until'} ${keep.value[handle].toFixed(2)} s: drag, or use the arrow keys`}
+            title={t.handleTitle(handle === 0 ? t.keepFrom : t.keepUntil, keep.value[handle].toFixed(2))}
             onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
             onPointerMove={(e) => drag(handle, e)}
             onPointerUp={() => keep.onDone?.(handle, keep.value)}

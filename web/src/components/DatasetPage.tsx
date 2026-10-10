@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { DEFAULT_LUFS, checkDataset, normalizeDataset, tidyFillers } from '../api'
 import type { Aligner, CheckJob, ImportJob, NormalizeJob } from '../api'
 import { ALIGNER_LABEL, datasetName, formatTimings } from '../format'
+import { useT } from '../i18n'
 import { useJob } from '../useJob'
 import { DatasetReview } from './DatasetReview'
 import { JobProgress } from './JobProgress'
@@ -13,25 +14,26 @@ interface Props {
   onTrain: (id: string) => void
 }
 
-function spread(levels: [number, number, number]): string {
-  return `${levels[0]} … ${levels[2]} LUFS (median ${levels[1]})`
-}
-
 function NormalizeSummary({ result }: { result: NormalizeJob['result'] }) {
-  const parts = [`${result.normalized.toLocaleString()} clips normalized`]
-  if (result.unchanged) parts.push(`${result.unchanged.toLocaleString()} already there`)
-  if (result.peak_limited) parts.push(`${result.peak_limited.toLocaleString()} kept quieter by their peaks`)
-  if (result.skipped) parts.push(`${result.skipped.toLocaleString()} skipped`)
+  const t = useT()
+  const count = (n: number) => (n ? n.toLocaleString() : '')
+  const spread = ([low, median, high]: [number, number, number]) => t.lufsSpread(low, high, median)
   return (
     <span className="muted hint">
-      {parts.join(', ')}.
-      {result.before && result.after && ` Before ${spread(result.before)}; now ${spread(result.after)}.`}
+      {t.normalizedSummary(
+        result.normalized.toLocaleString(),
+        count(result.unchanged),
+        count(result.peak_limited),
+        count(result.skipped),
+      )}
+      {result.before && result.after && t.beforeAfter(spread(result.before), spread(result.after))}
     </span>
   )
 }
 
 /** A prepared dataset: check its clips against their text, review, then train. */
 export function DatasetPage({ id, imported, onTrain }: Props) {
+  const t = useT()
   const [aligner, setAligner] = useState<Aligner>('qwen3')
   const [compareAsr, setCompareAsr] = useState(true)
   const [detectSinging, setDetectSinging] = useState(false)
@@ -40,12 +42,12 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
   const [version, setVersion] = useState(0)
   const [job, setJob] = useJob<CheckJob>((j) => {
     if (j.state === 'done') setVersion((v) => v + 1)
-    else if (j.state === 'failed') setError(j.error ?? 'Check failed.')
+    else if (j.state === 'failed') setError(j.error ?? t.checkFailed)
   })
   const [lufs, setLufs] = useState(DEFAULT_LUFS)
   const [normalizing, setNormalizing] = useJob<NormalizeJob>((j) => {
     if (j.state === 'done') setVersion((v) => v + 1)
-    else if (j.state === 'failed') setError(j.error ?? 'Normalizing failed.')
+    else if (j.state === 'failed') setError(j.error ?? t.normalizeFailed)
   })
   const running = job?.state === 'running' || normalizing?.state === 'running'
   const [tidied, setTidied] = useState<number | null>(null) // clips the last tidy changed
@@ -86,35 +88,29 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
           <h2 className="run-title">{datasetName(id)}</h2>
           <div className="run-actions">
             <button type="button" className="primary" onClick={() => onTrain(id)}>
-              Train on it
+              {t.trainOnIt}
             </button>
           </div>
         </header>
         {imported && (
           <p className="notice">
-            Imported {imported.imported.toLocaleString()} clips
-            {imported.sliced > 0 && `, sliced from ${imported.sliced} recordings`}
-            {imported.transcribed > 0 && `; ${imported.transcribed.toLocaleString()} transcribed by ASR`}
-            {imported.trimmed > 0 && `; ${imported.trimmed.toLocaleString()} trimmed`}.
+            {t.importedSummary(
+              imported.imported.toLocaleString(),
+              imported.sliced,
+              imported.transcribed ? imported.transcribed.toLocaleString() : '',
+              imported.trimmed ? imported.trimmed.toLocaleString() : '',
+            )}
             {imported.timings && <span className="muted"> {formatTimings(imported.timings)}.</span>}
           </p>
         )}
         <div className="tools">
           <div className="tool-row">
             <div className="tool-info">
-              <strong>Check clips</strong>
-              <span className="muted hint">
-                Align each clip with its text: flags mismatches, untranscribed speech, cut edges and long silence.
-              </span>
+              <strong>{t.checkClipsTitle}</strong>
+              <span className="muted hint">{t.checkClipsHint}</span>
               <details className="tool-help">
-                <summary>How checking works</summary>
-                <p className="muted hint">
-                  Forced alignment finds text that does not match the audio, untranscribed speech, words cut at the file
-                  edge and long silence; comparing with ASR finds words the text leaves out. Texts made by ASR are not
-                  compared, and get no mismatch flag (there it mostly marks laughs or fast speech); worst-first still
-                  sorts them. Qwen3 also handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese
-                  model by default).
-                </p>
+                <summary>{t.howChecking}</summary>
+                <p className="muted hint">{t.checkingExplained}</p>
               </details>
             </div>
             <div className="tool-controls">
@@ -122,7 +118,7 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
                 value={aligner}
                 onChange={(e) => setAligner(e.target.value as Aligner)}
                 disabled={running}
-                aria-label="Aligner"
+                aria-label={t.aligner}
               >
                 {(Object.keys(ALIGNER_LABEL) as Aligner[]).map((a) => (
                   <option key={a} value={a}>
@@ -137,7 +133,7 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
                   onChange={(e) => setCompareAsr(e.target.checked)}
                   disabled={running}
                 />{' '}
-                compare with ASR
+                {t.compareWithAsr}
               </label>
               <label className="check">
                 <input
@@ -146,41 +142,35 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
                   onChange={(e) => setDetectSinging(e.target.checked)}
                   disabled={running}
                 />{' '}
-                detect singing
+                {t.detectSinging}
               </label>
               <button type="button" className="ghost" onClick={check} disabled={running}>
-                {job?.state === 'running' ? 'Checking…' : 'Check'}
+                {job?.state === 'running' ? t.checking : t.checkButton}
               </button>
             </div>
           </div>
 
           <div className="tool-row">
             <div className="tool-info">
-              <strong>Tidy fillers</strong>
+              <strong>{t.tidyTitle}</strong>
               <span className="muted hint">
-                {tidied === null
-                  ? 'Shorten runs of fillers to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯); the original manifest is kept.'
-                  : tidied === 0
-                    ? 'Nothing to tidy.'
-                    : `${tidied.toLocaleString()} transcripts tidied; check again to refresh their flags.`}
+                {tidied === null ? t.tidyHint : tidied === 0 ? t.nothingToTidy : t.tidied(tidied.toLocaleString())}
               </span>
             </div>
             <div className="tool-controls">
               <button type="button" className="ghost" onClick={tidy} disabled={running}>
-                Tidy
+                {t.tidyButton}
               </button>
             </div>
           </div>
 
           <div className="tool-row">
             <div className="tool-info">
-              <strong>Normalize loudness</strong>
+              <strong>{t.normalizeTitle}</strong>
               {normalizing?.state === 'done' ? (
                 <NormalizeSummary result={normalizing.result} />
               ) : (
-                <span className="muted hint">
-                  One gain per clip (EBU R128), kept below -1 dBFS peaks; originals are kept, checks stay valid.
-                </span>
+                <span className="muted hint">{t.normalizeHint}</span>
               )}
             </div>
             <div className="tool-controls">
@@ -192,20 +182,20 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
                 value={lufs}
                 onChange={(e) => setLufs(Number(e.target.value))}
                 disabled={running}
-                aria-label="Target loudness (LUFS)"
+                aria-label={t.targetLufs}
               />
               <span className="muted hint">LUFS</span>
               <button type="button" className="ghost" onClick={normalize} disabled={running}>
-                {normalizing?.state === 'running' ? 'Normalizing…' : 'Normalize'}
+                {normalizing?.state === 'running' ? t.normalizing : t.normalizeButton}
               </button>
             </div>
           </div>
         </div>
-        {job && <JobProgress job={job} what="Check" />}
+        {job && <JobProgress job={job} what={t.checkWhat} />}
         {job?.state === 'done' && job.result.timings && (
-          <p className="muted hint">Check done. {formatTimings(job.result.timings)}.</p>
+          <p className="muted hint">{t.checkDone(formatTimings(job.result.timings))}</p>
         )}
-        {normalizing && <JobProgress job={normalizing} what="Normalizing" />}
+        {normalizing && <JobProgress job={normalizing} what={t.normalizeWhat} />}
         {error && <p className="field-error">{error}</p>}
       </section>
 

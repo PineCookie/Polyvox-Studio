@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { sampleUrl } from '../api'
 import type { Lora, RunDetail as Run } from '../api'
 import { formatDuration, formatStep, formatValue } from '../format'
+import { useT } from '../i18n'
 import { usePeaks } from '../peaks'
 import { DatasetReview } from './DatasetReview'
 import { LossChart } from './LossChart'
@@ -25,6 +26,7 @@ const checkpointId = (run: string, step: number) => `${run}/checkpoints/step_${S
 type Tab = 'progress' | 'dataset' | 'parameters'
 
 export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckpoint }: Props) {
+  const t = useT()
   const [tab, setTab] = useState<Tab>('progress')
   const [extendTo, setExtendTo] = useState(run.num_iters * 2)
   const live = run.status === 'running' || run.status === 'stopping'
@@ -41,24 +43,24 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
           </h2>
           <div className="run-actions">
             {run.status === 'running' && (
-              <button type="button" className="ghost" onClick={onStop} title="Saves a checkpoint, then stops">
-                Stop
+              <button type="button" className="ghost" onClick={onStop} title={t.stopTitle}>
+                {t.stop}
               </button>
             )}
             {run.status === 'stopping' && (
               <button type="button" className="ghost" disabled>
-                Saving checkpoint…
+                {t.savingCheckpoint}
               </button>
             )}
             {(run.status === 'incomplete' || run.status === 'failed') && (
               <button type="button" className="primary" onClick={() => onResume()} disabled={otherJob}>
-                Resume from step {formatStep(run.saved_step ?? 0)}
+                {t.resumeFrom(formatStep(run.saved_step ?? 0))}
               </button>
             )}
             {run.status === 'complete' && (
               <span className="inline-field">
                 <label className="muted hint" htmlFor="extend">
-                  Continue to
+                  {t.continueTo}
                 </label>
                 <input
                   id="extend"
@@ -74,7 +76,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
                   onClick={() => onResume(extendTo)}
                   disabled={otherJob || !(extendTo > run.num_iters)}
                 >
-                  Continue
+                  {t.continue}
                 </button>
               </span>
             )}
@@ -84,21 +86,23 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
         <ProgressBar value={step} max={run.num_iters} />
         <p className="run-stats">
           <span>
-            Step <strong>{formatStep(step)}</strong> / {formatStep(run.num_iters)}
+            {t.stepOf} <strong>{formatStep(step)}</strong> / {formatStep(run.num_iters)}
           </span>
-          {eta !== null && <span>{formatDuration(eta)} left</span>}
-          {run.seconds_per_step !== null && <span className="muted">{run.seconds_per_step.toFixed(2)} s/step</span>}
-          {run.saved_step !== null && <span className="muted">checkpoint at step {formatStep(run.saved_step)}</span>}
-          {otherJob && <span className="muted">“{activeRun}” is training</span>}
+          {eta !== null && <span>{t.timeLeftShort(formatDuration(eta))}</span>}
+          {run.seconds_per_step !== null && (
+            <span className="muted">{t.secondsPerStep(run.seconds_per_step.toFixed(2))}</span>
+          )}
+          {run.saved_step !== null && <span className="muted">{t.checkpointAt(formatStep(run.saved_step))}</span>}
+          {otherJob && <span className="muted">{t.isTraining(activeRun!)}</span>}
         </p>
         <SubTabs
-          label="Run sections"
+          label={t.runSections}
           value={tab}
           onChange={setTab}
           tabs={[
-            { id: 'progress', label: 'Progress' },
-            { id: 'dataset', label: 'Dataset' },
-            { id: 'parameters', label: 'Parameters' },
+            { id: 'progress', label: t.subTabs.progress },
+            { id: 'dataset', label: t.subTabs.dataset },
+            { id: 'parameters', label: t.subTabs.parameters },
           ]}
         />
       </section>
@@ -107,10 +111,10 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
         <>
           <section className="panel">
             <header className="panel-head">
-              <h2>Loss</h2>
+              <h2>{t.loss}</h2>
             </header>
-            <LossChart title="Diffusion loss" metric="loss/diff" train={run.train} val={run.val} />
-            <LossChart title="Stop loss" metric="loss/stop" train={run.train} val={run.val} />
+            <LossChart title={t.diffusionLoss} metric="loss/diff" train={run.train} val={run.val} />
+            <LossChart title={t.stopLoss} metric="loss/stop" train={run.train} val={run.val} />
             <MetricsTable run={run} />
           </section>
           <Samples run={run} loras={loras} onTryCheckpoint={onTryCheckpoint} />
@@ -120,7 +124,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
 
       {tab === 'dataset' && (
         <section className="panel">
-          <p className="muted hint">The clips this run trains on (validation clips not included).</p>
+          <p className="muted hint">{t.runDatasetHint}</p>
           <DatasetReview source={{ run: run.name }} />
         </section>
       )}
@@ -131,12 +135,8 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
             params={paramsFromConfig(run.config)}
             validation={
               <div className="field">
-                <span>Validation</span>
-                <p className="muted hint">
-                  {run.val_clips > 0
-                    ? `${run.val_clips} clips, for validation loss and audio samples`
-                    : 'None: no validation loss or samples'}
-                </p>
+                <span>{t.validation}</span>
+                <p className="muted hint">{run.val_clips > 0 ? t.valClips(run.val_clips) : t.noValidation}</p>
               </div>
             }
           />
@@ -148,6 +148,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
 }
 
 function MetricsTable({ run }: { run: Run }) {
+  const t = useT()
   const rows = useMemo(() => {
     const val = new Map(run.val.map((p) => [p.step, p]))
     return run.train
@@ -158,18 +159,18 @@ function MetricsTable({ run }: { run: Run }) {
   if (rows.length === 0) return null
   return (
     <details className="advanced">
-      <summary>Table (latest {rows.length} logged steps)</summary>
+      <summary>{t.tableLatest(rows.length)}</summary>
       <div className="table-wrap">
         <table className="metrics">
           <thead>
             <tr>
-              <th>Step</th>
-              <th>Diffusion</th>
-              <th>Stop</th>
-              <th>Val diffusion</th>
-              <th>Val stop</th>
-              <th>LR</th>
-              <th>Epoch</th>
+              <th>{t.columns.step}</th>
+              <th>{t.columns.diffusion}</th>
+              <th>{t.columns.stop}</th>
+              <th>{t.columns.valDiffusion}</th>
+              <th>{t.columns.valStop}</th>
+              <th>{t.columns.lr}</th>
+              <th>{t.columns.epoch}</th>
             </tr>
           </thead>
           <tbody>
@@ -192,6 +193,7 @@ function MetricsTable({ run }: { run: Run }) {
 }
 
 function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onTryCheckpoint: (id: string) => void }) {
+  const t = useT()
   const byStep = useMemo(() => {
     const steps = new Map<number, Map<number, string>>()
     for (const s of run.samples) {
@@ -238,28 +240,26 @@ function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onT
   return (
     <section className="panel">
       <header className="panel-head">
-        <h2>Samples</h2>
-        {byStep.length > 0 && <span className="muted">{byStep.length} validations</span>}
+        <h2>{t.samples}</h2>
+        {byStep.length > 0 && <span className="muted">{t.validations(byStep.length)}</span>}
       </header>
 
       {byStep.length === 0 ? (
         <p className="muted empty">
-          {run.val_manifest
-            ? `Samples of the validation clips appear every ${String(run.config.valid_interval ?? '')} steps.`
-            : 'This run has no validation set, so no samples are generated.'}
+          {run.val_manifest ? t.samplesEvery(String(run.config.valid_interval ?? '')) : t.noSamples}
         </p>
       ) : (
         <div className="samples" style={{ gridTemplateColumns: `auto repeat(${columns}, minmax(0, 1fr))` }}>
           <span />
           {Array.from({ length: columns }, (_, i) => (
             <p key={i} className="sample-text" title={run.sample_texts[i]}>
-              {run.sample_texts[i] ?? `Sample ${i + 1}`}
+              {run.sample_texts[i] ?? t.sampleN(i + 1)}
             </p>
           ))}
 
           {run.references.length > 0 && (
             <>
-              <span className="sample-step muted">Reference</span>
+              <span className="sample-step muted">{t.reference}</span>
               {Array.from({ length: columns }, (_, i) => {
                 const file = `reference_${i}.wav`
                 return cell(run.references.includes(file) ? file : undefined, i)
@@ -272,10 +272,10 @@ function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onT
             return (
               <div key={step} className="sample-row">
                 <span className="sample-step">
-                  <span className="sample-step-label">Step {formatStep(step)}</span>
+                  <span className="sample-step-label">{t.stepLabel(formatStep(step))}</span>
                   {loraIds.has(id) && (
                     <button type="button" className="ghost small" onClick={() => onTryCheckpoint(id)} title={id}>
-                      Try
+                      {t.tryCheckpoint}
                     </button>
                   )}
                 </span>
@@ -291,6 +291,7 @@ function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onT
 }
 
 function Console({ lines, open, follow }: { lines: string[]; open: boolean; follow: boolean }) {
+  const t = useT()
   const ref = useRef<HTMLPreElement>(null)
   useEffect(() => {
     const el = ref.current
@@ -299,26 +300,22 @@ function Console({ lines, open, follow }: { lines: string[]; open: boolean; foll
 
   return (
     <details className="panel console" open={open || undefined}>
-      <summary>Console</summary>
-      <pre ref={ref}>{lines.length ? lines.join('\n') : 'No output yet.'}</pre>
+      <summary>{t.console}</summary>
+      <pre ref={ref}>{lines.length ? lines.join('\n') : t.noOutput}</pre>
     </details>
   )
 }
 
-const FILE_KEYS: [string, string][] = [
-  ['pretrained_path', 'Base model'],
-  ['train_manifest', 'Train manifest'],
-  ['val_manifest', 'Validation manifest'],
-  ['save_path', 'Checkpoints'],
-]
+const FILE_KEYS = ['pretrained_path', 'train_manifest', 'val_manifest', 'save_path'] // labels: t.fileKeys
 
 /** Where a run's inputs and outputs live (the parameters are shown above). */
 function ConfigFiles({ config }: { config: Record<string, unknown> }) {
+  const t = useT()
   return (
     <dl className="lora-details">
-      {FILE_KEYS.filter(([key]) => config[key] !== undefined && config[key] !== '').map(([key, label]) => (
+      {FILE_KEYS.filter((key) => config[key] !== undefined && config[key] !== '').map((key) => (
         <div key={key} className="dl-row">
-          <dt>{label}</dt>
+          <dt>{t.fileKeys[key]}</dt>
           <dd className="path">{String(config[key])}</dd>
         </div>
       ))}
@@ -338,10 +335,16 @@ function SampleCell({
   audio: HTMLAudioElement | null
   onPlay: (at?: number) => void
 }) {
+  const t = useT()
   const shape = usePeaks(url)
   return (
     <div className="sample-cell">
-      <button type="button" className="ghost small" onClick={() => onPlay()} aria-label={playing ? 'Pause' : 'Play'}>
+      <button
+        type="button"
+        className="ghost small"
+        onClick={() => onPlay()}
+        aria-label={playing ? t.pause : t.playLabel}
+      >
         {playing ? '❚❚' : '▶'}
       </button>
       {shape ? (
@@ -349,7 +352,7 @@ function SampleCell({
       ) : (
         <span className="sample-wave-placeholder" />
       )}
-      {shape && <span className="muted hint">{shape.seconds.toFixed(1)} s</span>}
+      {shape && <span className="muted hint">{t.seconds(shape.seconds.toFixed(1))}</span>}
     </div>
   )
 }

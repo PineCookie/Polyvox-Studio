@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useT } from '../i18n'
 import type { Params } from '../trainParams'
 
 type NumericKey = { [K in keyof Params]: Params[K] extends number ? K : never }[keyof Params]
@@ -20,16 +21,13 @@ interface Props {
 
 /** Training parameters, editable for a new run and read-only for an existing one. */
 export function ParamsFields({ params, onChange, header, hint, validation, epochs }: Props) {
+  const t = useT()
   const readOnly = !onChange
 
-  function numberField(
-    key: NumericKey,
-    label: string,
-    props: { min?: number; max?: number; step?: number | 'any' } = {},
-  ) {
+  function numberField(key: NumericKey, props: { min?: number; max?: number; step?: number | 'any' } = {}) {
     return (
       <label className="field">
-        <span>{label}</span>
+        <span>{t.params[key as keyof typeof t.params]}</span>
         <input
           type="number"
           value={Number.isFinite(params[key]) ? params[key] : ''}
@@ -40,10 +38,11 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
     )
   }
 
-  function flag(key: FlagKey, label: string) {
+  function flag(key: FlagKey) {
     return (
       <label>
-        <input type="checkbox" checked={params[key]} onChange={(e) => onChange?.(key, e.target.checked)} /> {label}
+        <input type="checkbox" checked={params[key]} onChange={(e) => onChange?.(key, e.target.checked)} />{' '}
+        {t.params[key]}
       </label>
     )
   }
@@ -54,7 +53,7 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
       <div className="form-grid">
         {epochs ? (
           <label className="field">
-            <span>Epochs</span>
+            <span>{t.params.epochs}</span>
             <input
               type="number"
               min={0.5}
@@ -64,34 +63,34 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
             />
           </label>
         ) : (
-          numberField('num_iters', 'Steps', { min: 1, step: 100 })
+          numberField('num_iters', { min: 1, step: 100 })
         )}
-        {numberField('lora_rank', 'LoRA rank', { min: 1, max: 512 })}
-        {numberField('lora_alpha', 'LoRA alpha', { min: 0.1, step: 'any' })}
-        {numberField('learning_rate', 'Learning rate', { min: 0, step: 'any' })}
+        {numberField('lora_rank', { min: 1, max: 512 })}
+        {numberField('lora_alpha', { min: 0.1, step: 'any' })}
+        {numberField('learning_rate', { min: 0, step: 'any' })}
       </div>
       {hint}
       {validation}
       {/* Read-only shows everything; a new run keeps the rarely changed ones folded. */}
       <details className="advanced" open={readOnly || undefined}>
-        <summary>Advanced</summary>
+        <summary>{t.advanced}</summary>
         <div className="form-grid">
-          {epochs && numberField('num_iters', 'Steps', { min: 1 })}
-          {numberField('batch_size', 'Batch size', { min: 1 })}
-          {numberField('grad_accum_steps', 'Gradient accumulation', { min: 1 })}
-          {numberField('warmup_steps', 'Warmup steps', { min: 0 })}
-          {numberField('max_batch_tokens', 'Token budget per batch', { min: 0, step: 1024 })}
-          {numberField('weight_decay', 'Weight decay', { min: 0, step: 'any' })}
-          {numberField('max_grad_norm', 'Max grad norm', { min: 0, step: 'any' })}
-          {numberField('lora_dropout', 'LoRA dropout', { min: 0, max: 0.99, step: 'any' })}
-          {numberField('save_interval', 'Save every (steps)', { min: 1 })}
-          {numberField('valid_interval', 'Validate every (steps)', { min: 1 })}
-          {numberField('log_interval', 'Log every (steps)', { min: 1 })}
-          {numberField('num_workers', 'Data loader workers', { min: 0, max: 16 })}
+          {epochs && numberField('num_iters', { min: 1 })}
+          {numberField('batch_size', { min: 1 })}
+          {numberField('grad_accum_steps', { min: 1 })}
+          {numberField('warmup_steps', { min: 0 })}
+          {numberField('max_batch_tokens', { min: 0, step: 1024 })}
+          {numberField('weight_decay', { min: 0, step: 'any' })}
+          {numberField('max_grad_norm', { min: 0, step: 'any' })}
+          {numberField('lora_dropout', { min: 0, max: 0.99, step: 'any' })}
+          {numberField('save_interval', { min: 1 })}
+          {numberField('valid_interval', { min: 1 })}
+          {numberField('log_interval', { min: 1 })}
+          {numberField('num_workers', { min: 0, max: 16 })}
           <div className="toggles">
-            {flag('enable_lm', 'LoRA on LM')}
-            {flag('enable_dit', 'LoRA on DiT')}
-            {flag('enable_proj', 'LoRA on projections')}
+            {flag('enable_lm')}
+            {flag('enable_dit')}
+            {flag('enable_proj')}
           </div>
         </div>
       </details>

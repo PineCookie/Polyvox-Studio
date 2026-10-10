@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { DEFAULT_LUFS, getStatus, importDataset, previewImport } from '../api'
 import type { Aligner, CleanupOption, ImportJob, ImportPreview } from '../api'
 import { ALIGNER_LABEL, formatDuration, formatRates } from '../format'
+import { useT } from '../i18n'
 import { useJob } from '../useJob'
 import { JobProgress } from './JobProgress'
 
@@ -11,32 +12,12 @@ interface Props {
   onImported: (result: ImportJob['result']) => void
 }
 
-const KIND_LABEL: Record<ImportPreview['kind'], string> = {
-  gsv: 'GPT-SoVITS list',
-  csv: 'CSV (file|text)',
-  jsonl: 'JSONL manifest',
-  folder: 'Folder of audio + transcripts',
-}
-
 // ISO codes the ASR accepts (Qwen3-ASR supports ~30; these cover the usual data).
 // 'auto': detect until the first clips agree, then force that language (much faster).
-const LANGUAGES: [string, string][] = [
-  ['auto', 'Estimate from the dataset'],
-  ['', 'Detect per clip'],
-  ['zh', 'Chinese'],
-  ['yue', 'Cantonese'],
-  ['en', 'English'],
-  ['ja', 'Japanese'],
-  ['ko', 'Korean'],
-]
+const LANGUAGES = ['auto', '', 'zh', 'yue', 'en', 'ja', 'ko'] // labels: t.languages
 
-// Clean-up options in the order they run: [option, label, what it is for].
-const CLEANUP: [CleanupOption, string, string][] = [
-  ['separate', 'Separate the voice from music and background', 'Vocal separation (bleedless Mel-Band RoFormer)'],
-  ['dereverb', 'Remove reverb', 'For echoey rooms or reverb added in a stream mix'],
-  ['denoise', 'Remove noise', 'For hiss, hum or fan noise'],
-]
-const NO_MODEL = 'No model installed; see the README (Configuration) to add one.'
+// Clean-up options in the order they run (labels and hints: t.cleanupLabel).
+const CLEANUP: CleanupOption[] = ['separate', 'dereverb', 'denoise']
 
 // Matches importer.DATASET_NAME.
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
@@ -44,6 +25,7 @@ const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 const fileName = (path: string) => path.split(/[\\/]/).at(-1) ?? path
 
 export function ImportForm({ datasetNames, onImported }: Props) {
+  const t = useT()
   const [source, setSource] = useState('')
   const [audioDir, setAudioDir] = useState('')
   const [preview, setPreview] = useState<ImportPreview | null>(null)
@@ -75,7 +57,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [job, setJob] = useJob<ImportJob>((j) => {
     if (j.state === 'done') onImported(j.result)
-    else if (j.state === 'failed') setError(j.error ?? 'Import failed.')
+    else if (j.state === 'failed') setError(j.error ?? t.importFailed)
   })
 
   const running = job?.state === 'running'
@@ -139,11 +121,11 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   }
 
   const nameError = !name
-    ? 'Required'
+    ? t.required
     : !NAME_PATTERN.test(name)
-      ? 'Letters, digits, ".", "_" and "-" only.'
+      ? t.nameChars
       : datasetNames.includes(name)
-        ? 'A dataset with this name exists.'
+        ? t.datasetExists
         : null
   const willSlice = !!preview && slice && preview.long_recordings > 0
   const willTranscribe = !!preview && (willSlice || (transcribe && preview.untranscribed > 0))
@@ -154,23 +136,23 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   return (
     <section className="panel">
       <header className="panel-head">
-        <h2>Import a dataset</h2>
+        <h2>{t.importTitle}</h2>
       </header>
 
       <form className="import-paths" onSubmit={scan}>
         <label className="field">
-          <span>Source</span>
+          <span>{t.source}</span>
           <input
             value={source}
             onChange={(e) => edit(setSource)(e.target.value)}
-            placeholder="D:\voices\speaker.list   or a folder of clips (with or without .lab/.txt transcripts)"
+            placeholder={t.sourcePlaceholder}
             spellCheck={false}
             disabled={running}
           />
         </label>
         <label className="field">
           <span>
-            Audio folder <span className="muted">optional · where the clips are, if the list's paths are stale</span>
+            {t.audioFolder} <span className="muted">{t.audioFolderHint}</span>
           </span>
           <input
             value={audioDir}
@@ -180,17 +162,14 @@ export function ImportForm({ datasetNames, onImported }: Props) {
             disabled={running}
           />
         </label>
-        <p className="muted hint">
-          GPT-SoVITS <code>.list</code>, <code>file|text</code> CSV, <code>.jsonl</code>, or a folder. Paths are on this
-          computer; Explorer's “Copy as path” works.
-        </p>
+        <p className="muted hint">{t.sourceHint}</p>
         <div className="actions">
           <button
             type="submit"
             className={preview ? 'ghost' : 'primary'}
             disabled={!source.trim() || scanning || running}
           >
-            {scanning ? 'Scanning…' : 'Scan'}
+            {scanning ? t.scanning : t.scan}
           </button>
         </div>
       </form>
@@ -200,20 +179,20 @@ export function ImportForm({ datasetNames, onImported }: Props) {
       {preview && (
         <div className="import-preview">
           <p className="import-stats">
-            <span className="tag">{KIND_LABEL[preview.kind]}</span>
+            <span className="tag">{t.kindLabel[preview.kind]}</span>
             <span>
-              <strong>{withAudio}</strong> of {preview.rows} clips have audio
+              {t.clipsWithAudio(withAudio, preview.rows)}
               {preview.untranscribed > 0 && (
-                <span className="muted">
-                  {' '}
-                  · {preview.found} with text, {preview.untranscribed} without
-                </span>
+                <span className="muted">{t.withAndWithoutText(preview.found, preview.untranscribed)}</span>
               )}
             </span>
             {withAudio > 0 && (
               <span className="muted">
-                {formatDuration(preview.total_seconds)} · median {preview.median_seconds?.toFixed(1)} s ·{' '}
-                {formatRates(preview.sample_rates)}
+                {t.previewLength(
+                  formatDuration(preview.total_seconds),
+                  preview.median_seconds?.toFixed(1) ?? '-',
+                  formatRates(preview.sample_rates),
+                )}
               </span>
             )}
           </p>
@@ -222,21 +201,20 @@ export function ImportForm({ datasetNames, onImported }: Props) {
             <ul className="issues">
               {preview.missing > 0 && (
                 <li>
-                  {preview.missing} without audio (skipped)
+                  {t.missingAudio(preview.missing)}
                   {preview.missing_examples.length > 0 && (
-                    <span className="muted"> · e.g. {preview.missing_examples.map(fileName).join(', ')}</span>
+                    <span className="muted">{t.forExample(preview.missing_examples.map(fileName).join(', '))}</span>
                   )}
                 </li>
               )}
-              {preview.duplicates > 0 && <li>{preview.duplicates} duplicates (skipped)</li>}
-              {preview.unreadable > 0 && <li>{preview.unreadable} unreadable audio files (skipped)</li>}
+              {preview.duplicates > 0 && <li>{t.duplicates(preview.duplicates)}</li>}
+              {preview.unreadable > 0 && <li>{t.unreadable(preview.unreadable)}</li>}
             </ul>
           )}
 
           {withAudio === 0 ? (
             <p className="notice">
-              <strong>Transcripts only.</strong> No audio was found for this source. If you have the clips, set Audio
-              folder to where they are and scan again; otherwise it can't be imported yet.
+              <strong>{t.transcriptsOnlyTitle}</strong> {t.transcriptsOnly}
             </p>
           ) : (
             <>
@@ -257,10 +235,14 @@ export function ImportForm({ datasetNames, onImported }: Props) {
 
               <fieldset className="field asr-options" disabled={running || !(copyAudio || willSlice)}>
                 <span className="check-title">
-                  Clean up the audio first <span className="muted">optional · slower · needs copying</span>
+                  {t.cleanupTitle} <span className="muted">{t.cleanupOptional}</span>
                 </span>
-                {CLEANUP.map(([option, label, hint]) => (
-                  <label key={option} className="check" title={available.includes(option) ? hint : NO_MODEL}>
+                {CLEANUP.map((option) => (
+                  <label
+                    key={option}
+                    className="check"
+                    title={available.includes(option) ? t.cleanupLabel[option][1] : t.noModel}
+                  >
                     <input
                       type="checkbox"
                       checked={cleanup.includes(option)}
@@ -269,54 +251,47 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                         setCleanup((c) => (e.target.checked ? [...c, option] : c.filter((x) => x !== option)))
                       }
                     />{' '}
-                    {label}
-                    {!available.includes(option) && <span className="muted"> · no model installed</span>}
+                    {t.cleanupLabel[option][0]}
+                    {!available.includes(option) && <span className="muted">{t.noModelInstalled}</span>}
                   </label>
                 ))}
-                <p className="muted hint">
-                  RoFormer models (as in UVR / MSST-WebUI) on the GPU. Separation keeps the voice and drops music and
-                  background; de-reverb and denoise are for echoey or noisy recordings.
-                </p>
+                <p className="muted hint">{t.cleanupHint}</p>
               </fieldset>
 
               {preview.long_recordings > 0 && (
                 <fieldset className="field asr-options" disabled={running}>
                   <label className="check">
-                    <input type="checkbox" checked={slice} onChange={(e) => setSlice(e.target.checked)} /> Slice the{' '}
-                    {preview.long_recordings} long recordings into clips
+                    <input type="checkbox" checked={slice} onChange={(e) => setSlice(e.target.checked)} />{' '}
+                    {t.sliceLong(preview.long_recordings)}
                   </label>
                   {slice ? (
                     <>
                       <div className="inline-field">
-                        <span className="muted hint">Clips from</span>
+                        <span className="muted hint">{t.clipsFrom}</span>
                         <input
                           type="number"
                           min={0.5}
                           step={0.5}
                           value={sliceMin}
                           onChange={(e) => setSliceMin(e.target.valueAsNumber)}
-                          aria-label="Minimum clip length (seconds)"
+                          aria-label={t.minClipLength}
                         />
-                        <span className="muted hint">to</span>
+                        <span className="muted hint">{t.to}</span>
                         <input
                           type="number"
                           min={3}
                           step={1}
                           value={sliceMax}
                           onChange={(e) => setSliceMax(e.target.valueAsNumber)}
-                          aria-label="Maximum clip length (seconds)"
+                          aria-label={t.maxClipLength}
                         />
-                        <span className="muted hint">seconds</span>
-                        {!sliceRangeOk && <span className="field-error">min must be below max</span>}
+                        <span className="muted hint">{t.secondsUnit}</span>
+                        {!sliceRangeOk && <span className="field-error">{t.minBelowMax}</span>}
                       </div>
-                      <p className="muted hint">
-                        Each recording is transcribed and aligned first, then cut between words, preferably at sentence
-                        ends; each clip keeps its part of the transcript. Any transcript of a whole recording is not
-                        kept.
-                      </p>
+                      <p className="muted hint">{t.sliceHint}</p>
                     </>
                   ) : (
-                    <p className="muted hint">Long recordings are imported as they are (too long to train well).</p>
+                    <p className="muted hint">{t.noSliceHint}</p>
                   )}
                 </fieldset>
               )}
@@ -330,51 +305,49 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                       disabled={willSlice}
                       onChange={(e) => setTranscribe(e.target.checked)}
                     />{' '}
-                    {willSlice
-                      ? 'Transcribe the slices and clips without text (Qwen3-ASR)'
-                      : `Transcribe the ${preview.untranscribed} clips without text (Qwen3-ASR)`}
+                    {willSlice ? t.transcribeSlices : t.transcribeClips(preview.untranscribed)}
                   </label>
                   {(transcribe || willSlice) && (
                     <div className="form-grid">
                       <label className="field">
-                        <span>Language</span>
+                        <span>{t.language}</span>
                         <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-                          {LANGUAGES.map(([code, label]) => (
+                          {LANGUAGES.map((code) => (
                             <option key={code} value={code}>
-                              {label}
+                              {t.languages[code]}
                             </option>
                           ))}
                         </select>
                       </label>
                       <label className="field">
                         <span>
-                          Names and terms <span className="muted">optional</span>
+                          {t.namesAndTerms} <span className="muted">{t.optional}</span>
                         </span>
                         <input
                           value={prompt}
                           onChange={(e) => setPrompt(e.target.value)}
-                          placeholder="Speaker and place names the ASR should spell right"
+                          placeholder={t.namesPlaceholder}
                         />
                       </label>
                     </div>
                   )}
-                  {!transcribe && !willSlice && <p className="muted hint">Those clips will be left out.</p>}
+                  {!transcribe && !willSlice && <p className="muted hint">{t.leftOut}</p>}
                 </fieldset>
               )}
 
               <fieldset className="field asr-options" disabled={running}>
                 <label className="check">
-                  <input type="checkbox" checked={check} onChange={(e) => setCheck(e.target.checked)} /> Check each clip
-                  against its text (forced alignment)
+                  <input type="checkbox" checked={check} onChange={(e) => setCheck(e.target.checked)} />{' '}
+                  {t.checkEachClip}
                 </label>
                 {check && (
                   <>
                     <div className="inline-field">
-                      <span className="muted hint">Aligner</span>
+                      <span className="muted hint">{t.aligner}</span>
                       <select
                         value={aligner}
                         onChange={(e) => setAligner(e.target.value as Aligner)}
-                        aria-label="Aligner"
+                        aria-label={t.aligner}
                       >
                         {(Object.keys(ALIGNER_LABEL) as Aligner[]).map((a) => (
                           <option key={a} value={a}>
@@ -390,8 +363,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                         disabled={!(copyAudio || willSlice)}
                         onChange={(e) => setTrim(e.target.checked)}
                       />{' '}
-                      Trim the clip edges: long silence, and untranscribed sounds (a laugh, 嗯) a pause separates from
-                      the words; keeps 0.15 s
+                      {t.trimEdges}
                     </label>
                     <label className="check">
                       <input
@@ -399,20 +371,16 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                         checked={detectSinging}
                         onChange={(e) => setDetectSinging(e.target.checked)}
                       />{' '}
-                      Flag sung clips (karaoke, covers): drop them in review with one click
+                      {t.flagSung}
                     </label>
-                    <p className="muted hint">
-                      Flags clips whose text does not match, with untranscribed speech, cut at the edge or with long
-                      silence, for review after the import.
-                    </p>
+                    <p className="muted hint">{t.checkHint}</p>
                   </>
                 )}
               </fieldset>
 
               <label className="check">
                 <input type="checkbox" checked={tidy} onChange={(e) => setTidy(e.target.checked)} disabled={running} />{' '}
-                Tidy fillers: shorten runs to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯); counts are unreliable and only need
-                to be consistent
+                {t.tidyOption}
               </label>
 
               <div className="inline-field">
@@ -423,7 +391,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                     disabled={running || !(copyAudio || willSlice)}
                     onChange={(e) => setNormalize(e.target.checked)}
                   />{' '}
-                  Normalize loudness to
+                  {t.normalizeTo}
                 </label>
                 <input
                   type="number"
@@ -433,13 +401,15 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                   value={lufs}
                   onChange={(e) => setLufs(e.target.valueAsNumber)}
                   disabled={running || !normalize || !(copyAudio || willSlice)}
-                  aria-label="Target loudness (LUFS)"
+                  aria-label={t.targetLufs}
                 />
-                <span className="muted hint">LUFS (EBU R128; peaks stay below -1 dBFS)</span>
+                <span className="muted hint">{t.lufsHint}</span>
               </div>
 
               <label className="field">
-                <span>Dataset name {nameError && !running && <span className="field-error">{nameError}</span>}</span>
+                <span>
+                  {t.datasetName} {nameError && !running && <span className="field-error">{nameError}</span>}
+                </span>
                 <input value={name} onChange={(e) => setName(e.target.value)} disabled={running} />
               </label>
               <label className="check">
@@ -449,11 +419,10 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                   onChange={(e) => setCopyAudio(e.target.checked)}
                   disabled={running || willSlice}
                 />{' '}
-                Copy audio into <code>data/{name || '…'}/wavs</code> (self-contained; otherwise the files stay where
-                they are)
+                {t.copyAudio(name || '…')}
               </label>
 
-              {job && <JobProgress job={job} what="Import" />}
+              {job && <JobProgress job={job} what={t.importWhat} />}
 
               <div className="actions">
                 <button
@@ -462,7 +431,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                   onClick={runImport}
                   disabled={!!nameError || running || (importCount === 0 && !willSlice) || (willSlice && !sliceRangeOk)}
                 >
-                  {running ? 'Importing…' : willSlice ? 'Slice and import' : `Import ${importCount} clips`}
+                  {running ? t.importing : willSlice ? t.sliceAndImport : t.importClips(importCount)}
                 </button>
               </div>
             </>

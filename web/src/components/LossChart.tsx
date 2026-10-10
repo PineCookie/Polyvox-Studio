@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent } from 'react'
 import type { MetricPoint } from '../api'
 import { formatStep, formatValue } from '../format'
+import { useT } from '../i18n'
 
 interface Props {
   title: string
@@ -69,6 +70,7 @@ function useWidth<T extends HTMLElement>() {
 }
 
 export function LossChart({ title, metric, train, val }: Props) {
+  const t = useT()
   const [ref, width] = useWidth<HTMLDivElement>()
   const height = chartHeight(width)
   const [hoverStep, setHoverStep] = useState<number | null>(null)
@@ -131,16 +133,16 @@ export function LossChart({ title, metric, train, val }: Props) {
     <figure className="chart">
       <figcaption className="chart-head">
         <span className="chart-title">{title}</span>
-        {latest && <span className="muted">{formatValue(latest.value)} smoothed</span>}
+        {latest && <span className="muted">{t.smoothed(formatValue(latest.value))}</span>}
         <span className="spacer" />
         {raw.length > 0 && (
           <span className="legend">
             <span className="legend-item">
-              <span className="swatch line train" aria-hidden /> Train
+              <span className="swatch line train" aria-hidden /> {t.train}
             </span>
             {valPoints.length > 0 && (
               <span className="legend-item">
-                <span className="swatch dot val" aria-hidden /> Validation
+                <span className="swatch dot val" aria-hidden /> {t.validation}
               </span>
             )}
           </span>
@@ -149,9 +151,9 @@ export function LossChart({ title, metric, train, val }: Props) {
 
       <div className="chart-body" ref={ref}>
         {!geometry ? (
-          <p className="muted empty chart-empty">{raw.length === 0 ? 'No steps logged yet.' : ''}</p>
+          <p className="muted empty chart-empty">{raw.length === 0 ? t.noStepsYet : ''}</p>
         ) : (
-          <svg width={width} height={height} role="img" aria-label={`${title} over training steps`}>
+          <svg width={width} height={height} role="img" aria-label={t.overSteps(title)}>
             {geometry.yTicks.map((t) => (
               <g key={`y${t}`}>
                 <line className="grid" x1={M.left} x2={width - M.right} y1={geometry.y(t)} y2={geometry.y(t)} />
@@ -209,14 +211,14 @@ export function LossChart({ title, metric, train, val }: Props) {
               top: M.top,
             }}
           >
-            <strong>Step {formatStep(raw[hoverIndex].step)}</strong>
+            <strong>{t.stepLabel(formatStep(raw[hoverIndex].step))}</strong>
             <span>
-              <span className="swatch line train" aria-hidden /> Train {formatValue(raw[hoverIndex].value)}
-              <span className="muted"> · smoothed {formatValue(smoothed[hoverIndex].value)}</span>
+              <span className="swatch line train" aria-hidden /> {t.train} {formatValue(raw[hoverIndex].value)}
+              <span className="muted">{t.smoothedValue(formatValue(smoothed[hoverIndex].value))}</span>
             </span>
             {hoverVal && (
               <span>
-                <span className="swatch dot val" aria-hidden /> Validation {formatValue(hoverVal.value)}
+                <span className="swatch dot val" aria-hidden /> {t.validation} {formatValue(hoverVal.value)}
                 {hoverVal.step !== raw[hoverIndex].step && (
                   <span className="muted"> @ {formatStep(hoverVal.step)}</span>
                 )}

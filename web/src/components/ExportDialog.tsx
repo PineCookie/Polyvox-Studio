@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { exportLora } from '../api'
 import type { Lora } from '../api'
 import { formatStep } from '../format'
+import { useT } from '../i18n'
 
 interface Props {
   lora: Lora
@@ -31,6 +32,7 @@ function save(blob: Blob, filename: string) {
 }
 
 export function ExportDialog({ lora, final, onError, onClose }: Props) {
+  const t = useT()
   const dialog = useRef<HTMLDialogElement>(null)
   const [name, setName] = useState(() => defaultName(lora, final))
   const [baseModel, setBaseModel] = useState(lora.base_model_id ?? '')
@@ -67,37 +69,37 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
     >
       <form className="dialog-body" onSubmit={submit}>
         <header className="panel-head">
-          <h2>Export for sharing</h2>
+          <h2>{t.exportTitle}</h2>
           <span className="muted hint">
             {lora.id.split('/')[0]}
-            {lora.step !== null && ` · step ${formatStep(lora.step)}`}
+            {lora.step !== null && t.stepSuffix(formatStep(lora.step))}
           </span>
         </header>
 
-        <p className="muted hint">
-          A zip with the weights, <code>lora_config.json</code> and a README on how to use it. Local paths, optimizer
-          state, logs, transcripts and dataset audio are left out.
-        </p>
+        <p className="muted hint">{t.exportIntro}</p>
 
         <label className="field">
-          <span>Name {!nameOk && <span className="field-error">letters, digits, . _ -</span>}</span>
+          <span>
+            {t.name} {!nameOk && <span className="field-error">{t.nameRule}</span>}
+          </span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </label>
         <label className="field">
-          <span>Base model {!baseOk && <span className="field-error">a Hugging Face id</span>}</span>
+          <span>
+            {t.baseModel} {!baseOk && <span className="field-error">{t.hubIdRule}</span>}
+          </span>
           <input value={baseModel} onChange={(e) => setBaseModel(e.target.value)} placeholder="openbmb/VoxCPM2" />
         </label>
         <label className="check">
-          <input type="checkbox" checked={half} onChange={(e) => setHalf(e.target.checked)} /> Half-size weights
-          (bfloat16, same output)
+          <input type="checkbox" checked={half} onChange={(e) => setHalf(e.target.checked)} /> {t.halfWeights}
         </label>
 
         <div className="actions">
           <button type="button" className="ghost" onClick={onClose}>
-            Cancel
+            {t.cancel}
           </button>
           <button type="submit" className="primary" disabled={busy || !nameOk || !baseOk}>
-            {busy ? 'Exporting…' : 'Download zip'}
+            {busy ? t.exporting : t.downloadZip}
           </button>
         </div>
       </form>

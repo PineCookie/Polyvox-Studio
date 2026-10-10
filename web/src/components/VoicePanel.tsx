@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Lora } from '../api'
 import { formatStep } from '../format'
+import { useT } from '../i18n'
+import type { Messages } from '../i18n'
 import { ExportDialog } from './ExportDialog'
 
 interface Props {
@@ -30,7 +32,7 @@ interface Voice {
 // Groups checkpoints by run ("speaker_r64/checkpoints/step_0005000" -> "speaker_r64") and drops
 // copies of the final weights: the script saves the last step twice (N-1 and N), and
 // "latest" duplicates whichever step it was copied from.
-function groupVoices(loras: Lora[]): Voice[] {
+function groupVoices(loras: Lora[], t: Messages): Voice[] {
   const byName = new Map<string, Lora[]>()
   for (const lora of loras) {
     const name = lora.id.split('/')[0]
@@ -50,7 +52,7 @@ function groupVoices(loras: Lora[]): Voice[] {
         .map((lora) => ({
           lora,
           step: lora.step,
-          label: lora.step !== null ? `Step ${formatStep(lora.step)}` : 'Latest',
+          label: lora.step !== null ? t.stepLabel(formatStep(lora.step)) : t.latest,
         }))
         .sort((a, b) => (b.step ?? -1) - (a.step ?? -1))
       return { name, checkpoints, baseModelId: checkpoints[0]?.lora.base_model_id ?? null }
@@ -63,7 +65,8 @@ function shortModel(id: string): string {
 }
 
 export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onImport, onError, loading }: Props) {
-  const voices = useMemo(() => groupVoices(loras), [loras])
+  const t = useT()
+  const voices = useMemo(() => groupVoices(loras, t), [loras, t])
   const [filter, setFilter] = useState('')
   const [exporting, setExporting] = useState<Lora | null>(null)
   const [importing, setImporting] = useState(false)
@@ -93,7 +96,7 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
   return (
     <section className="panel voice-panel">
       <header className="panel-head">
-        <h2>Voice</h2>
+        <h2>{t.voice}</h2>
         <span className="run-actions">
           <input
             ref={fileInput}
@@ -107,12 +110,12 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
             className="ghost small"
             onClick={() => fileInput.current?.click()}
             disabled={importing}
-            title="Add a LoRA package (.zip) exported from VoxCPM Studio"
+            title={t.importLoraTitle}
           >
-            {importing ? 'Importing…' : 'Import'}
+            {importing ? t.importing : t.import}
           </button>
           <button type="button" className="ghost small" onClick={onRefresh} disabled={loading}>
-            {loading ? 'Scanning…' : 'Refresh'}
+            {loading ? t.scanning : t.refresh}
           </button>
         </span>
       </header>
@@ -123,39 +126,46 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
             <div className="voice-current-head">
               <span className="voice-name">{currentVoice.name}</span>
               <button type="button" className="ghost small" onClick={() => setExporting(current)}>
-                Export
+                {t.export}
               </button>
             </div>
             {options.length > 1 && (
-              <select value={current.id} onChange={(e) => onSelect(e.target.value)} aria-label="Checkpoint">
+              <select value={current.id} onChange={(e) => onSelect(e.target.value)} aria-label={t.checkpoint}>
                 {options.map((c, i) => (
                   <option key={c.lora.id} value={c.lora.id}>
                     {c.label}
-                    {i === 0 ? ' (final)' : ''}
+                    {i === 0 ? t.final : ''}
                   </option>
                 ))}
               </select>
             )}
             <p className="voice-meta">
               {current.config
-                ? `Rank ${current.config.r} · alpha ${current.config.alpha} · ${[
-                    current.config.enable_lm && 'LM',
-                    current.config.enable_dit && 'DiT',
-                    current.config.enable_proj && 'projections',
-                  ]
-                    .filter(Boolean)
-                    .join(' + ')}`
-                : 'Default layout (no lora_config.json)'}
+                ? t.loraLayout(
+                    current.config.r,
+                    current.config.alpha,
+                    [
+                      current.config.enable_lm && 'LM',
+                      current.config.enable_dit && 'DiT',
+                      current.config.enable_proj && t.projections,
+                    ]
+                      .filter(Boolean)
+                      .join(' + '),
+                  )
+                : t.defaultLayout}
               <br />
               <span title={current.base_model ?? undefined}>
-                Base {current.base_model_id ?? current.base_model ?? 'not recorded'}
+                {t.baseOf(current.base_model_id ?? current.base_model ?? t.notRecorded)}
               </span>
             </p>
           </>
         ) : (
           <>
-            <span className="voice-name">Base model</span>
-            <p className="voice-meta">No LoRA{modelId ? ` · ${modelId}` : ''}</p>
+            <span className="voice-name">{t.baseModel}</span>
+            <p className="voice-meta">
+              {t.noLora}
+              {modelId ? ` · ${modelId}` : ''}
+            </p>
           </>
         )}
       </div>
@@ -166,12 +176,12 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
           type="search"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder={`Filter ${voices.length} voices`}
-          aria-label="Filter voices"
+          placeholder={t.filterVoices(voices.length)}
+          aria-label={t.filterVoicesLabel}
         />
       )}
 
-      <div className="voice-list" role="radiogroup" aria-label="Voice">
+      <div className="voice-list" role="radiogroup" aria-label={t.voice}>
         {!filter && (
           <button
             type="button"
@@ -180,8 +190,8 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
             className={`voice-row ${selected === null ? 'active' : ''}`}
             onClick={() => onSelect(null)}
           >
-            <span className="voice-row-name">Base model</span>
-            <span className="muted">no LoRA</span>
+            <span className="voice-row-name">{t.baseModel}</span>
+            <span className="muted">{t.noLoraShort}</span>
           </button>
         )}
 
@@ -198,7 +208,7 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
               className={`voice-row ${active ? 'active' : ''}`}
               onClick={() => onSelect(best.lora.id)}
               disabled={blocked}
-              title={blocked ? `Trained on ${voice.baseModelId}; the server runs ${modelId}` : best.lora.id}
+              title={blocked ? t.trainedOn(voice.baseModelId!, modelId!) : best.lora.id}
             >
               <span className="voice-row-name">{voice.name}</span>
               {blocked ? (
@@ -206,8 +216,8 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
               ) : (
                 <span className="muted">
                   {[
-                    best.lora.config && `r${best.lora.config.r}`,
-                    best.step !== null && `${formatStep(best.step)} steps`,
+                    best.lora.config && t.rank(best.lora.config.r),
+                    best.step !== null && t.stepsCount(formatStep(best.step)),
                   ]
                     .filter(Boolean)
                     .join(' · ')}
@@ -217,10 +227,8 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
           )
         })}
 
-        {!loading && voices.length === 0 && (
-          <p className="muted empty">No LoRAs yet. Train one, or import a shared package.</p>
-        )}
-        {voices.length > 0 && shown.length === 0 && <p className="muted empty">No voice matches “{filter}”.</p>}
+        {!loading && voices.length === 0 && <p className="muted empty">{t.noLoras}</p>}
+        {voices.length > 0 && shown.length === 0 && <p className="muted empty">{t.noVoiceMatches(filter)}</p>}
       </div>
 
       {exporting && (
