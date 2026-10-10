@@ -1912,6 +1912,32 @@ wheels = [
 ]
 
 [[package]]
+name = "prodigy-plus-schedule-free"
+version = "2.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'group-13-voxcpm-studio-cpu') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm') or (extra != 'group-13-voxcpm-studio-cpu' and extra != 'group-13-voxcpm-studio-cu126' and extra != 'group-13-voxcpm-studio-cu130' and extra != 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'group-13-voxcpm-studio-cpu') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'group-13-voxcpm-studio-cu126' or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'group-13-voxcpm-studio-cu130' or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cpu' and extra != 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra != 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm') or (extra != 'group-13-voxcpm-studio-cpu' and extra != 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/eb/d3/b78369195fb4eaa0d0a2d23b81612e3f64ac925997063824b0426b8f0ccb/prodigy_plus_schedule_free-2.0.1.tar.gz", hash = "sha256:fec4a02ce0ba2c57242f110387d5491fc6fdc99ef1431098a8b839f3e501d527", size = 23697, upload-time = "2025-09-27T11:29:48.255Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/59/4fd8780ee3897217e37dc10a371ce76f75ceef442e30fcb726140bdabc00/prodigy_plus_schedule_free-2.0.1-py3-none-any.whl", hash = "sha256:21f8e8da4908eecc5bb7cfbff4f1677bb68bcc2f24fe8c2563650bf74432b9ab", size = 24538, upload-time = "2025-09-27T11:29:46.885Z" },
+]
+
+[[package]]
+name = "prodigyopt"
+version = "1.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/8e/5ee7ea4f8ca1e1d8d5d868c6c97e53e8dc769caa383b5a16afc6fd7b28c7/prodigyopt-1.1.2.tar.gz", hash = "sha256:f6ef74944895c9b9a0045e55fdd04d07bdb03b9f09a2c77e2ec772c9d1ece15f", size = 9431, upload-time = "2025-01-16T14:58:31.352Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/26/a798a2e274d77944e784c1c577b85fcbdb7189e59ff821d9a2d6b462f853/prodigyopt-1.1.2-py3-none-any.whl", hash = "sha256:4f8f79f71d37e4a501527fc30ecc847731369dc7cbe12e6a178157924e30ce03", size = 10546, upload-time = "2025-01-16T14:58:28.858Z" },
+]
+
+[[package]]
 name = "propcache"
 version = "0.5.4"
 source = { registry = "https://pypi.org/simple" }
@@ -3183,6 +3209,8 @@ dependencies = [
     { name = "av" },
     { name = "beartype" },
     { name = "fastapi" },
+    { name = "prodigy-plus-schedule-free" },
+    { name = "prodigyopt" },
     { name = "pyloudnorm" },
     { name = "python-multipart" },
     { name = "pyyaml" },
@@ -3225,6 +3253,8 @@ requires-dist = [
     { name = "av", specifier = ">=19" },
     { name = "beartype", specifier = ">=0.22.9" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "prodigy-plus-schedule-free", specifier = ">=2.0.1" },
+    { name = "prodigyopt", specifier = ">=1.1.2" },
     { name = "pyloudnorm", specifier = ">=0.2.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyyaml" },

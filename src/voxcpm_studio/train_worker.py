@@ -20,6 +20,7 @@ On top of the script this adds:
   (torchcodec, which they would use, is not installed).
 - On small GPUs (vram.Profile.train_checkpointing), gradient checkpointing
   (``checkpoint_layers``).
+- Prodigy / Prodigy Schedule-Free instead of AdamW (``use_optimizer``).
 """
 
 from __future__ import annotations
@@ -127,6 +128,117 @@ def checkpoint_layers() -> None:
     print("[studio] Gradient checkpointing on (transformer layers).", file=sys.stderr)
 
 
+def use_optimizer(name: str) -> None:
+    """Swap the script's AdamW (and its schedule) for a Prodigy variant.
+
+    - ``prodigy`` (prodigyopt): estimates its own step size; ``lr`` is a multiplier
+      (the run's learning_rate, normally 1.0). The script's cosine schedule with
+      warmup stays; safeguard_warmup is the authors' advice for warmup.
+    - ``prodigy_sf`` (prodigy-plus-schedule-free): Prodigy with Schedule-Free
+      averaging, so a constant schedule. It trains on interpolated weights and
+      keeps the average elsewhere: the model's train() / eval() switch the
+      optimizer too (validation and samples use the average), checkpoints hold the
+      average, and loading a checkpoint switches back to training weights.
+
+    The logged learning rate is the effective one (Prodigy's d x lr).
+    """
+    if name == "adamw":
+        return
+    import torch
+    import transformers
+    from voxcpm.model import voxcpm as v1
+    from voxcpm.model import voxcpm2 as v2
+    from voxcpm.training import TrainingTracker
+
+    active: list[torch.optim.Optimizer] = []
+
+    if name == "prodigy":
+        from prodigyopt import Prodigy
+
+        def make(params, lr, weight_decay=0.0, **_):
+            opt = Prodigy(params, lr=lr, weight_decay=weight_decay, safeguard_warmup=True, use_bias_correction=True)
+            active.append(opt)
+            return opt
+
+    elif name == "prodigy_sf":
+        from prodigyplus import ProdigyPlusScheduleFree
+
+        class ScheduleFree(ProdigyPlusScheduleFree):
+            def load_state_dict(self, state_dict):
+                super().load_state_dict(state_dict)
+                # The model was just loaded with the checkpoint's averaged weights.
+                for group in self.param_groups:
+                    group["train_mode"] = False
+                self.train()
+
+        def make(params, lr, weight_decay=0.0, **_):
+            # A shorter averaging window than the package default (schedulefree_c 0)
+            # and beta1 0.95, as its docs suggest for Schedule-Free.
+            opt = ScheduleFree(params, lr=lr, weight_decay=weight_decay, betas=(0.95, 0.99), schedulefree_c=20)
+            active.append(opt)
+            return opt
+
+        def constant(optimizer, **_):
+            return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
+
+        transformers.get_cosine_schedule_with_warmup = constant
+
+        for cls in (v2.VoxCPM2Model, v1.VoxCPMModel):
+
+            def train(self, mode=True, _train=cls.train):
+                result = _train(self, mode)
+                for opt in active:
+                    opt.train() if mode else opt.eval()
+                return result
+
+            def state_dict(self, *args, _state_dict=cls.state_dict, **kwargs):
+                if not active:
+                    return _state_dict(self, *args, **kwargs)
+                opt = active[0]
+                training = any(g["train_mode"] for g in opt.param_groups)
+                opt.eval()
+                try:  # the LoRA tensors change back below: copy them
+                    return {k: v.clone() if "lora_" in k else v for k, v in _state_dict(self, *args, **kwargs).items()}
+                finally:
+                    if training:
+                        opt.train()
+
+            cls.train, cls.state_dict = train, state_dict
+    else:
+        raise ValueError(f"Unknown optimizer: {name}")
+
+    torch.optim.AdamW = make
+
+    log_metrics = TrainingTracker.log_metrics
+
+    def log_with_effective_lr(self, metrics, *args, **kwargs):
+        if active and "lr" in metrics:
+            group = active[0].param_groups[0]
+            metrics = {**metrics, "lr": float(group.get("d", 1.0)) * float(group["lr"])}
+        return log_metrics(self, metrics, *args, **kwargs)
+
+    TrainingTracker.log_metrics = log_with_effective_lr
+    print(f"[studio] Optimizer: {name}.", file=sys.stderr)
+
+
+def optimizer_from_config(config_path: Path) -> str:
+    """The run config's ``optimizer`` (adamw if absent). The script never sees the
+    key: its train() takes no such argument."""
+    import yaml
+    from voxcpm.training import config as config_module
+
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    load_yaml_config = config_module.load_yaml_config
+
+    def without_optimizer(*args, **kwargs):
+        data = load_yaml_config(*args, **kwargs)
+        data.pop("optimizer", None)
+        return data
+
+    config_module.load_yaml_config = without_optimizer
+    return str(config.get("optimizer") or "adamw")
+
+
 def process_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import _winapi
@@ -174,6 +286,7 @@ def main() -> None:
     vram.apply_limit("cuda")  # VOXCPM_STUDIO_VRAM_GB, as in the server
     if os.environ.get("VOXCPM_STUDIO_TRAIN_CHECKPOINT") == "1" or vram.detect("cuda")[1].train_checkpointing:
         checkpoint_layers()
+    use_optimizer(optimizer_from_config(args.config_path))
     threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid), daemon=True).start()
     sys.argv = [str(SCRIPT), "--config_path", str(args.config_path)]
     runpy.run_path(str(SCRIPT), run_name="__main__")

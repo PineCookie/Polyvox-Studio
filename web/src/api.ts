@@ -230,6 +230,9 @@ export interface RunDetail extends RunSummary {
   log: string[]
 }
 
+export const OPTIMIZERS = ['adamw', 'prodigy', 'prodigy_sf'] as const
+export type Optimizer = (typeof OPTIMIZERS)[number]
+
 export interface TrainParams {
   name: string
   dataset: string
@@ -240,6 +243,7 @@ export interface TrainParams {
   grad_accum_steps: number
   max_batch_tokens: number // clips too long for this per-batch budget are left out; 0 = no limit
   learning_rate: number
+  optimizer: Optimizer
   weight_decay: number
   warmup_steps: number
   max_grad_norm: number

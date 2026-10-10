@@ -1,5 +1,5 @@
 // Training parameters of a run: defaults, and reading them back from a run's config.
-import type { TrainParams } from './api'
+import { OPTIMIZERS, type Optimizer, type TrainParams } from './api'
 
 export type Params = Omit<TrainParams, 'name' | 'dataset'>
 
@@ -19,6 +19,7 @@ export const DEFAULT_PARAMS: Params = {
   grad_accum_steps: 4,
   max_batch_tokens: 8192,
   learning_rate: 1e-4,
+  optimizer: 'adamw',
   weight_decay: 0.01,
   warmup_steps: 10,
   max_grad_norm: 1.0,
@@ -33,6 +34,9 @@ export const DEFAULT_PARAMS: Params = {
   enable_dit: true,
   enable_proj: false,
 }
+
+// Prodigy finds its own step size: learning_rate is a multiplier, 1 by its authors' advice.
+export const OPTIMIZER_LR: Record<Optimizer, number> = { adamw: 1e-4, prodigy: 1, prodigy_sf: 1 }
 
 export const EFFECTIVE_BATCH = 16
 
@@ -80,6 +84,7 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     grad_accum_steps: num(config.grad_accum_steps, 1),
     max_batch_tokens: num(config.max_batch_tokens, 0),
     learning_rate: num(config.learning_rate, d.learning_rate),
+    optimizer: OPTIMIZERS.find((o) => o === config.optimizer) ?? 'adamw',
     weight_decay: num(config.weight_decay, d.weight_decay),
     warmup_steps: num(config.warmup_steps, d.warmup_steps),
     max_grad_norm: num(config.max_grad_norm, d.max_grad_norm),

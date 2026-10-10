@@ -520,6 +520,8 @@ export const en = {
     lora_rank: 'LoRA rank',
     lora_alpha: 'LoRA alpha',
     learning_rate: 'Learning rate',
+    lr_multiplier: 'Learning rate multiplier',
+    optimizer: 'Optimizer',
     batch_size: 'Batch size',
     grad_accum_steps: 'Gradient accumulation',
     warmup_steps: 'Warmup steps',
@@ -534,6 +536,11 @@ export const en = {
     enable_lm: 'LoRA on LM',
     enable_dit: 'LoRA on DiT',
     enable_proj: 'LoRA on projections',
+  },
+  optimizers: {
+    adamw: 'AdamW (cosine schedule)',
+    prodigy: 'Prodigy (finds its own learning rate)',
+    prodigy_sf: 'Prodigy Schedule-Free',
   },
 
   // Models

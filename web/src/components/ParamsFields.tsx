@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useT } from '../i18n'
-import type { Params } from '../trainParams'
+import { OPTIMIZERS, type Optimizer } from '../api'
+import { OPTIMIZER_LR, type Params } from '../trainParams'
 
 type NumericKey = { [K in keyof Params]: Params[K] extends number ? K : never }[keyof Params]
 type FlagKey = 'enable_lm' | 'enable_dit' | 'enable_proj'
@@ -24,10 +25,14 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
   const t = useT()
   const readOnly = !onChange
 
-  function numberField(key: NumericKey, props: { min?: number; max?: number; step?: number | 'any' } = {}) {
+  function numberField(
+    key: NumericKey,
+    props: { min?: number; max?: number; step?: number | 'any' } = {},
+    label: string = t.params[key as keyof typeof t.params],
+  ) {
     return (
       <label className="field">
-        <span>{t.params[key as keyof typeof t.params]}</span>
+        <span>{label}</span>
         <input
           type="number"
           value={Number.isFinite(params[key]) ? params[key] : ''}
@@ -67,7 +72,28 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
         )}
         {numberField('lora_rank', { min: 1, max: 512 })}
         {numberField('lora_alpha', { min: 0.1, step: 'any' })}
-        {numberField('learning_rate', { min: 0, step: 'any' })}
+        <label className="field">
+          <span>{t.params.optimizer}</span>
+          <select
+            value={params.optimizer}
+            onChange={(e) => {
+              const optimizer = e.target.value as Optimizer
+              onChange?.('optimizer', optimizer)
+              onChange?.('learning_rate', OPTIMIZER_LR[optimizer])
+            }}
+          >
+            {OPTIMIZERS.map((o) => (
+              <option key={o} value={o}>
+                {t.optimizers[o]}
+              </option>
+            ))}
+          </select>
+        </label>
+        {numberField(
+          'learning_rate',
+          { min: 0, step: 'any' },
+          params.optimizer !== 'adamw' ? t.params.lr_multiplier : undefined,
+        )}
       </div>
       {hint}
       {validation}

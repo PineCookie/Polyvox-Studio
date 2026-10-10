@@ -485,6 +485,8 @@ export const zh: Messages = {
     lora_rank: 'LoRA 秩',
     lora_alpha: 'LoRA alpha',
     learning_rate: '学习率',
+    lr_multiplier: '学习率倍数',
+    optimizer: '优化器',
     batch_size: '批大小',
     grad_accum_steps: '梯度累积',
     warmup_steps: '预热步数',
@@ -499,6 +501,11 @@ export const zh: Messages = {
     enable_lm: 'LoRA 作用于 LM',
     enable_dit: 'LoRA 作用于 DiT',
     enable_proj: 'LoRA 作用于投影层',
+  },
+  optimizers: {
+    adamw: 'AdamW（余弦调度）',
+    prodigy: 'Prodigy（自动学习率）',
+    prodigy_sf: 'Prodigy Schedule-Free',
   },
 
   // 模型

@@ -29,6 +29,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -71,6 +72,10 @@ class TrainParams(BaseModel):
     max_batch_tokens: int = Field(8192, ge=0)
     grad_accum_steps: int = Field(1, ge=1, le=64)
     learning_rate: float = Field(1e-4, gt=0, le=1)
+    # adamw: the script's own (AdamW, cosine with warmup). prodigy / prodigy_sf find
+    # their own step size; learning_rate is then a multiplier, 1.0 as their authors
+    # recommend (see train_worker.use_optimizer).
+    optimizer: Literal["adamw", "prodigy", "prodigy_sf"] = "adamw"
     weight_decay: float = Field(0.01, ge=0)
     warmup_steps: int = Field(100, ge=0)
     max_grad_norm: float = Field(1.0, ge=0)
@@ -255,6 +260,7 @@ def build_config(
         "valid_interval": params.valid_interval,
         "save_interval": params.save_interval,
         "learning_rate": params.learning_rate,
+        "optimizer": params.optimizer,  # read (and removed) by train_worker
         "weight_decay": params.weight_decay,
         "warmup_steps": params.warmup_steps,
         "max_steps": params.num_iters,
