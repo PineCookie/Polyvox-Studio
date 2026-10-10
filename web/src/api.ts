@@ -307,7 +307,7 @@ export interface ImportOptions {
   name: string
   copyAudio: boolean
   transcribe: boolean
-  language: string // '' = detect per clip
+  language: string // '' = detect per clip; 'auto' = estimate from the dataset, then force it
   prompt: string // names / terms for ASR
   slice: boolean // cut long recordings into clips at pauses
   sliceMin: number

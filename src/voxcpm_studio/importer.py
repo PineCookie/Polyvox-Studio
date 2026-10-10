@@ -347,7 +347,8 @@ def _check(rows: list[Row], checker: Checker, progress: Progress) -> list[ClipCh
     for start in range(0, len(rows), checks.CHECK_CHUNK):
         progress("aligning", start, len(rows))
         chunk = rows[start : start + checks.CHECK_CHUNK]
-        out += checker([load_audio(row.audio) for row in chunk], [row.text for row in chunk])
+        texts, made = [row.text for row in chunk], [row.asr for row in chunk]
+        out += checker([load_audio(row.audio) for row in chunk], texts, [not m for m in made], made)
     progress("aligning", len(rows), len(rows))
     return out
 

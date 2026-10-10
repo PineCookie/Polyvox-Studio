@@ -78,3 +78,18 @@ def test_asr_endpoint_and_unload(service, training, asr_service):
     assert resp.json() == {"text": "clip of 8000 samples", "language": None}
     assert client.get("/api/status").json()["asr_loaded"] is True
     assert client.post("/api/model/unload").json()["asr_loaded"] is False
+
+
+def test_language_lock_forces_a_language_once_enough_clips_agree():
+    lock = asr.LanguageLock()
+    clip, blip = np.zeros(3 * asr.SAMPLE_RATE, np.float32), np.zeros(asr.SAMPLE_RATE // 2, np.float32)
+    zh, ja = asr.Transcript("示例", "Chinese"), asr.Transcript("嗯", "Japanese")
+    lock.add([clip] * 15, [zh] * 15)
+    lock.add([blip] * 10, [ja] * 10)  # short clips don't vote
+    assert lock.language is None  # 15 votes: not enough yet
+    lock.add([clip], [zh])
+    assert lock.language == "Chinese"
+
+    mixed = asr.LanguageLock()
+    mixed.add([clip] * 40, [zh] * 30 + [asr.Transcript("example", "English")] * 10)
+    assert mixed.language is None  # 75% agree: keep detecting per clip

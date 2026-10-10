@@ -22,7 +22,7 @@ from starlette.background import BackgroundTask
 from . import audio_io, checks, fillers, importer, lora_library, loudness, manifests, models, sharing, slicer
 from .aligner import AlignService
 from .asr import SAMPLE_RATE as ASR_RATE
-from .asr import AsrService, language_of, load_audio
+from .asr import AsrService, LanguageLock, language_of, load_audio
 from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .jobs import Job, JobRunner
@@ -80,7 +80,8 @@ class ImportIn(ImportSourceIn):
     copy_audio: bool = True
     # Fill in missing transcripts with ASR (otherwise those clips are left out).
     transcribe: bool = False
-    language: str | None = None  # e.g. "zh"; None = detect per clip
+    # e.g. "zh"; None = detect per clip; "auto" = detect until the clips agree, then force that (faster)
+    language: str | None = "auto"
     prompt: str | None = None  # names / terms the recognizer should prefer
     # Cut long recordings into clips at pauses (needs copy_audio and transcribe).
     slice: bool = False
@@ -503,10 +504,15 @@ def create_app(
             raise HTTPException(422, str(e)) from e
         refuse_if_busy(gpu=body.transcribe or body.check or bool(cleanup))
 
+        lock = LanguageLock() if body.language == "auto" else None
+
         def heard(wavs: list) -> list[tuple[str, str | None]]:
-            results = asr.transcribe(wavs, language=body.language, prompt=body.prompt)
+            forced = lock.language if lock else body.language
+            results = asr.transcribe(wavs, language=forced, prompt=body.prompt)
+            if lock:
+                lock.add(wavs, results)
             # A forced language is not detected, so record what was forced.
-            return [(r.text, r.language or body.language) for r in results]
+            return [(r.text, r.language or forced) for r in results]
 
         def transcriber(paths: list[Path]) -> list[tuple[str, str | None]]:
             return heard([load_audio(p) for p in paths])

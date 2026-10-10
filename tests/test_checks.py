@@ -179,6 +179,14 @@ def test_check_dataset_writes_results_the_review_shows(data_dir, align_service):
     page = manifests.read_rows(manifest, flag="any")
     assert [(r.file, r.flags) for r in page.rows] == [("wavs/1.wav", ["mismatch"])]
 
+    # A text ASR made from the clip itself: scored, but not flagged as a mismatch.
+    (manifest.parent / manifests.ASR_FILE).write_text('{"wavs/1.wav": {"language": "Chinese"}}', encoding="utf-8")
+    assert checks.check_dataset(manifest, None, checker, "qwen3", load_audio)["flagged"] == 0
+    (row,) = [r for r in manifests.read_rows(manifest).rows if r.file == "wavs/1.wav"]
+    assert row.flags == [] and row.score is not None and row.score < checks.MISMATCH_BELOW["qwen3"]
+    check = checks.check_one(manifest, None, 1, checker, "qwen3", load_audio)
+    assert "mismatch" not in check.flags
+
 
 def test_import_checks_and_trims_the_copies(tmp_path, data_dir, align_service):
     src = tmp_path / "recordings"

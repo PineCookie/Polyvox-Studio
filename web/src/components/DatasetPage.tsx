@@ -136,8 +136,9 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
         </div>
         <p className="muted hint">
           Forced alignment finds text that does not match the audio, untranscribed speech, words cut at the file edge
-          and long silence; comparing with ASR finds words the text leaves out (texts made by ASR are not compared).
-          Qwen3 also handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese model by default).
+          and long silence; comparing with ASR finds words the text leaves out. Texts made by ASR are not compared, and
+          get no mismatch flag (there it mostly marks laughs or fast speech); worst-first still sorts them. Qwen3 also
+          handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese model by default).
         </p>
         <div className="inline-field check-action">
           <button

@@ -19,7 +19,9 @@ const KIND_LABEL: Record<ImportPreview['kind'], string> = {
 }
 
 // ISO codes the ASR accepts (Qwen3-ASR supports ~30; these cover the usual data).
+// 'auto': detect until the first clips agree, then force that language (much faster).
 const LANGUAGES: [string, string][] = [
+  ['auto', 'Estimate from the dataset'],
   ['', 'Detect per clip'],
   ['zh', 'Chinese'],
   ['yue', 'Cantonese'],
@@ -48,7 +50,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [name, setName] = useState('')
   const [copyAudio, setCopyAudio] = useState(true)
   const [transcribe, setTranscribe] = useState(true)
-  const [language, setLanguage] = useState('')
+  const [language, setLanguage] = useState('auto')
   const [prompt, setPrompt] = useState('')
   const [slice, setSlice] = useState(true)
   const [sliceMin, setSliceMin] = useState(2)

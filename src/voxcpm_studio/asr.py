@@ -11,6 +11,7 @@ import gc
 import logging
 import re
 import threading
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,36 @@ def language_of(text: str) -> str | None:
     if re.search(r"[一-鿿]", text):
         return "Chinese"
     return None
+
+
+LOCK_MIN_CLIPS = 16  # detected clips before a language can be locked
+LOCK_MIN_SECONDS = 2.0  # shorter clips (a lone 嗯) are no clue
+LOCK_SHARE = 0.9  # of those clips that must agree
+
+
+class LanguageLock:
+    """Estimates one language for a whole import: until LOCK_SHARE of the
+    first LOCK_MIN_CLIPS (or more) clips detected agree, ``language`` is None
+    (detect per clip); then it is that language, to be forced, which makes
+    transcription much faster. A mixed set keeps detecting."""
+
+    def __init__(self) -> None:
+        self.language: str | None = None
+        self._votes: Counter[str] = Counter()
+
+    def add(self, wavs: list[np.ndarray], transcripts: list[Transcript]) -> None:
+        """Count the languages detected for ``wavs``; may lock one."""
+        if self.language is not None:
+            return
+        for wav, t in zip(wavs, transcripts, strict=True):
+            if t.language and len(wav) >= LOCK_MIN_SECONDS * SAMPLE_RATE:
+                self._votes[t.language] += 1
+        total = sum(self._votes.values())
+        if total >= LOCK_MIN_CLIPS:
+            language, count = self._votes.most_common(1)[0]
+            if count >= LOCK_SHARE * total:
+                self.language = language
+                logger.info("Language locked to %s (%d of %d clips)", language, count, total)
 
 
 # (model, device) -> (processor, model)

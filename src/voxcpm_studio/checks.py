@@ -89,6 +89,10 @@ FLAGS = ("singing", "mismatch", "asr_more", "filler", "edge_sound", "extra_speec
 # Trimming many clips at once leaves these for review: the "sound" at an edge
 # may be words of the transcript the aligner misplaced, or words it misses.
 TRIM_REVIEW_FIRST = ("mismatch", "asr_more")
+# Not raised for texts ASR made from the clip itself: there a low alignment
+# score mostly marks untranscribed laughs or fast speech, not wrong words. The
+# score is still saved (worst-first order).
+ASR_MADE_UNFLAGGED = ("mismatch",)
 ORIGINALS_DIR = "originals"  # next to a manifest: clips as they were before trimming in place
 TRIM_IN_PLACE_FORMATS = (".wav", ".flac", ".ogg")  # soundfile writes these back as they were
 
@@ -357,13 +361,22 @@ def make_checker(
     """``vad`` defaults to Silero VAD, batched over the clips (looked up per
     call). With ``transcribe``, clips are also compared with what ASR hears,
     except where ``compare`` (third argument, per clip) is False: a text made
-    by the same ASR would only agree with itself. With `singing`, sung clips
-    are flagged (singing.is_sung)."""
+    by the same ASR would only agree with itself. Clips whose text ASR made
+    (``asr_made``, fourth argument) get no mismatch flag (see ASR_MADE_UNFLAGGED).
+    With `singing`, sung clips are flagged (singing.is_sung)."""
 
-    def check(wavs: list[np.ndarray], texts: list[str], compare: list[bool] | None = None) -> list[ClipCheck]:
+    def check(
+        wavs: list[np.ndarray],
+        texts: list[str],
+        compare: list[bool] | None = None,
+        asr_made: list[bool] | None = None,
+    ) -> list[ClipCheck]:
         alignments = align(wavs, texts)
         segments = [vad(w) for w in wavs] if vad else slicer.silero_vad_many(wavs)
         out = [check_clip(w, a, kind, s) for w, a, s in zip(wavs, alignments, segments, strict=True)]
+        for i, made in enumerate(asr_made or []):
+            if made:
+                out[i] = replace(out[i], flags=[f for f in out[i].flags if f not in ASR_MADE_UNFLAGGED])
         if transcribe:
             todo = [i for i in range(len(wavs)) if compare is None or compare[i]]
             heard = transcribe([wavs[i] for i in todo]) if todo else []
@@ -428,7 +441,8 @@ def check_dataset(
         if not chunk:
             continue
         keys = [row_key(e["audio"], manifest_dir) for e in chunk]
-        checked = checker(wavs, [e["text"] for e in chunk], [k not in asr_made for k in keys])
+        made = [k in asr_made for k in keys]
+        checked = checker(wavs, [e["text"] for e in chunk], [not m for m in made], made)
         for key, entry, check in zip(keys, chunk, checked, strict=True):
             results[key] = (entry["text"], check)
     progress("aligning", len(entries), len(entries))
@@ -455,9 +469,10 @@ def check_one(
     entry = entries[index]
     manifest_dir = manifest.resolve().parent
     key = row_key(entry["audio"], manifest_dir)
+    made = key in set(read_sidecar(manifest_dir / ASR_FILE))
     if compare is None:
-        compare = key not in set(read_sidecar(manifest_dir / ASR_FILE))
-    (check,) = checker([load(Path(entry["audio"]))], [entry["text"]], [compare])
+        compare = not made
+    (check,) = checker([load(Path(entry["audio"]))], [entry["text"]], [compare], [made])
     saved = read_sidecar(manifest_dir / ALIGN_FILE)
     clips = dict(saved.get("clips", {}))
     clips[key] = {"text": text_key(entry["text"]), **asdict(check)}
