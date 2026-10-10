@@ -448,6 +448,8 @@ export const en = {
     epoch: 'Epoch',
   },
   samples: 'Samples',
+  lrTitle: 'Learning rate',
+  lrSingle: 'Learning rate',
   similarityHeading: 'Speaker similarity',
   similarityHint:
     'How much each validation sample sounds like the training set’s voice (CAM++ speaker embeddings; 1 = identical). The dashed line is how real clips of the set score. With two samples per checkpoint, single values are noisy: use the trend to pick checkpoints to listen to.',

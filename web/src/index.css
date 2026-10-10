@@ -19,6 +19,7 @@
   /* Chart series (validated categorical slots 1-2 for this surface). */
   --series-1: light-dark(#2a78d6, #3987e5);
   --series-2: light-dark(#eb6834, #d95926);
+  --series-3: light-dark(#2f9e6a, #3bb37a);
   --radius: 12px;
   --radius-sm: 8px;
   --shadow:
@@ -866,6 +867,12 @@ select {
   fill: var(--series-2);
   stroke: var(--surface);
   stroke-width: 2;
+}
+
+.chart .series-lr {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
 }
 
 .chart .series-sample {

@@ -424,6 +424,8 @@ export const zh: Messages = {
     epoch: '轮次',
   },
   samples: '样本',
+  lrTitle: '学习率',
+  lrSingle: '学习率',
   similarityHeading: '说话人相似度',
   similarityHint:
     '每个验证样本与训练集声音的相似程度（CAM++ 说话人嵌入；1 = 完全相同）。虚线是训练集真实片段的得分。每个检查点只有两个样本，单个数值波动较大：请根据趋势挑选要试听的检查点。',

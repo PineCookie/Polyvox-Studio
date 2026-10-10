@@ -6,6 +6,7 @@ import { useT } from '../i18n'
 import { usePeaks } from '../peaks'
 import { DatasetReview } from './DatasetReview'
 import { LossChart } from './LossChart'
+import { LrChart } from './LrChart'
 import { paramsFromConfig } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { ProgressBar, StatusPill } from './RunList'
@@ -118,6 +119,10 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
             </header>
             <LossChart title={t.diffusionLoss} metric="loss/diff" train={run.train} val={run.val} />
             <LossChart title={t.stopLoss} metric="loss/stop" train={run.train} val={run.val} />
+            <details className="advanced">
+              <summary>{t.lrTitle}</summary>
+              <LrChart train={run.train} />
+            </details>
             <MetricsTable run={run} />
           </section>
           {run.samples.length > 0 && <SimilarityPanel run={run} similarity={similarity} />}
