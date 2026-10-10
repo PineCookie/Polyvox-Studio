@@ -2,9 +2,10 @@
 
 soundfile reads WAV / FLAC / OGG / MP3 with exact seeking; anything else (m4a,
 video containers) is decoded with PyAV, whose wheels bundle FFmpeg. Since
-torchaudio 2.9, ``torchaudio.load`` goes through torchcodec, which needs FFmpeg's
-shared libraries installed on the system; ``patch_torchaudio`` points it here so
-voxcpm's own calls (the reference denoiser) work without them.
+torchaudio 2.9, ``torchaudio.load`` / ``save`` go through torchcodec, which needs
+FFmpeg's shared libraries installed on the system; torchcodec is not installed
+(pyproject.toml), and ``patch_torchaudio`` points both here for voxcpm's own
+calls (the reference denoiser).
 """
 
 from __future__ import annotations

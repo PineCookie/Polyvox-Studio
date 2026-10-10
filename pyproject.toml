@@ -33,15 +33,18 @@ dev = [
 # CUDA 13 for recent drivers and Turing (RTX 20) or newer, including Blackwell;
 # CUDA 12.6 for older drivers and GPUs; ROCm 7.2 for AMD GPUs (Linux only);
 # CPU otherwise. Linux builds bring their own Triton.
-# torchcodec (voxcpm's audio decoder) is listed so its per-build source applies.
-cu130 = ["torch>=2.14.1", "torchaudio>=2.11", "torchcodec>=0.17"]
-cu126 = ["torch>=2.14.1", "torchaudio>=2.11", "torchcodec>=0.17"]
-rocm = ["torch>=2.14.1", "torchaudio>=2.11", "torchcodec>=0.17", "triton-rocm"]
-cpu = ["torch>=2.14.1", "torchaudio>=2.11", "torchcodec>=0.17"]
+cu130 = ["torch>=2.14.1", "torchaudio>=2.11"]
+cu126 = ["torch>=2.14.1", "torchaudio>=2.11"]
+rocm = ["torch>=2.14.1", "torchaudio>=2.11", "triton-rocm"]  # triton-rocm: so its source below applies
+cpu = ["torch>=2.14.1", "torchaudio>=2.11"]
 
 [tool.uv]
 default-groups = ["dev", "cu130"]
 conflicts = [[{ group = "cu130" }, { group = "cu126" }, { group = "rocm" }, { group = "cpu" }]]
+# voxcpm lists torchcodec, but nothing imports it: torchaudio.load / save, its
+# only users, read and write through audio_io instead (no system FFmpeg needed).
+# The marker never matches, so it is not installed.
+override-dependencies = ["torchcodec; sys_platform == 'never'"]
 
 [build-system]
 requires = ["hatchling"]
@@ -92,15 +95,6 @@ torchaudio = [
     { index = "pytorch-cu126", group = "cu126" },
     { index = "pytorch-rocm", group = "rocm" },
     { index = "pytorch-cpu", group = "cpu" },
-]
-# On Linux, PyPI's torchcodec is built for CUDA 13 and fails to load with the
-# other builds (libnvrtc.so.13): take it from the matching PyTorch index (ROCm
-# has none; it only decodes audio, so the CPU one does). Windows' PyPI build is CPU.
-torchcodec = [
-    { index = "pytorch-cu130", group = "cu130", marker = "sys_platform == 'linux'" },
-    { index = "pytorch-cu126", group = "cu126", marker = "sys_platform == 'linux'" },
-    { index = "pytorch-cpu", group = "rocm", marker = "sys_platform == 'linux'" },
-    { index = "pytorch-cpu", group = "cpu", marker = "sys_platform == 'linux'" },
 ]
 # The ROCm build's Triton lives on PyTorch's ROCm index (PyPI has only an old pre-release).
 triton-rocm = [{ index = "pytorch-rocm", group = "rocm" }]

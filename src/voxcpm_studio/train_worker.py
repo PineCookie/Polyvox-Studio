@@ -16,6 +16,8 @@ On top of the script this adds:
 - Validation samples. Audio the script logs to TensorBoard is also written as
   WAV files that the UI can play.
 - Frozen base weights in bfloat16 for LoRA runs (``frozen_weights_in_bf16``).
+- ``torchaudio.load`` / ``save`` through audio_io, as in the server
+  (torchcodec, which they would use, is not installed).
 """
 
 from __future__ import annotations
@@ -143,6 +145,9 @@ def main() -> None:
 
     save_samples_to(args.samples_dir)
     frozen_weights_in_bf16()
+    from voxcpm_studio import audio_io
+
+    audio_io.patch_torchaudio()
     threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid), daemon=True).start()
     sys.argv = [str(SCRIPT), "--config_path", str(args.config_path)]
     runpy.run_path(str(SCRIPT), run_name="__main__")
