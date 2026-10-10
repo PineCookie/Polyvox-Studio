@@ -427,8 +427,9 @@ export const zh: Messages = {
   lrTitle: '学习率',
   lrSingle: '学习率',
   lrDashed: 'd × lr',
+  legendToggle: '显示 / 隐藏',
   lrDashedTitle:
-    '虚线：Prodigy 的步长（d × lr）。实线：训练权重实际移动的有效学习率，随 Schedule-Free 平均的累积而变小。',
+    '显示 / 隐藏 Prodigy 的步长（d × lr，虚线）。实线：训练权重实际移动的有效学习率，随 Schedule-Free 平均的累积而变小。',
   lrDashedValue: (v: string) => `d × lr ${v}`,
   similarityHeading: '说话人相似度',
   similarityHint:

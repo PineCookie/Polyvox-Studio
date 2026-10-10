@@ -48,12 +48,27 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
   const keys = useMemo(() => series.map((s) => s.key), [series])
   const dashed = series.some((s) => s.dashed)
   const points = useMemo(() => train.filter((p) => keys.some((k) => Number.isFinite(p[k]))), [train, keys])
+  // Legend toggles: networks hidden by name; d x lr is off by default (it sets
+  // the scale far above the effective rates otherwise).
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set())
+  const [showStep, setShowStep] = useState(false)
+  const visible = useMemo(
+    () => series.filter((s) => !hidden.has(s.label) && (!s.dashed || showStep)),
+    [series, hidden, showStep],
+  )
+  const toggle = (label: string) =>
+    setHidden((h) => {
+      const next = new Set(h)
+      if (!next.delete(label)) next.add(label)
+      return next
+    })
 
   const geometry = useMemo(() => {
     if (points.length === 0 || width === 0) return null
     const x0 = points[0].step
     const x1 = Math.max(points.at(-1)!.step, x0 + 1)
-    const values = points.flatMap((p) => keys.map((k) => p[k]).filter(Number.isFinite))
+    const scaleKeys = visible.length > 0 ? visible.map((s) => s.key) : keys
+    const values = points.flatMap((p) => scaleKeys.map((k) => p[k]).filter(Number.isFinite))
     const y1 = Math.max(...values, 1e-12) * 1.08
     const plotW = width - M.left - M.right
     const plotH = height - M.top - M.bottom
@@ -74,7 +89,7 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
       yTicks: niceTicks(0, y1, 4),
       xTicks: niceTicks(x0, x1, Math.max(2, Math.floor(plotW / 90))),
     }
-  }, [points, keys, width, height])
+  }, [points, keys, visible, width, height])
 
   function onPointerMove(e: PointerEvent<SVGRectElement>) {
     if (!geometry) return
@@ -94,15 +109,34 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
         <span className="chart-title">{t.lrTitle}</span>
         <span className="spacer" />
         <span className="legend">
-          {solid.map((s) => (
-            <span key={s.key} className="legend-item">
-              <span className="swatch line" style={{ background: s.color }} aria-hidden /> {s.label}
-            </span>
-          ))}
+          {solid.map((s) =>
+            solid.length > 1 ? (
+              <button
+                key={s.key}
+                type="button"
+                className={`legend-item legend-toggle${hidden.has(s.label) ? ' off' : ''}`}
+                aria-pressed={!hidden.has(s.label)}
+                title={t.legendToggle}
+                onClick={() => toggle(s.label)}
+              >
+                <span className="swatch line" style={{ background: s.color }} aria-hidden /> {s.label}
+              </button>
+            ) : (
+              <span key={s.key} className="legend-item">
+                <span className="swatch line" style={{ background: s.color }} aria-hidden /> {s.label}
+              </span>
+            ),
+          )}
           {dashed && (
-            <span className="legend-item" title={t.lrDashedTitle}>
+            <button
+              type="button"
+              className={`legend-item legend-toggle${showStep ? '' : ' off'}`}
+              aria-pressed={showStep}
+              title={t.lrDashedTitle}
+              onClick={() => setShowStep((v) => !v)}
+            >
               <span className="swatch line dashed-swatch" aria-hidden /> {t.lrDashed}
-            </span>
+            </button>
           )}
         </span>
       </figcaption>
@@ -124,7 +158,7 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
                 {formatStep(v)}
               </text>
             ))}
-            {series.map((s) => (
+            {visible.map((s) => (
               <path
                 key={s.key}
                 className={s.dashed ? 'series-lr dashed' : 'series-lr'}
@@ -156,16 +190,18 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
         {geometry && hover && (
           <div className="tooltip" style={{ left: Math.min(geometry.x(hover.step) + 12, width - 190), top: M.top }}>
             <strong>{t.stepLabel(formatStep(hover.step))}</strong>
-            {solid.map((s) => {
-              const step = series.find((d) => d.dashed && d.label === s.label)
-              return (
-                <span key={s.key}>
-                  <span className="swatch line" style={{ background: s.color }} aria-hidden /> {s.label}{' '}
-                  {value(hover, s.key)}
-                  {step && <span className="muted"> ({t.lrDashedValue(value(hover, step.key))})</span>}
-                </span>
-              )
-            })}
+            {solid
+              .filter((s) => !hidden.has(s.label))
+              .map((s) => {
+                const step = series.find((d) => d.dashed && d.label === s.label)
+                return (
+                  <span key={s.key}>
+                    <span className="swatch line" style={{ background: s.color }} aria-hidden /> {s.label}{' '}
+                    {value(hover, s.key)}
+                    {step && <span className="muted"> ({t.lrDashedValue(value(hover, step.key))})</span>}
+                  </span>
+                )
+              })}
           </div>
         )}
       </div>

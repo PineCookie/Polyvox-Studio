@@ -883,6 +883,20 @@ select {
   stroke-opacity: 0.6;
 }
 
+.legend-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.legend-toggle.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
 .swatch.dashed-swatch {
   background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 7px);
 }

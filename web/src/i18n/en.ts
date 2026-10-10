@@ -451,8 +451,9 @@ export const en = {
   lrTitle: 'Learning rate',
   lrSingle: 'Learning rate',
   lrDashed: 'd × lr',
+  legendToggle: 'Show / hide',
   lrDashedTitle:
-    'Dashed: Prodigy’s step size (d × lr). Solid: the effective rate the training weights move by, smaller once Schedule-Free’s average builds up.',
+    'Show / hide Prodigy’s step size (d × lr, dashed). Solid: the effective rate the training weights move by, smaller once Schedule-Free’s average builds up.',
   lrDashedValue: (v: string) => `d × lr ${v}`,
   similarityHeading: 'Speaker similarity',
   similarityHint:
