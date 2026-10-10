@@ -26,7 +26,7 @@ from typing import Protocol
 
 import numpy as np
 
-from . import timing
+from . import timing, vram
 from .config import Settings
 
 logger = logging.getLogger(__name__)
@@ -253,15 +253,15 @@ def ctc_alignment(emission, tokens: list[list[int]], words: list[str], blank: in
     return Alignment(out, worst_window([w.confidence for w in out if w.aligned], *SCORE_WINDOW["ctc"]))
 
 
-def _batches(order: list[int], lengths: list[int]) -> list[list[int]]:
+def _batches(order: list[int], lengths: list[int], seconds: float = BATCH_SECONDS) -> list[list[int]]:
     """Consecutive runs of ``order`` (sorted by length) with at most BATCH_SIZE
-    clips and BATCH_SECONDS of padded audio: a fixed count of long clips ran
+    clips and ``seconds`` of padded audio: a fixed count of long clips ran
     out of GPU memory (16 x 30 s in wav2vec2's attention)."""
     out: list[list[int]] = []
     for i in order:
         batch = out[-1] if out else None
         longest = max([lengths[j] for j in batch] + [lengths[i]]) if batch else lengths[i]
-        if batch and len(batch) < BATCH_SIZE and (len(batch) + 1) * longest <= BATCH_SECONDS * SAMPLE_RATE:
+        if batch and len(batch) < BATCH_SIZE and (len(batch) + 1) * longest <= seconds * SAMPLE_RATE:
             batch.append(i)
         else:
             out.append([i])
@@ -283,6 +283,8 @@ class AlignService:
         self.settings = settings
         self._loader = loader
         self._lock = threading.Lock()
+        self.batch_seconds: float = BATCH_SECONDS  # set from the GPU's profile (vram.py); shrinks on OOM
+        self._parked = False  # model in CPU memory (park)
         self._kind: str | None = None
         self._backend: Backend | None = None
 
@@ -314,10 +316,16 @@ class AlignService:
             for i in order:
                 if not words[i]:
                     results[i] = Alignment([], 0.0)
-            for idx in _batches(todo, [len(a) for a in audios]):
+            lengths = [len(a) for a in audios]
+
+            def run(idx: list[int]) -> None:
                 aligned = backend.align([audios[i] for i in idx], [words[i] for i in idx])
                 for i, a in zip(idx, aligned, strict=True):
                     results[i] = a
+
+            self.batch_seconds = vram.in_batches(
+                todo, lambda rest, limit: _batches(rest, lengths, limit)[0], run, self.batch_seconds, "Alignment"
+            )
         return results  # type: ignore[return-value]
 
     def unload(self) -> None:
@@ -327,14 +335,25 @@ class AlignService:
     def _unload(self) -> None:
         if self._backend is None:
             return
-        self._backend, self._kind = None, None
+        self._backend, self._kind, self._parked = None, None, False
         gc.collect()
         if self.device.startswith("cuda"):
             import torch
 
             torch.cuda.empty_cache()
 
+    def park(self) -> None:
+        """Move the model to CPU memory, back on the next call (AsrService.park)."""
+        with self._lock:
+            if self._backend is not None and not self._parked:
+                self._backend.model.to("cpu")
+                self._parked = True
+                vram.free_cache()
+
     def _ensure_loaded(self, kind: str, model: str) -> Backend:
+        if self._parked:
+            self._backend.model.to(self.device)
+            self._parked = False
         if self._kind != kind:
             self._unload()
             logger.info("Loading %s aligner %s on %s", kind, model, self.device)

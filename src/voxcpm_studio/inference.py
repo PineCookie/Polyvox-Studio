@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import lora_library
+from . import lora_library, vram
 from .config import Settings
 from .lora_library import LoraCheckpoint
 
@@ -136,6 +136,19 @@ def compose_text(text: str, control: str) -> str:
     return f"({control}){text}" if control else text
 
 
+def _denoiser_to_cpu(model) -> None:
+    """Run voxcpm's ZipEnhancer (a ModelScope pipeline, GPU by default) on the CPU:
+    a few seconds of reference audio, quick there, and ~2.7 GB less on the GPU."""
+    denoiser = getattr(model, "denoiser", None)
+    if denoiser is None or not hasattr(denoiser, "_pipeline"):
+        return
+    from modelscope.pipelines import pipeline
+    from modelscope.utils.constant import Tasks
+
+    denoiser._pipeline = pipeline(Tasks.acoustic_noise_suppression, model=denoiser.model_path, device="cpu")
+    vram.free_cache()
+
+
 class InferenceService:
     def __init__(self, settings: Settings, loader: ModelLoader = load_voxcpm):
         from voxcpm.model.utils import resolve_runtime_device
@@ -150,6 +163,8 @@ class InferenceService:
         self._loaded_lora: tuple[str, float] | None = None  # (id, weights mtime) in the model
         self._lora_scale = 0.0  # alpha / r of the loaded LoRA
         self._lora_active = False  # the loaded LoRA's weights stay resident while it is off
+        # The reference denoiser needs ~2.7 GB more on the GPU; small cards run it on the CPU (vram.py).
+        self.denoise_on_cpu = False
 
     def status(self) -> dict:
         return {
@@ -209,6 +224,8 @@ class InferenceService:
         )
         self._model = self._loader(self.settings, self.device, target, self.optimize)
         self._lora_config = target
+        if self.denoise_on_cpu:
+            _denoiser_to_cpu(self._model)
         return self._model
 
     def _apply_lora(self, model, ckpt: LoraCheckpoint | None) -> None:

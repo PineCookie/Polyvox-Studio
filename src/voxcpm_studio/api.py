@@ -21,7 +21,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import audio_io, checks, fillers, importer, lora_library, loudness, manifests, models, sharing, slicer, timing
+from . import (
+    audio_io,
+    checks,
+    fillers,
+    importer,
+    lora_library,
+    loudness,
+    manifests,
+    models,
+    sharing,
+    slicer,
+    timing,
+    vram,
+)
+from . import separation as separation_mod
 from .aligner import AlignService
 from .asr import SAMPLE_RATE as ASR_RATE
 from .asr import AsrService, LanguageLock, language_of, load_audio
@@ -318,8 +332,17 @@ def create_app(
     asr = asr or AsrService(settings)
     align = align or AlignService(settings)
     slicer.vad_device = lambda: asr.device  # VAD of long recordings runs where ASR does
+    # Batch sizes and model sharing for the GPU's memory (vram.py).
+    gpu_gb, profile = vram.detect(asr.device)
+    for device in {asr.device, service.device}:
+        vram.apply_limit(device)
+    asr.batch_seconds, align.batch_seconds = profile.asr_batch_seconds, profile.align_batch_seconds
+    service.denoise_on_cpu = profile.denoise_on_cpu
+    logger.info("GPU memory %s GB: profile '%s'", f"{gpu_gb:.1f}" if gpu_gb else "-", profile.name)
     # Compiled on CUDA unless VOXCPM_STUDIO_OPTIMIZE is off (as the TTS model).
-    load_separation = functools.partial(separation_models, compile=settings.optimize is not False)
+    load_separation = functools.partial(
+        separation_models, compile=settings.optimize is not False, batch=profile.separation_batch
+    )
     separation = separation or SeparationService(lambda: asr.device, load_separation)
     singing = singing or SingingService(settings, lambda: asr.device)
     jobs = jobs or JobRunner()
@@ -361,6 +384,8 @@ def create_app(
             "singing_loaded": singing.loaded,
             # Import clean-up options whose model is configured.
             "cleanup": [k for k, v in cleanup_models().items() if v],
+            # The GPU's memory and the settings picked for it (vram.Profile).
+            "gpu": {"total_gb": round(gpu_gb, 1) if gpu_gb else None, **profile.public()},
             # Not in the models folder (loading would download it to the Hugging Face cache).
             "missing_required": [
                 s.name
@@ -419,6 +444,9 @@ def create_app(
         seed: Annotated[int | None, Form()] = None,
         reference_audio: Annotated[UploadFile | None, File()] = None,
     ) -> Response:
+        if profile.exclusive and (running := jobs.running("import") or jobs.running("check")):
+            raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
+        make_room_for_tts()
         # As WAV when soundfile can't read it (e.g. m4a): voxcpm can't without a system FFmpeg.
         ref_path = audio_io.to_wav(_save_upload(reference_audio)) if reference_audio else None
         try:
@@ -440,6 +468,15 @@ def create_app(
             raise HTTPException(404, str(e.args[0])) from e
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
+        except Exception as e:
+            if not vram.is_oom(e):
+                raise
+            vram.free_cache()
+            raise HTTPException(
+                507,
+                "Out of GPU memory. Speech synthesis needs about 8 GB; free the GPU (other programs, Unload "
+                "models) or try a shorter text.",
+            ) from e
         finally:
             if ref_path:
                 ref_path.unlink(missing_ok=True)
@@ -465,6 +502,7 @@ def create_app(
         language: Annotated[str | None, Form()] = None,
         prompt: Annotated[str | None, Form()] = None,
     ) -> dict:
+        make_room_for_prep()
         path = _save_upload(audio)
         try:
             (result,) = asr.transcribe([load_audio(path)], language=language or None, prompt=prompt or None)
@@ -515,6 +553,7 @@ def create_app(
         lock = LanguageLock() if body.language == "auto" else None
 
         def heard(wavs: list) -> list[tuple[str, str | None]]:
+            take_gpu(asr)
             forced = lock.language if lock else body.language
             results = asr.transcribe(wavs, language=forced, prompt=body.prompt)
             if lock:
@@ -550,10 +589,10 @@ def create_app(
                 checker=checker(body.aligner, detect_singing=body.detect_singing) if body.check else None,
                 aligner=body.aligner,
                 trim=body.trim,
-                guide=slicer.Guide(transcribe=heard, align=lambda wavs, texts: align.align(wavs, texts, body.aligner))
+                guide=slicer.Guide(transcribe=heard, align=lambda wavs, texts: aligned(wavs, texts, body.aligner))
                 if body.slice
                 else None,
-                separation=separation.chain([available[k] for k in cleanup]) if cleanup else None,
+                separation=separated(separation.chain([available[k] for k in cleanup])) if cleanup else None,
                 tidy_fillers=body.tidy_fillers,
                 normalize=body.normalize_lufs,
             )
@@ -576,14 +615,53 @@ def create_app(
 
     def checker(kind: str, compare_asr: bool = False, detect_singing: bool = False) -> checks.Checker:
         def heard_texts(wavs: list) -> list[str]:
+            take_gpu(asr)
             return [r.text for r in asr.transcribe(wavs)]
 
         return checks.make_checker(
-            lambda wavs, texts: align.align(wavs, texts, kind),
+            lambda wavs, texts: aligned(wavs, texts, kind),
             kind,
             transcribe=heard_texts if compare_asr else None,
-            singing=singing.scores if detect_singing else None,
+            singing=sung if detect_singing else None,
         )
+
+    def same_gpu(a: str, b: str) -> bool:
+        return a.startswith("cuda") and b.startswith("cuda") and _cuda_index(a) == _cuda_index(b)
+
+    def make_room_for_prep() -> None:
+        """On a card that fits one model group (vram.Profile.exclusive), unload TTS
+        before ASR / alignment / separation work on its GPU."""
+        if profile.exclusive and same_gpu(service.device, asr.device):
+            service.unload()
+
+    def take_gpu(owner) -> None:
+        """On cards that fit one preparation model at a time (Profile.swap_prep_models),
+        park the others in CPU memory before ``owner`` runs."""
+        if profile.swap_prep_models:
+            for helper in (asr, align, separation, singing):
+                if helper is not owner:
+                    helper.park()
+
+    def aligned(wavs: list, texts: list[str], kind: str) -> list:
+        take_gpu(align)
+        return align.align(wavs, texts, kind)
+
+    def sung(wavs: list) -> list:
+        take_gpu(singing)
+        return singing.scores(wavs)
+
+    def separated(chain: separation_mod.Chain) -> separation_mod.Chain:
+        def process(audio):
+            take_gpu(separation)
+            return chain.process(audio)
+
+        return dataclasses.replace(chain, process=process)
+
+    def make_room_for_tts() -> None:
+        if profile.exclusive:
+            for helper in (asr, align, separation, singing):
+                if helper.loaded and same_gpu(helper.device, service.device):
+                    helper.unload()
 
     def refuse_if_busy(gpu: bool) -> None:
         """One preparation job at a time; GPU stages wait for training on their GPU."""
@@ -595,6 +673,8 @@ def create_app(
                 f"Run '{training.active_run}' is training on the GPU that ASR and alignment use. Wait for it, or "
                 "set VOXCPM_STUDIO_ASR_DEVICE to another GPU.",
             )
+        if gpu:
+            make_room_for_prep()
 
     @app.post("/api/datasets/tidy-fillers")
     def tidy_fillers(body: DatasetIn) -> dict:
@@ -668,6 +748,7 @@ def create_app(
         clips = saved.get("clips", {}).values()
         compared = any(c.get("asr") for c in clips) if compare_asr is None else compare_asr
         sang = any(c.get("singing") for c in clips)
+        make_room_for_prep()
         root = manifests.legacy_root(settings.data_dir)
         checker_ = checker(kind, compared, sang)
         checks.check_one(manifest, root, index, checker_, kind, load_audio, compare=True if compare_asr else None)

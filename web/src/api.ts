@@ -36,6 +36,8 @@ export interface Status {
   cleanup: CleanupOption[]
   // Required models not in the models folder yet (names).
   missing_required: string[]
+  // The GPU's memory and the settings picked for it (src/voxcpm_studio/vram.py).
+  gpu: GpuProfile
   lora_rank: number | null
   active_lora: string | null
 }
@@ -75,6 +77,15 @@ async function request(input: string, init?: RequestInit): Promise<Response> {
   const resp = await fetch(input, init)
   if (!resp.ok) throw new Error(await errorMessage(resp))
   return resp
+}
+
+export interface GpuProfile {
+  total_gb: number | null // null: no CUDA GPU
+  name: string // "16 GB or more", "12 GB", "8 GB", "under 8 GB", "CPU"
+  exclusive: boolean // TTS and the preparation models take turns on the GPU
+  denoise_on_cpu: boolean
+  train_batch: number // training micro-batch that fits; accumulation makes up the rest
+  note: string // what doesn't fit, if anything
 }
 
 export async function getStatus(): Promise<Status> {

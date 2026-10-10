@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import timing
+from . import timing, vram
 from .config import Settings
 
 logger = logging.getLogger(__name__)
@@ -101,13 +101,13 @@ def load_audio(path: Path) -> np.ndarray:
         return audio_io.resample(audio.mean(axis=0, keepdims=True), rate, SAMPLE_RATE)[0].astype(np.float32)
 
 
-def _batches(order: list[int], lengths: list[int]) -> list[list[int]]:
+def _batches(order: list[int], lengths: list[int], seconds: float = BATCH_SECONDS) -> list[list[int]]:
     """Runs of ``order`` (sorted by length) of at most BATCH_SIZE clips and
-    BATCH_SECONDS of padded audio."""
+    ``seconds`` of padded audio."""
     out: list[list[int]] = []
     for i in order:
         batch = out[-1] if out else None
-        if batch and len(batch) < BATCH_SIZE and (len(batch) + 1) * lengths[i] <= BATCH_SECONDS * SAMPLE_RATE:
+        if batch and len(batch) < BATCH_SIZE and (len(batch) + 1) * lengths[i] <= seconds * SAMPLE_RATE:
             batch.append(i)
         else:
             out.append([i])
@@ -121,6 +121,8 @@ class AsrService:
         self._lock = threading.Lock()
         self._processor = None
         self._model = None
+        self.batch_seconds: float = BATCH_SECONDS  # set from the GPU's profile (vram.py); shrinks on OOM
+        self._parked = False  # model in CPU memory (park)
 
     @property
     def device(self) -> str:
@@ -146,21 +148,27 @@ class AsrService:
         results: list[Transcript | None] = [None] * len(audios)
         # Similar lengths per batch keep padding small.
         order = sorted(range(len(audios)), key=lambda i: len(audios[i]))
+        lengths = [len(a) for a in audios]
+
+        def run(idx: list[int]) -> None:
+            inputs = processor.apply_transcription_request(
+                [audios[i] for i in idx],
+                language=language or None,
+                prompt=[prompt] * len(idx) if prompt else None,
+            ).to(model.device, model.dtype)
+            with torch.inference_mode():
+                out = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS)
+            parsed = processor.decode(
+                out[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True, return_format="parsed"
+            )
+            for i, p in zip(idx, parsed if isinstance(parsed, list) else [parsed], strict=True):
+                results[i] = Transcript(text=p["transcription"].strip(), language=p["language"])
+
         with self._lock, timing.stage("asr"):
             processor, model = self._ensure_loaded()
-            for idx in _batches(order, [len(a) for a in audios]):
-                inputs = processor.apply_transcription_request(
-                    [audios[i] for i in idx],
-                    language=language or None,
-                    prompt=[prompt] * len(idx) if prompt else None,
-                ).to(model.device, model.dtype)
-                with torch.inference_mode():
-                    out = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS)
-                parsed = processor.decode(
-                    out[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True, return_format="parsed"
-                )
-                for i, p in zip(idx, parsed if isinstance(parsed, list) else [parsed], strict=True):
-                    results[i] = Transcript(text=p["transcription"].strip(), language=p["language"])
+            self.batch_seconds = vram.in_batches(
+                order, lambda rest, limit: _batches(rest, lengths, limit)[0], run, self.batch_seconds, "ASR"
+            )
         return results  # type: ignore[return-value]
 
     def unload(self) -> None:
@@ -168,13 +176,26 @@ class AsrService:
             if self._model is None:
                 return
             self._processor = self._model = None
+            self._parked = False
             gc.collect()
             if self.device.startswith("cuda"):
                 import torch
 
                 torch.cuda.empty_cache()
 
+    def park(self) -> None:
+        """Move the model to CPU memory (back on the next call): frees the GPU for
+        another model without reloading from disk (vram.Profile.swap_prep_models)."""
+        with self._lock:
+            if self._model is not None and self._parked is False:
+                self._model.to("cpu")
+                self._parked = True
+                vram.free_cache()
+
     def _ensure_loaded(self):
+        if self._parked:
+            self._model.to(self.device)
+            self._parked = False
         if self._model is None:
             logger.info("Loading ASR model %s on %s", self.settings.model_path("asr_model"), self.device)
             with timing.stage("loading models"):

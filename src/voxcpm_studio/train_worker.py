@@ -18,6 +18,8 @@ On top of the script this adds:
 - Frozen base weights in bfloat16 for LoRA runs (``frozen_weights_in_bf16``).
 - ``torchaudio.load`` / ``save`` through audio_io, as in the server
   (torchcodec, which they would use, is not installed).
+- On small GPUs (vram.Profile.train_checkpointing), gradient checkpointing
+  (``checkpoint_layers``).
 """
 
 from __future__ import annotations
@@ -104,6 +106,27 @@ def frozen_weights_in_bf16() -> None:
         cls.from_local = classmethod(from_local)
 
 
+def checkpoint_layers() -> None:
+    """Gradient checkpointing for VoxCPM's transformer layers (both language
+    models and the diffusion decoder use MiniCPMDecoderLayer): their activations
+    are recomputed in the backward pass instead of kept, so a LoRA run fits a
+    smaller GPU, at some speed. Only while training with gradients (validation
+    and sample generation run as before)."""
+    import torch
+    from torch.utils.checkpoint import checkpoint
+    from voxcpm.modules.minicpm4.model import MiniCPMDecoderLayer
+
+    forward = MiniCPMDecoderLayer.forward
+
+    def checkpointed(self, *args, **kwargs):
+        if self.training and torch.is_grad_enabled():
+            return checkpoint(forward, self, *args, use_reentrant=False, **kwargs)
+        return forward(self, *args, **kwargs)
+
+    MiniCPMDecoderLayer.forward = checkpointed
+    print("[studio] Gradient checkpointing on (transformer layers).", file=sys.stderr)
+
+
 def process_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import _winapi
@@ -145,9 +168,12 @@ def main() -> None:
 
     save_samples_to(args.samples_dir)
     frozen_weights_in_bf16()
-    from voxcpm_studio import audio_io
+    from voxcpm_studio import audio_io, vram
 
     audio_io.patch_torchaudio()
+    vram.apply_limit("cuda")  # VOXCPM_STUDIO_VRAM_GB, as in the server
+    if os.environ.get("VOXCPM_STUDIO_TRAIN_CHECKPOINT") == "1" or vram.detect("cuda")[1].train_checkpointing:
+        checkpoint_layers()
     threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid), daemon=True).start()
     sys.argv = [str(SCRIPT), "--config_path", str(args.config_path)]
     runpy.run_path(str(SCRIPT), run_name="__main__")

@@ -16,7 +16,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from . import timing
+from . import timing, vram
 from .config import Settings
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ class SingingService:
         self._loader = loader
         self._lock = threading.Lock()
         self._extractor = self._model = None
+        self._parked = False  # model in CPU memory (park)
 
     @property
     def device(self) -> str:
@@ -71,6 +72,9 @@ class SingingService:
 
         out: list[tuple[float, float]] = []
         with self._lock, timing.stage("singing"):
+            if self._parked:
+                self._model.to(self.device)
+                self._parked = False
             if self._model is None:
                 logger.info("Loading singing detector %s on %s", self.settings.model_path("singing_model"), self.device)
                 load = self._loader or load_ast  # looked up when first used
@@ -84,11 +88,20 @@ class SingingService:
                 out += [(float(p[[SINGING, SONG, HUMMING]].sum()), float(p[SPEECH])) for p in probs]
         return out
 
+    def park(self) -> None:
+        """Move the model to CPU memory, back on the next call (AsrService.park)."""
+        with self._lock:
+            if self._model is not None and not self._parked:
+                self._model.to("cpu")
+                self._parked = True
+                vram.free_cache()
+
     def unload(self) -> None:
         with self._lock:
             if self._model is None:
                 return
             self._extractor = self._model = None
+            self._parked = False
             gc.collect()
             if self.device.startswith("cuda"):
                 import torch

@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import timing
+from . import timing, vram
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ def _window(size: int, fade: int):
 class RoformerModel:
     """One checkpoint: separates its target stem (vocals, noreverb, dry, ...)."""
 
-    def __init__(self, ckpt: Path, config_path: Path, device: str, compile: bool = True):
+    def __init__(self, ckpt: Path, config_path: Path, device: str, compile: bool = True, batch: int = BATCH_SIZE):
         import torch
 
         from .vendor.roformer import BSRoformer, MelBandRoformer
@@ -105,6 +105,7 @@ class RoformerModel:
         # Single-target models output one stem; multi-stem ones output all, in order.
         self.stem_index = 0 if target or params.get("num_stems", 1) == 1 else instruments.index(self.stem)
         self._compiled = compile_transformers(self.model) if compile and device.startswith("cuda") else []
+        self.batch = batch  # chunks per model call; halved when the GPU runs out of memory
 
     def __call__(self, audio: np.ndarray) -> np.ndarray:
         """(channels, samples) at self.rate -> the target stem, same shape."""
@@ -119,8 +120,13 @@ class RoformerModel:
             x = np.repeat(x.mean(axis=0, keepdims=True), self.channels, axis=0)
         with torch.inference_mode(), torch.autocast("cuda", enabled=self.device.startswith("cuda")):
             try:
-                return demix(run, x, self.chunk, self.overlap, self.device)
-            except Exception:
+                return demix(run, x, self.chunk, self.overlap, self.device, self.batch)
+            except Exception as e:
+                if vram.is_oom(e) and self.batch > 1:
+                    vram.free_cache()
+                    self.batch //= 2
+                    logger.warning("Separation ran out of GPU memory; %d chunks per batch from now on", self.batch)
+                    return self(audio)
                 if not self._compiled:
                     raise
                 # e.g. no working Triton: the same model, not compiled, still works.
@@ -128,7 +134,7 @@ class RoformerModel:
                 for module in self._compiled:
                     module._compiled_call_impl = None  # what Module.compile() set
                 self._compiled = []
-                return demix(run, x, self.chunk, self.overlap, self.device)
+                return demix(run, x, self.chunk, self.overlap, self.device, self.batch)
 
 
 def compile_transformers(model) -> list:
@@ -143,7 +149,9 @@ def compile_transformers(model) -> list:
     return modules
 
 
-def demix(model: Callable, audio: np.ndarray, chunk: int, overlap: int, device: str = "cpu") -> np.ndarray:
+def demix(
+    model: Callable, audio: np.ndarray, chunk: int, overlap: int, device: str = "cpu", batch_size: int = BATCH_SIZE
+) -> np.ndarray:
     """Run ``model`` ((batch, channels, chunk) -> same shape) over long audio in
     overlapping chunks blended with linear fades, as MSST does."""
     import torch
@@ -162,9 +170,9 @@ def demix(model: Callable, audio: np.ndarray, chunk: int, overlap: int, device: 
     counter = torch.zeros(x.shape[-1], device=device)
     x = x.to(device)
     starts = list(range(0, x.shape[-1], step))
-    for b in range(0, len(starts), BATCH_SIZE):
+    for b in range(0, len(starts), batch_size):
         batch, spans = [], []
-        for i in starts[b : b + BATCH_SIZE]:
+        for i in starts[b : b + batch_size]:
             part = x[:, i : i + chunk]
             n = part.shape[-1]
             mode = "reflect" if n > chunk // 2 else "constant"
@@ -202,8 +210,8 @@ class Chain:
 ModelLoader = Callable[[list[str], str], list]
 
 
-def load_models(specs: list[str], device: str, compile: bool = True) -> list:
-    return [RoformerModel(*resolve_model(spec), device, compile) for spec in specs]
+def load_models(specs: list[str], device: str, compile: bool = True, batch: int = BATCH_SIZE) -> list:
+    return [RoformerModel(*resolve_model(spec), device, compile, batch) for spec in specs]
 
 
 class SeparationService:
@@ -215,6 +223,7 @@ class SeparationService:
         self._lock = threading.Lock()
         self._specs: tuple[str, ...] = ()
         self._models: list = []
+        self._parked = False  # models in CPU memory (park)
 
     @property
     def loaded(self) -> bool:
@@ -238,11 +247,24 @@ class SeparationService:
 
         def process(audio: np.ndarray) -> np.ndarray:
             with self._lock, timing.stage("separation"):  # one GPU job at a time
+                if self._parked:
+                    for m in models:
+                        m.model.to(m.device)
+                    self._parked = False
                 for m in models:
                     audio = m(audio)
             return audio
 
         return Chain(rate=rates.pop(), channels=max(m.channels for m in models), process=process)
+
+    def park(self) -> None:
+        """Move the models to CPU memory, back on the next call (AsrService.park)."""
+        with self._lock:
+            if self._models and not self._parked:
+                for m in self._models:
+                    m.model.to("cpu")
+                self._parked = True
+                vram.free_cache()
 
     def unload(self) -> None:
         with self._lock:
@@ -251,7 +273,7 @@ class SeparationService:
     def _unload(self) -> None:
         if not self._models:
             return
-        self._models, self._specs = [], ()
+        self._models, self._specs, self._parked = [], (), False
         gc.collect()
         if self.device.startswith("cuda"):
             import torch

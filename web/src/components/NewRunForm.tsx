@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import type { DatasetReport, TrainParams } from '../api'
+import { useEffect, useState } from 'react'
+import { getStatus } from '../api'
+import type { DatasetReport, GpuProfile, TrainParams } from '../api'
 import { datasetName, formatStep } from '../format'
 import { DatasetReview } from './DatasetReview'
-import { DEFAULT_EPOCHS, DEFAULT_PARAMS, epochsOf, scheduleFor } from '../trainParams'
+import { DEFAULT_EPOCHS, DEFAULT_PARAMS, epochsOf, forGpu, scheduleFor } from '../trainParams'
 import type { Params, Schedule } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { SubTabs } from './SubTabs'
@@ -49,6 +50,19 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
   const [useValDataset, setUseValDataset] = useState(false)
   const [report, setReport] = useState<DatasetReport | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [gpu, setGpu] = useState<GpuProfile | null>(null)
+
+  // The batch that fits this GPU (the defaults are for 16 GB).
+  useEffect(() => {
+    getStatus().then(
+      (s) => {
+        if (!s.gpu) return
+        setGpu(s.gpu)
+        setBase((p) => forGpu(p, s.gpu.train_batch))
+      },
+      () => {},
+    )
+  }, [])
 
   const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(base.val_holdout, report.valid - 1)) : 0
   const params: Params = {
@@ -175,6 +189,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             </>
           )}
         </p>
+        {gpu?.note && <p className="notice">{gpu.note}</p>}
         <SubTabs
           label="Run sections"
           value={tab}
@@ -244,7 +259,9 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
               trainClips > 0 ? (
                 <p className="muted hint">
                   = {formatStep(params.num_iters)} steps of {perStep} clips ({params.batch_size} ×{' '}
-                  {params.grad_accum_steps} accumulated) over {trainClips.toLocaleString()} training clips
+                  {params.grad_accum_steps} accumulated
+                  {gpu?.total_gb ? `, the batch that fits this ${gpu.total_gb} GB GPU` : ''}) over{' '}
+                  {trainClips.toLocaleString()} training clips
                   {epochs !== null && Math.abs(epochs - epochTarget) > 0.05 && ` (≈ ${epochs.toFixed(1)} epochs)`};
                   checkpoint and validation every {formatStep(params.save_interval)} steps, warmup{' '}
                   {formatStep(params.warmup_steps)}. VoxCPM recommends 1–3 epochs for one speaker; compare the

@@ -3,8 +3,8 @@ import type { TrainParams } from './api'
 
 export type Params = Omit<TrainParams, 'name' | 'dataset'>
 
-// Following VoxCPM's fine-tuning guide: an effective batch of 16 (here 4 clips x
-// 4 accumulated, which fits a 16 GB card), max_batch_tokens 8192, and 1-3 epochs
+// Following VoxCPM's fine-tuning guide: an effective batch of 16 (4 clips x 4
+// accumulated on a 16 GB card; see forGpu), max_batch_tokens 8192, and 1-3 epochs
 // for one speaker. Steps, warmup and checkpoint intervals follow from the epochs
 // and the dataset's size (scheduleFor).
 export const DEFAULT_EPOCHS = 2
@@ -32,6 +32,15 @@ export const DEFAULT_PARAMS: Params = {
   enable_lm: true,
   enable_dit: true,
   enable_proj: false,
+}
+
+export const EFFECTIVE_BATCH = 16
+
+/** The batch that fits the GPU (its profile's micro-batch), accumulated to the same
+ * effective batch: smaller cards train slower, not differently. */
+export function forGpu(params: Params, trainBatch: number): Params {
+  const batch = Math.max(1, Math.min(trainBatch, EFFECTIVE_BATCH))
+  return { ...params, batch_size: batch, grad_accum_steps: Math.max(1, Math.round(EFFECTIVE_BATCH / batch)) }
 }
 
 export type Schedule = Pick<Params, 'num_iters' | 'warmup_steps' | 'save_interval' | 'valid_interval' | 'log_interval'>

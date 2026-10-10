@@ -105,6 +105,7 @@ folder. A model variable set explicitly (below) always wins.
 | `VOXCPM_STUDIO_ALIGN_MODEL` | `Qwen/Qwen3-ForcedAligner-0.6B-hf` | forced aligner |
 | `VOXCPM_STUDIO_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (character vocabulary, one language) |
 | `VOXCPM_STUDIO_OPTIMIZE` | `auto` | Triton `torch.compile`; `auto` = on for CUDA |
+| `VOXCPM_STUDIO_VRAM_GB` | | use at most this much GPU memory (a shared GPU), and pick the settings for it |
 | `VOXCPM_STUDIO_DENOISER` | `1` | load the ZipEnhancer denoiser |
 | `VOXCPM_STUDIO_DENOISER_MODEL` | `iic/speech_zipenhancer_ans_multiloss_16k_base` | its dir or ModelScope id |
 
@@ -118,6 +119,20 @@ on first use (about 4 GB of GPU memory); Unload frees it with the TTS model.
 Starting a training job unloads the inference model if both use the same GPU.
 To keep synthesizing while training, put them on different GPUs, e.g.
 `VOXCPM_STUDIO_DEVICE=cuda:1`.
+
+### GPU memory
+
+Batch sizes and which models share the GPU follow its memory:
+
+| GPU memory | Synthesis | Training (batch x accumulation) | Preparing datasets |
+|---|---|---|---|
+| 16 GB or more | yes | 4 x 4 | all models stay loaded |
+| 12 GB | yes; unloaded while preparing | 2 x 8 | smaller ASR batches |
+| 8 GB | yes; reference denoising on the CPU | 1 x 16, gradient checkpointing (slow) | one model on the GPU at a time |
+| under 8 GB | no (needs about 8 GB) | no | as for 8 GB |
+
+The effective batch stays 16, so smaller cards train slower, not differently. A
+batch that still runs out of memory is retried in halves.
 
 ## Training
 
