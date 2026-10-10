@@ -5,6 +5,7 @@ import type { SynthesisParams, TtsProgress } from '../api'
 import { formatDuration } from '../format'
 import { forgetPeaks } from '../peaks'
 import { AudioPlayer } from './AudioPlayer'
+import { FilePicker } from './FilePicker'
 import { ProgressBar } from './RunList'
 
 // VoxCPM2's non-verbal tags, as its cookbook spells them ([laughing], not
@@ -86,7 +87,6 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
   const [normalize, setNormalize] = useState(true)
   const [denoise, setDenoise] = useState(true)
   const [transcribing, setTranscribing] = useState(false)
-  const fileInput = useRef<HTMLInputElement>(null)
   const textArea = useRef<HTMLTextAreaElement>(null)
   // A playable URL for the chosen reference, released when it changes.
   const referenceUrl = useMemo(() => (referenceAudio ? URL.createObjectURL(referenceAudio) : null), [referenceAudio])
@@ -140,7 +140,6 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
   function clearReference() {
     setReferenceAudio(null)
     setPromptText('')
-    if (fileInput.current) fileInput.current.value = ''
   }
 
   return (
@@ -203,20 +202,15 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
         <legend>
           Reference audio <span className="muted">optional · voice cloning</span>
         </legend>
-        <div className="file-row">
-          <input
-            ref={fileInput}
-            type="file"
-            accept="audio/*"
-            onChange={(e) => setReferenceAudio(e.target.files?.[0] ?? null)}
-          />
-          {referenceAudio && (
-            <button type="button" className="ghost small" onClick={clearReference}>
-              Clear
-            </button>
-          )}
-        </div>
-        {referenceUrl && <AudioPlayer url={referenceUrl} />}
+        <FilePicker
+          file={referenceAudio}
+          onChange={(f) => (f ? setReferenceAudio(f) : clearReference())}
+          accept="audio/*"
+          label="Choose audio…"
+          empty="or drop a file here"
+        >
+          {referenceUrl && <AudioPlayer url={referenceUrl} />}
+        </FilePicker>
         {referenceAudio && (
           <div className="file-row">
             <input

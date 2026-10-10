@@ -99,89 +99,107 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
             {imported.timings && <span className="muted"> {formatTimings(imported.timings)}.</span>}
           </p>
         )}
-        <div className="inline-field check-action">
-          <button type="button" className="ghost" onClick={check} disabled={running}>
-            {job?.state === 'running' ? 'Checking…' : 'Check clips'}
-          </button>
-          <span className="muted hint">against their text with</span>
-          <select
-            value={aligner}
-            onChange={(e) => setAligner(e.target.value as Aligner)}
-            disabled={running}
-            aria-label="Aligner"
-          >
-            {(Object.keys(ALIGNER_LABEL) as Aligner[]).map((a) => (
-              <option key={a} value={a}>
-                {ALIGNER_LABEL[a]}
-              </option>
-            ))}
-          </select>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={compareAsr}
-              onChange={(e) => setCompareAsr(e.target.checked)}
-              disabled={running}
-            />{' '}
-            and compare with ASR
-          </label>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={detectSinging}
-              onChange={(e) => setDetectSinging(e.target.checked)}
-              disabled={running}
-            />{' '}
-            detect singing
-          </label>
-        </div>
-        <p className="muted hint">
-          Forced alignment finds text that does not match the audio, untranscribed speech, words cut at the file edge
-          and long silence; comparing with ASR finds words the text leaves out. Texts made by ASR are not compared, and
-          get no mismatch flag (there it mostly marks laughs or fast speech); worst-first still sorts them. Qwen3 also
-          handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese model by default).
-        </p>
-        <div className="inline-field check-action">
-          <button
-            type="button"
-            className="ghost"
-            onClick={tidy}
-            disabled={running}
-            title="Shorten runs of fillers to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯). The original manifest is kept as train.jsonl.orig."
-          >
-            Tidy fillers
-          </button>
-          {tidied !== null && (
-            <span className="muted hint">
-              {tidied === 0
-                ? 'Nothing to tidy.'
-                : `${tidied.toLocaleString()} transcripts tidied; check again to refresh their flags.`}
-            </span>
-          )}
-        </div>
-        <div className="inline-field check-action">
-          <button
-            type="button"
-            className="ghost"
-            onClick={normalize}
-            disabled={running}
-            title="One gain per clip (EBU R128 loudness), lowered where the peak would pass -1 dBFS. Originals are kept in originals/; checks stay valid."
-          >
-            {normalizing?.state === 'running' ? 'Normalizing…' : 'Normalize loudness'}
-          </button>
-          <span className="muted hint">to</span>
-          <input
-            type="number"
-            min={-40}
-            max={-10}
-            step={1}
-            value={lufs}
-            onChange={(e) => setLufs(Number(e.target.value))}
-            disabled={running}
-            aria-label="Target loudness (LUFS)"
-          />
-          <span className="muted hint">LUFS</span>
-          {normalizing?.state === 'done' && <NormalizeSummary result={normalizing.result} />}
+        <div className="tools">
+          <div className="tool-row">
+            <div className="tool-info">
+              <strong>Check clips</strong>
+              <span className="muted hint">
+                Align each clip with its text: flags mismatches, untranscribed speech, cut edges and long silence.
+              </span>
+              <details className="tool-help">
+                <summary>How checking works</summary>
+                <p className="muted hint">
+                  Forced alignment finds text that does not match the audio, untranscribed speech, words cut at the file
+                  edge and long silence; comparing with ASR finds words the text leaves out. Texts made by ASR are not
+                  compared, and get no mismatch flag (there it mostly marks laughs or fast speech); worst-first still
+                  sorts them. Qwen3 also handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese
+                  model by default).
+                </p>
+              </details>
+            </div>
+            <div className="tool-controls">
+              <select
+                value={aligner}
+                onChange={(e) => setAligner(e.target.value as Aligner)}
+                disabled={running}
+                aria-label="Aligner"
+              >
+                {(Object.keys(ALIGNER_LABEL) as Aligner[]).map((a) => (
+                  <option key={a} value={a}>
+                    {ALIGNER_LABEL[a]}
+                  </option>
+                ))}
+              </select>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={compareAsr}
+                  onChange={(e) => setCompareAsr(e.target.checked)}
+                  disabled={running}
+                />{' '}
+                compare with ASR
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={detectSinging}
+                  onChange={(e) => setDetectSinging(e.target.checked)}
+                  disabled={running}
+                />{' '}
+                detect singing
+              </label>
+              <button type="button" className="ghost" onClick={check} disabled={running}>
+                {job?.state === 'running' ? 'Checking…' : 'Check'}
+              </button>
+            </div>
+          </div>
+
+          <div className="tool-row">
+            <div className="tool-info">
+              <strong>Tidy fillers</strong>
+              <span className="muted hint">
+                {tidied === null
+                  ? 'Shorten runs of fillers to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯); the original manifest is kept.'
+                  : tidied === 0
+                    ? 'Nothing to tidy.'
+                    : `${tidied.toLocaleString()} transcripts tidied; check again to refresh their flags.`}
+              </span>
+            </div>
+            <div className="tool-controls">
+              <button type="button" className="ghost" onClick={tidy} disabled={running}>
+                Tidy
+              </button>
+            </div>
+          </div>
+
+          <div className="tool-row">
+            <div className="tool-info">
+              <strong>Normalize loudness</strong>
+              {normalizing?.state === 'done' ? (
+                <NormalizeSummary result={normalizing.result} />
+              ) : (
+                <span className="muted hint">
+                  One gain per clip (EBU R128), kept below -1 dBFS peaks; originals are kept, checks stay valid.
+                </span>
+              )}
+            </div>
+            <div className="tool-controls">
+              <input
+                type="number"
+                min={-40}
+                max={-10}
+                step={1}
+                value={lufs}
+                onChange={(e) => setLufs(Number(e.target.value))}
+                disabled={running}
+                aria-label="Target loudness (LUFS)"
+              />
+              <span className="muted hint">LUFS</span>
+              <button type="button" className="ghost" onClick={normalize} disabled={running}>
+                {normalizing?.state === 'running' ? 'Normalizing…' : 'Normalize'}
+              </button>
+            </div>
+          </div>
         </div>
         {job && <JobProgress job={job} what="Check" />}
         {job?.state === 'done' && job.result.timings && (

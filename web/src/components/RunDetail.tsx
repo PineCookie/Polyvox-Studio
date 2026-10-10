@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { sampleUrl } from '../api'
 import type { Lora, RunDetail as Run } from '../api'
 import { formatDuration, formatStep, formatValue } from '../format'
+import { usePeaks } from '../peaks'
 import { DatasetReview } from './DatasetReview'
 import { LossChart } from './LossChart'
 import { paramsFromConfig } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { ProgressBar, StatusPill } from './RunList'
 import { SubTabs } from './SubTabs'
+import { Waveform } from './Waveform'
 
 interface Props {
   run: Run
@@ -200,6 +202,38 @@ function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onT
   }, [run.samples])
   const loraIds = useMemo(() => new Set(loras.map((l) => l.id)), [loras])
   const columns = Math.max(run.sample_texts.length, run.references.length, ...byStep.map(([, m]) => m.size), 1)
+  // One player for the whole grid: starting a sample stops the one playing.
+  const audio = useRef<HTMLAudioElement>(null)
+  const [playing, setPlaying] = useState<string | null>(null)
+
+  function play(file: string, at?: number) {
+    const el = audio.current
+    if (!el) return
+    if (at === undefined && playing === file && !el.paused) {
+      el.pause()
+      return
+    }
+    const url = sampleUrl(run.name, file)
+    if (!el.src.endsWith(url)) el.src = url
+    if (at !== undefined) el.currentTime = at
+    el.play().then(
+      () => setPlaying(file),
+      () => setPlaying(null),
+    )
+  }
+
+  const cell = (file: string | undefined, key: number) =>
+    file ? (
+      <SampleCell
+        key={key}
+        url={sampleUrl(run.name, file)}
+        playing={playing === file}
+        audio={playing === file ? audio.current : null}
+        onPlay={(at) => play(file, at)}
+      />
+    ) : (
+      <span key={key} />
+    )
 
   return (
     <section className="panel">
@@ -228,11 +262,7 @@ function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onT
               <span className="sample-step muted">Reference</span>
               {Array.from({ length: columns }, (_, i) => {
                 const file = `reference_${i}.wav`
-                return run.references.includes(file) ? (
-                  <audio key={i} controls preload="none" src={sampleUrl(run.name, file)} />
-                ) : (
-                  <span key={i} />
-                )
+                return cell(run.references.includes(file) ? file : undefined, i)
               })}
             </>
           )}
@@ -242,26 +272,20 @@ function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onT
             return (
               <div key={step} className="sample-row">
                 <span className="sample-step">
-                  Step {formatStep(step)}
+                  <span className="sample-step-label">Step {formatStep(step)}</span>
                   {loraIds.has(id) && (
                     <button type="button" className="ghost small" onClick={() => onTryCheckpoint(id)} title={id}>
                       Try
                     </button>
                   )}
                 </span>
-                {Array.from({ length: columns }, (_, i) => {
-                  const file = files.get(i)
-                  return file ? (
-                    <audio key={i} controls preload="none" src={sampleUrl(run.name, file)} />
-                  ) : (
-                    <span key={i} />
-                  )
-                })}
+                {Array.from({ length: columns }, (_, i) => cell(files.get(i), i))}
               </div>
             )
           })}
         </div>
       )}
+      <audio ref={audio} onPause={() => setPlaying(null)} onEnded={() => setPlaying(null)} hidden />
     </section>
   )
 }
@@ -299,5 +323,33 @@ function ConfigFiles({ config }: { config: Record<string, unknown> }) {
         </div>
       ))}
     </dl>
+  )
+}
+
+/** Play button and waveform of one sample (click the waveform to play from there). */
+function SampleCell({
+  url,
+  playing,
+  audio,
+  onPlay,
+}: {
+  url: string
+  playing: boolean
+  audio: HTMLAudioElement | null
+  onPlay: (at?: number) => void
+}) {
+  const shape = usePeaks(url)
+  return (
+    <div className="sample-cell">
+      <button type="button" className="ghost small" onClick={() => onPlay()} aria-label={playing ? 'Pause' : 'Play'}>
+        {playing ? '❚❚' : '▶'}
+      </button>
+      {shape ? (
+        <Waveform peaks={shape.peaks} seconds={shape.seconds} speech={null} audio={audio} onSeek={onPlay} />
+      ) : (
+        <span className="sample-wave-placeholder" />
+      )}
+      {shape && <span className="muted hint">{shape.seconds.toFixed(1)} s</span>}
+    </div>
   )
 }

@@ -15,6 +15,16 @@ export function StatusBar({ status, onUnload }: Props) {
       <span className="muted" title={`PyTorch ${status.torch}`}>
         {status.device}
       </span>
+      {status.gpu?.total_gb && (
+        <span
+          className="muted"
+          title={`Settings for a ${status.gpu.name} GPU: training batch ${status.gpu.train_batch}${
+            status.gpu.exclusive ? '; synthesis and dataset preparation take turns on the GPU' : ''
+          }${status.gpu.note ? `. ${status.gpu.note}` : ''}`}
+        >
+          {status.gpu.total_gb} GB
+        </span>
+      )}
       <span className="muted">{status.optimize ? 'Triton on' : 'Triton off'}</span>
       {status.asr_loaded && <span className="muted">ASR loaded</span>}
       {status.aligner_loaded && <span className="muted">Aligner loaded</span>}

@@ -289,9 +289,36 @@ input[type='file']::file-selector-button {
 }
 
 .tag-row select {
-  width: auto;
+  flex: 0 0 auto;
+  width: 11em;
   padding: 2px 6px;
   font-size: 0.82rem;
+}
+
+/* FilePicker: our own button (the native input shows the browser's language); takes drops. */
+.file-picker {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  margin: -8px;
+  border: 1px dashed transparent;
+  border-radius: 10px;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.file-picker.over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
 }
 
 .synthesis-progress {
@@ -897,8 +924,23 @@ select {
 
 .samples {
   display: grid;
-  gap: 8px 12px;
+  gap: 6px 16px;
   align-items: center;
+}
+
+/* One sample: play button, waveform (click to seek), length. */
+.sample-cell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sample-wave-placeholder {
+  height: 28px;
+  border-radius: 6px;
+  background: var(--surface-2, color-mix(in srgb, var(--muted) 12%, transparent));
 }
 
 .sample-row {
@@ -1656,6 +1698,17 @@ input[type='search']:focus {
   gap: 8px 18px;
 }
 
+.check-filters select {
+  width: auto;
+  min-width: 12em;
+}
+
+.clip-table .clip-seconds button {
+  min-width: 68px;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
 .clip-table .clip-seconds {
   width: 84px;
   text-align: right;
@@ -1737,4 +1790,71 @@ fieldset.params:disabled select {
 
 fieldset.params:disabled input[type='checkbox'] {
   opacity: 0.8;
+}
+
+/* Dataset page: one row per tool (name and what it does | options and its button). */
+.tools {
+  display: grid;
+  border-top: 1px solid var(--border);
+}
+
+.tool-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-info {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.tool-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.tool-controls select {
+  width: auto;
+}
+
+.tool-controls input[type='number'] {
+  width: 80px;
+}
+
+.tool-help summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--muted);
+  width: fit-content;
+}
+
+.tool-help p {
+  margin: 6px 0 0;
+}
+
+@media (max-width: 900px) {
+  .tool-row {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-controls {
+    justify-content: flex-start;
+  }
+}
+
+/* Tabular figures widen hyphens in names (Qwen3-ASR); keep them for the numbers. */
+.models-table td:not(.num) {
+  font-variant-numeric: normal;
+}
+
+.sample-step-label {
+  min-width: 5.5em;
 }
