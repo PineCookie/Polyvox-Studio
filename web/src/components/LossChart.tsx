@@ -1,6 +1,7 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { PointerEvent } from 'react'
 import type { MetricPoint } from '../api'
+import { chartHeight, MARGIN as M, niceTicks, useWidth } from '../chartUtils'
 import { formatStep, formatValue } from '../format'
 import { useT } from '../i18n'
 
@@ -11,11 +12,6 @@ interface Props {
   val: MetricPoint[]
 }
 
-// Height follows the width (wider charts get taller), within these bounds.
-const MIN_HEIGHT = 180
-const MAX_HEIGHT = 340
-const chartHeight = (width: number) => Math.round(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, width * 0.3)))
-const M = { top: 10, right: 12, bottom: 24, left: 48 }
 const SMOOTHING = 0.85
 
 interface Point {
@@ -40,33 +36,10 @@ function quantile(sorted: number[], q: number): number {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))))]
 }
 
-function niceTicks(min: number, max: number, count: number): number[] {
-  const span = max - min || Math.abs(max) || 1
-  const raw = span / count
-  const mag = 10 ** Math.floor(Math.log10(raw))
-  const step = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((s) => s >= raw) ?? raw
-  const ticks = []
-  for (let t = Math.ceil(min / step) * step; t <= max + step * 1e-9; t += step) ticks.push(Number(t.toPrecision(12)))
-  return ticks
-}
-
 function nearest(points: Point[], step: number): Point | null {
   let best: Point | null = null
   for (const p of points) if (!best || Math.abs(p.step - step) < Math.abs(best.step - step)) best = p
   return best
-}
-
-function useWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null)
-  const [width, setWidth] = useState(0)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-  return [ref, width] as const
 }
 
 export function LossChart({ title, metric, train, val }: Props) {

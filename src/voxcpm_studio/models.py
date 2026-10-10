@@ -122,6 +122,17 @@ MODELS: tuple[ModelSpec, ...] = (
         license="BSD-3-Clause",
     ),
     ModelSpec(
+        "speaker_model",
+        "CAM++ speaker embeddings",
+        "Training: how much samples sound like the dataset's speaker",
+        "iic/speech_campplus_sv_zh-cn_16k-common",
+        "iic__speech_campplus_sv_zh-cn_16k-common",
+        ("campplus_cn_common.bin",),
+        28,
+        license="Apache-2.0",
+        hub="modelscope",
+    ),
+    ModelSpec(
         "vocals_model",
         "Mel-Band RoFormer vocals (Kim FT2 bleedless)",
         "Import: keep only the voice (remove music)",

@@ -146,6 +146,15 @@ continued with more steps.
 - Stop saves a checkpoint first; Resume continues from it.
 - Validation clips (held out from the training set by default) produce loss
   points and audio samples every "Validate every" steps.
+- Optimizer: new runs use Prodigy Schedule-Free
+  ([prodigy-plus-schedule-free](https://github.com/LoganBooker/prodigy-plus-schedule-free)),
+  which finds its own step size for each network (text LM, residual LM,
+  diffusion decoder); the learning rate is then a multiplier (1). AdamW with a
+  cosine schedule (the training script's own) and Prodigy are the alternatives.
+- Speaker similarity: each validation sample is scored against the training
+  set's voice with CAM++ speaker embeddings (`VOXCPM_STUDIO_SPEAKER_MODEL`, a
+  28 MB ModelScope model, on the CPU), next to the score real clips of the set
+  reach. Scores are cached in the run folder (`similarity.json`).
 - Each run gets copies of its manifests with absolute audio paths. Webui
   manifests hold paths relative to the folder holding `data/` and `lora/`
   (`data/<name>/wavs/...`), which the current

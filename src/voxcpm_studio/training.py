@@ -495,6 +495,9 @@ class TrainingManager:
             raise KeyError(f"Run '{name}' has no readable training manifest.")
         return path
 
+    def run_dir(self, name: str) -> Path:
+        return self._run_dir(name)
+
     def sample_file(self, name: str, file: str) -> Path:
         path = self._run_dir(name) / "samples" / file
         if not (SAMPLE_FILE.fullmatch(file) or REFERENCE_FILE.fullmatch(file)) or not path.is_file():

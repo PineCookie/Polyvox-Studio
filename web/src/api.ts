@@ -583,6 +583,16 @@ export async function stopTraining(): Promise<void> {
   await postJson('/api/training/stop')
 }
 
+export interface Similarity {
+  target: number | null // how real clips of the training set score
+  scores: Record<string, number> // sample / reference file -> similarity to the voice
+}
+
+/** Speaker similarity (CAM++) of a run's samples to the voice it trains on. */
+export async function getSimilarity(name: string): Promise<Similarity> {
+  return (await request(`${runUrl(name)}/similarity`)).json()
+}
+
 export function sampleUrl(name: string, file: string): string {
   return `${runUrl(name)}/samples/${encodeURIComponent(file)}`
 }

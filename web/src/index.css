@@ -816,6 +816,10 @@ select {
   background: var(--series-2);
 }
 
+.swatch.target {
+  background: repeating-linear-gradient(90deg, var(--series-2) 0 4px, transparent 4px 7px);
+}
+
 .chart-body {
   position: relative;
   min-height: 180px;
@@ -862,6 +866,21 @@ select {
   fill: var(--series-2);
   stroke: var(--surface);
   stroke-width: 2;
+}
+
+.chart .series-sample {
+  fill: var(--series-1);
+  fill-opacity: 0.3;
+}
+
+.chart .series-target {
+  stroke: var(--series-2);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.sample-score {
+  font-variant-numeric: tabular-nums;
 }
 
 .chart .crosshair {

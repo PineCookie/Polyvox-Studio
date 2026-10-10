@@ -46,6 +46,7 @@ from .separation import SeparationService
 from .separation import load_models as separation_models
 from .singing import SingingService
 from .slicer import SliceOptions
+from .speaker import SpeakerService
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -325,6 +326,7 @@ def create_app(
     align: AlignService | None = None,
     separation: SeparationService | None = None,
     singing: SingingService | None = None,
+    speaker: SpeakerService | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     audio_io.patch_torchaudio()  # voxcpm's torchaudio.load calls, without a system FFmpeg
@@ -345,6 +347,7 @@ def create_app(
     )
     separation = separation or SeparationService(lambda: asr.device, load_separation)
     singing = singing or SingingService(settings, lambda: asr.device)
+    speaker = speaker or SpeakerService(settings)
     jobs = jobs or JobRunner()
     training = training or TrainingManager(
         settings,
@@ -1006,6 +1009,17 @@ def create_app(
     def stop_training() -> dict:
         training.stop()
         return {"stopping": training.active_run}
+
+    @app.get("/api/training/runs/{name}/similarity")
+    def run_similarity(name: str) -> dict:
+        """Speaker similarity of the run's samples to its training voice (speaker.py)."""
+        run_dir = _found(training.run_dir, name)
+        manifest = _found(training.train_manifest, name)
+        try:
+            return speaker.score_run(run_dir, manifest)
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.warning("Similarity of %s failed: %s", name, e)
+            raise HTTPException(503, f"Speaker similarity unavailable: {e}") from e
 
     @app.get("/api/training/runs/{name}/samples/{file}")
     def run_sample(name: str, file: str) -> FileResponse:

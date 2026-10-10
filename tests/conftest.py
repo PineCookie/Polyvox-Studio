@@ -251,6 +251,18 @@ def fake_singing_detector(monkeypatch):
     monkeypatch.setattr(singing, "load_ast", lambda model, device: (extractor, FakeSingingModel()))
 
 
+@pytest.fixture(autouse=True)
+def fake_speaker_model(monkeypatch):
+    """No test downloads or runs CAM++: a clip's embedding is its coarse spectrum."""
+    from voxcpm_studio import speaker
+
+    def embed(wav):
+        spectrum = np.abs(np.fft.rfft(wav, n=16_000))[:2000]
+        return spectrum.reshape(40, 50).sum(axis=1) + 1e-6
+
+    monkeypatch.setattr(speaker, "load_campplus", lambda model: embed)
+
+
 @pytest.fixture
 def lora_dir(tmp_path):
     d = tmp_path / "lora"

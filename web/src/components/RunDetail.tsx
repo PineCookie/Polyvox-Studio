@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { sampleUrl } from '../api'
-import type { Lora, RunDetail as Run } from '../api'
+import { getSimilarity, sampleUrl } from '../api'
+import type { Lora, RunDetail as Run, Similarity } from '../api'
 import { formatDuration, formatStep, formatValue } from '../format'
 import { useT } from '../i18n'
 import { usePeaks } from '../peaks'
@@ -9,6 +9,8 @@ import { LossChart } from './LossChart'
 import { paramsFromConfig } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { ProgressBar, StatusPill } from './RunList'
+import { SimilarityChart } from './SimilarityChart'
+import type { SimilarityPoint } from './SimilarityChart'
 import { SubTabs } from './SubTabs'
 import { Waveform } from './Waveform'
 
@@ -33,6 +35,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
   const step = run.step ?? 0
   const eta = live && run.seconds_per_step ? (run.num_iters - step) * run.seconds_per_step : null
   const otherJob = activeRun !== null && activeRun !== run.name
+  const similarity = useSimilarity(run)
 
   return (
     <>
@@ -117,7 +120,8 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
             <LossChart title={t.stopLoss} metric="loss/stop" train={run.train} val={run.val} />
             <MetricsTable run={run} />
           </section>
-          <Samples run={run} loras={loras} onTryCheckpoint={onTryCheckpoint} />
+          {run.samples.length > 0 && <SimilarityPanel run={run} similarity={similarity} />}
+          <Samples run={run} loras={loras} scores={similarity.data?.scores} onTryCheckpoint={onTryCheckpoint} />
           <Console lines={run.log} open={run.status === 'failed'} follow={live} />
         </>
       )}
@@ -144,6 +148,76 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
         </section>
       )}
     </>
+  )
+}
+
+interface SimilarityState {
+  data: Similarity | null
+  error: string | null
+  loading: boolean
+}
+
+/** The run's similarity scores, fetched again when its samples change (new
+ * validations while training). Scoring new samples takes the server a moment. */
+function useSimilarity(run: Run): SimilarityState {
+  const files = useMemo(
+    () => [...run.samples.map((s) => s.file), ...run.references].join('|'),
+    [run.samples, run.references],
+  )
+  // The last answer and the samples it was for; a newer set of samples is loading.
+  const [state, setState] = useState<{ key: string; data: Similarity | null; error: string | null }>({
+    key: '',
+    data: null,
+    error: null,
+  })
+  const key = `${run.name}|${files}`
+  useEffect(() => {
+    if (!files) return
+    let cancelled = false
+    getSimilarity(run.name).then(
+      (data) => !cancelled && setState({ key, data, error: null }),
+      (e: unknown) => !cancelled && setState({ key, data: null, error: e instanceof Error ? e.message : String(e) }),
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [run.name, files, key])
+  const current = state.key.startsWith(`${run.name}|`) // not another run's scores
+  return {
+    data: current ? state.data : null,
+    error: current ? state.error : null,
+    loading: files !== '' && state.key !== key,
+  }
+}
+
+function SimilarityPanel({ run, similarity }: { run: Run; similarity: SimilarityState }) {
+  const t = useT()
+  const points = useMemo<SimilarityPoint[]>(() => {
+    const scores = similarity.data?.scores ?? {}
+    const byStep = new Map<number, number[]>()
+    for (const s of run.samples) {
+      const score = scores[s.file]
+      if (score === undefined) continue
+      byStep.set(s.step, [...(byStep.get(s.step) ?? []), score])
+    }
+    return [...byStep.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([step, list]) => ({ step, scores: list, mean: list.reduce((a, b) => a + b, 0) / list.length }))
+  }, [run.samples, similarity.data])
+
+  return (
+    <section className="panel">
+      <header className="panel-head">
+        <h2>{t.similarityHeading}</h2>
+        {similarity.loading && <span className="muted">{t.similarityScoring}</span>}
+      </header>
+      <p className="muted hint">{t.similarityHint}</p>
+      {similarity.error ? (
+        <p className="muted empty">{similarity.error}</p>
+      ) : (
+        points.length > 0 && <SimilarityChart points={points} target={similarity.data?.target ?? null} />
+      )}
+    </section>
   )
 }
 
@@ -192,7 +266,17 @@ function MetricsTable({ run }: { run: Run }) {
   )
 }
 
-function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onTryCheckpoint: (id: string) => void }) {
+function Samples({
+  run,
+  loras,
+  scores,
+  onTryCheckpoint,
+}: {
+  run: Run
+  loras: Lora[]
+  scores?: Record<string, number>
+  onTryCheckpoint: (id: string) => void
+}) {
   const t = useT()
   const byStep = useMemo(() => {
     const steps = new Map<number, Map<number, string>>()
@@ -231,6 +315,7 @@ function Samples({ run, loras, onTryCheckpoint }: { run: Run; loras: Lora[]; onT
         url={sampleUrl(run.name, file)}
         playing={playing === file}
         audio={playing === file ? audio.current : null}
+        score={scores?.[file]}
         onPlay={(at) => play(file, at)}
       />
     ) : (
@@ -328,11 +413,13 @@ function SampleCell({
   url,
   playing,
   audio,
+  score,
   onPlay,
 }: {
   url: string
   playing: boolean
   audio: HTMLAudioElement | null
+  score?: number
   onPlay: (at?: number) => void
 }) {
   const t = useT()
@@ -353,6 +440,11 @@ function SampleCell({
         <span className="sample-wave-placeholder" />
       )}
       {shape && <span className="muted hint">{t.seconds(shape.seconds.toFixed(1))}</span>}
+      {score !== undefined && (
+        <span className="muted hint sample-score" title={t.similarityCellTitle}>
+          {score.toFixed(2)}
+        </span>
+      )}
     </div>
   )
 }

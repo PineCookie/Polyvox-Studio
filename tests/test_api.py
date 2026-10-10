@@ -113,6 +113,9 @@ def test_training_run_lifecycle(client, training, data_dir):
     detail = client.get("/api/training/runs/v1").json()
     sample = client.get(f"/api/training/runs/v1/samples/{detail['samples'][0]['file']}")
     assert sample.status_code == 200 and sample.headers["content-type"] == "audio/wav"
+    similarity = client.get("/api/training/runs/v1/similarity").json()
+    assert set(similarity["scores"]) == {s["file"] for s in detail["samples"]} | set(detail["references"])
+    assert client.get("/api/training/runs/nope/similarity").status_code == 404
 
     assert client.post("/api/training/runs/v1/resume").status_code == 422
     assert client.post("/api/training/stop").status_code == 409

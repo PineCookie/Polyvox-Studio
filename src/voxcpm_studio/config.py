@@ -47,6 +47,8 @@ class Settings:
     # Empty = that option is unavailable.
     # AudioSet tagger for singing detection (singing.py): local dir or Hugging Face id.
     singing_model: str = "MIT/ast-finetuned-audioset-10-10-0.4593"
+    # Speaker embeddings (CAM++) for the similarity of training samples: local dir or ModelScope id.
+    speaker_model: str = "iic/speech_campplus_sv_zh-cn_16k-common"
     vocals_model: str = ""
     dereverb_model: str = ""
     denoise_model: str = ""
@@ -89,6 +91,7 @@ class Settings:
             align_model=_env("ALIGN_MODEL", cls.align_model),
             ctc_align_model=_env("CTC_ALIGN_MODEL", cls.ctc_align_model),
             singing_model=_env("SINGING_MODEL", cls.singing_model),
+            speaker_model=_env("SPEAKER_MODEL", cls.speaker_model),
             vocals_model=_env("VOCALS_MODEL", cls.vocals_model),
             dereverb_model=_env("DEREVERB_MODEL", cls.dereverb_model),
             denoise_model=_env("DENOISE_MODEL", cls.denoise_model),
