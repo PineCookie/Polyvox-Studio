@@ -79,14 +79,26 @@ class Slice:
 
 _vad_model = None
 _vad_lock = threading.Lock()
+_vad_models: dict[str, object] = {}  # device -> Silero, for long audio (silero_vad_long)
+VAD_WINDOW = 512  # samples per Silero step at 16 kHz
+VAD_BATCH = 64
+# Long audio is run as pieces side by side, each after VAD_CONTEXT_S of the audio
+# before it: Silero's state takes ~40-60 s to forget where it started, so with
+# less context a piece's probabilities differ from one continuous pass.
+VAD_PIECE_S = 60.0
+VAD_CONTEXT_S = 60.0
+vad_device: Callable[[], str] = lambda: "cpu"  # noqa: E731  (the API points it at the ASR device)
 
 
 def silero_vad(wav16k: np.ndarray) -> list[tuple[float, float]]:
-    """Speech segments with Silero VAD (bundled model, runs on CPU)."""
+    """Speech segments with Silero VAD (bundled model). Audio longer than a
+    couple of minutes goes through silero_vad_long."""
     global _vad_model
     import torch
     from silero_vad import get_speech_timestamps, load_silero_vad
 
+    if len(wav16k) > (VAD_PIECE_S + VAD_CONTEXT_S) * VAD_RATE:
+        return silero_vad_long(wav16k)
     with _vad_lock:  # the model is stateful
         if _vad_model is None:
             _vad_model = load_silero_vad()
@@ -100,8 +112,44 @@ def silero_vad(wav16k: np.ndarray) -> list[tuple[float, float]]:
     return [(s["start"] / VAD_RATE, s["end"] / VAD_RATE) for s in stamps]
 
 
-VAD_WINDOW = 512  # samples per Silero step at 16 kHz
-VAD_BATCH = 64
+def silero_vad_long(wav16k: np.ndarray) -> list[tuple[float, float]]:
+    """``silero_vad`` for long audio: VAD_PIECE_S pieces in one batch (each
+    warmed up on the VAD_CONTEXT_S before it), on ``vad_device()``. Per step
+    Silero makes one small model call, so a 10 min window was ~19k calls in a
+    row; this makes it ~3.7k, nearly the same segments (a few boundaries move by
+    a step), ~3.5x faster on a GPU."""
+    import torch
+    from silero_vad import load_silero_vad
+    from silero_vad.utils_vad import get_speech_timestamps_from_probs
+
+    device = vad_device()
+    steps = -(-len(wav16k) // VAD_WINDOW)
+    piece, context = int(VAD_PIECE_S * VAD_RATE) // VAD_WINDOW, int(VAD_CONTEXT_S * VAD_RATE) // VAD_WINDOW
+    span = piece + context
+    padded = torch.zeros((context + steps) * VAD_WINDOW)  # silence before the start: the first piece's context
+    padded[context * VAD_WINDOW : context * VAD_WINDOW + len(wav16k)] = torch.from_numpy(np.ascontiguousarray(wav16k))
+    starts = range(0, steps, piece)
+    batch = torch.zeros(len(starts), span * VAD_WINDOW)
+    for row, s in enumerate(starts):  # windows [s - context, s + piece) of the audio
+        part = padded[s * VAD_WINDOW : (s + span) * VAD_WINDOW]
+        batch[row, : len(part)] = part
+    with _vad_lock, torch.no_grad():
+        model = _vad_models.get(device)
+        if model is None:
+            model = _vad_models[device] = load_silero_vad().to(device)
+        batch = batch.to(device)
+        model.reset_states()
+        probs = torch.stack(
+            [model(batch[:, k * VAD_WINDOW : (k + 1) * VAD_WINDOW], VAD_RATE)[:, 0] for k in range(span)], dim=1
+        )
+    stamps = get_speech_timestamps_from_probs(
+        probs[:, context:].reshape(-1)[:steps].tolist(),
+        sampling_rate=VAD_RATE,
+        min_silence_duration_ms=int(VAD_MIN_SILENCE_S * 1000),
+        speech_pad_ms=0,
+        audio_length_samples=len(wav16k),
+    )
+    return [(s["start"] / VAD_RATE, s["end"] / VAD_RATE) for s in stamps]
 
 
 def silero_vad_many(wavs: list[np.ndarray]) -> list[list[tuple[float, float]]]:

@@ -1,21 +1,25 @@
-import time
-
 import pytest
 
 from voxcpm_studio import timing
 
 
-def test_stages_count_their_own_time_without_nested_stages():
+def test_stages_count_their_own_time_without_nested_stages(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(timing.time, "perf_counter", lambda: clock[0])
+
+    def wait(seconds):
+        clock[0] += seconds
+
     with timing.collect() as times:
         with timing.stage("asr"):
-            time.sleep(0.05)
+            wait(5)
             with timing.stage("loading models"):
-                time.sleep(0.1)
+                wait(10)
         with timing.stage("asr"):
-            time.sleep(0.05)
-    assert times.seconds["asr"] == pytest.approx(0.1, abs=0.04)
-    assert times.seconds["loading models"] == pytest.approx(0.1, abs=0.04)
-    assert list(times.summary()) == ["asr", "loading models"]  # longest first; no "other" below 0.5 s
+            wait(2)
+        wait(1)  # in no stage
+    assert times.seconds == {"asr": pytest.approx(7), "loading models": pytest.approx(10)}
+    assert times.summary() == {"loading models": 10.0, "asr": 7.0, "other": 1.0}  # longest first
 
 
 def test_stages_outside_collect_cost_nothing():

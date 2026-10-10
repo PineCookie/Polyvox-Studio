@@ -273,3 +273,31 @@ def test_compressed_stereo_is_mixed_to_mono_without_gain(tmp_path):
 def test_slicing_needs_copy_and_transcription(tmp_path, data_dir):
     with pytest.raises(ValueError, match="needs copying and transcription"):
         importer.import_dataset(str(tmp_path), None, "x", data_dir, slicing=OPTS)
+
+
+class LoudnessVad:
+    """Stand-in for Silero: a 32 ms step is speech when it is loud (no state)."""
+
+    def to(self, device):
+        return self
+
+    def reset_states(self):
+        pass
+
+    def __call__(self, x, sr):
+        return (x.abs().mean(dim=1, keepdim=True) > 0.05).float()
+
+
+def test_long_vad_runs_pieces_side_by_side_and_joins_them_in_order(monkeypatch):
+    import silero_vad
+
+    monkeypatch.setattr(silero_vad, "load_silero_vad", LoudnessVad)
+    monkeypatch.setattr(slicer, "_vad_models", {})
+    spans = [(1.0, 3.0), (9.5, 12.0), (19.0, 21.5), (33.0, 38.0)]
+    wav = bursts(spans, 40.0)
+    whole = slicer.silero_vad_long(wav)  # one piece
+    monkeypatch.setattr(slicer, "VAD_PIECE_S", 10.0)
+    monkeypatch.setattr(slicer, "VAD_CONTEXT_S", 2.0)
+    split = slicer.silero_vad_long(wav)  # four pieces, two of the spans across piece seams
+    assert split == whole
+    assert [(round(s), round(e)) for s, e in whole] == [(round(s), round(e)) for s, e in spans]

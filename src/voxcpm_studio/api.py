@@ -317,6 +317,7 @@ def create_app(
     service = service or InferenceService(settings)
     asr = asr or AsrService(settings)
     align = align or AlignService(settings)
+    slicer.vad_device = lambda: asr.device  # VAD of long recordings runs where ASR does
     # Compiled on CUDA unless VOXCPM_STUDIO_OPTIMIZE is off (as the TTS model).
     load_separation = functools.partial(separation_models, compile=settings.optimize is not False)
     separation = separation or SeparationService(lambda: asr.device, load_separation)
