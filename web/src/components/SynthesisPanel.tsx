@@ -1,9 +1,70 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import { transcribe } from '../api'
-import type { SynthesisParams } from '../api'
+import { getTtsProgress, transcribe } from '../api'
+import type { SynthesisParams, TtsProgress } from '../api'
+import { formatDuration } from '../format'
 import { forgetPeaks } from '../peaks'
 import { AudioPlayer } from './AudioPlayer'
+import { ProgressBar } from './RunList'
+
+// VoxCPM2's non-verbal tags, as its cookbook spells them ([laughing], not
+// [Laughter]); best used sparingly, not several in one sentence.
+const TAGS: [string, string][] = [
+  ['[laughing]', 'laugh'],
+  ['[sigh]', 'sigh'],
+  ['[Uhm]', 'uhm'],
+  ['[Shh]', 'shh'],
+]
+const MORE_TAGS = [
+  '[Question-ah]',
+  '[Question-ei]',
+  '[Question-en]',
+  '[Question-oh]',
+  '[Surprise-wa]',
+  '[Surprise-yo]',
+  '[Dissatisfaction-hnn]',
+]
+const POLL_MS = 400
+
+/** Phase and an estimated share of the generation, polled while it runs. */
+function SynthesisProgress() {
+  const [progress, setProgress] = useState<TtsProgress | null>(null)
+  useEffect(() => {
+    let alive = true
+    const poll = () =>
+      getTtsProgress().then(
+        (p) => alive && setProgress(p),
+        () => {},
+      )
+    poll()
+    const timer = setInterval(poll, POLL_MS)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [])
+  if (!progress) return null
+  const { phase, step, expected, attempt, elapsed } = progress
+  const label =
+    phase === 'loading'
+      ? 'Loading the model'
+      : phase === 'compiling'
+        ? 'Compiling (first generation after loading, ~30 s)'
+        : phase === 'generating'
+          ? `Generating${attempt > 1 ? ` (attempt ${attempt}: the last ran far too long)` : ''}`
+          : 'Preparing'
+  // The estimate can be short or long; never show done before it is.
+  const share = phase === 'generating' && expected ? Math.min(step / expected, 0.97) : 0
+  return (
+    <div className="synthesis-progress">
+      <span className="muted hint">
+        {label}
+        {phase === 'generating' && ` · ${Math.round(share * 100)}%`} · {formatDuration(elapsed)}
+      </span>
+      <ProgressBar value={share} max={1} />
+    </div>
+  )
+}
 
 interface Props {
   busy: boolean
@@ -26,6 +87,7 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
   const [denoise, setDenoise] = useState(true)
   const [transcribing, setTranscribing] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const textArea = useRef<HTMLTextAreaElement>(null)
   // A playable URL for the chosen reference, released when it changes.
   const referenceUrl = useMemo(() => (referenceAudio ? URL.createObjectURL(referenceAudio) : null), [referenceAudio])
   useEffect(
@@ -63,6 +125,18 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit()
   }
 
+  /** Put a tag at the cursor (or over the selection), then keep typing after it. */
+  function insertTag(tag: string) {
+    const el = textArea.current
+    const start = el?.selectionStart ?? text.length
+    const end = el?.selectionEnd ?? text.length
+    setText(text.slice(0, start) + tag + text.slice(end))
+    requestAnimationFrame(() => {
+      el?.focus()
+      el?.setSelectionRange(start + tag.length, start + tag.length)
+    })
+  }
+
   function clearReference() {
     setReferenceAudio(null)
     setPromptText('')
@@ -78,6 +152,7 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
       <label className="field">
         <span>Text</span>
         <textarea
+          ref={textArea}
           rows={5}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -85,6 +160,33 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
           autoFocus
         />
       </label>
+      <div className="tag-row" role="group" aria-label="Insert a non-verbal tag">
+        {TAGS.map(([tag, label]) => (
+          <button
+            key={tag}
+            type="button"
+            className="ghost small"
+            onClick={() => insertTag(tag)}
+            title={`Insert ${tag}`}
+          >
+            {label}
+          </button>
+        ))}
+        <select
+          value=""
+          onChange={(e) => e.target.value && insertTag(e.target.value)}
+          aria-label="More tags"
+          className="small"
+        >
+          <option value="">More…</option>
+          {MORE_TAGS.map((tag) => (
+            <option key={tag} value={tag}>
+              {tag}
+            </option>
+          ))}
+        </select>
+        <span className="muted hint">VoxCPM2 tags; use sparingly</span>
+      </div>
 
       <label className="field">
         <span>
@@ -179,6 +281,7 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
         </div>
       </details>
 
+      {busy && <SynthesisProgress />}
       <div className="actions">
         <span className="muted hint">Ctrl + Enter</span>
         <button type="submit" className="primary" disabled={!canSubmit}>

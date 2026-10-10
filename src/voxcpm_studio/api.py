@@ -486,6 +486,13 @@ def create_app(
         headers = {"X-Seed": str(result.seed)} if result.seed is not None else {}
         return Response(buf.getvalue(), media_type="audio/wav", headers=headers)
 
+    @app.get("/api/tts/progress")
+    def tts_progress() -> dict:
+        """The running synthesis: phase (idle | loading | preparing | compiling |
+        generating), step and expected steps (an estimate; the text decides when
+        it stops), attempt (VoxCPM retries a run-away generation) and elapsed seconds."""
+        return service.progress_public()
+
     @app.post("/api/model/unload")
     def unload() -> dict:
         # Frees all GPU memory the server holds: TTS, ASR and the aligner.

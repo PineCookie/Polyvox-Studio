@@ -151,6 +151,19 @@ export async function transcribe(audio: File, language?: string): Promise<{ text
   return (await request('/api/asr', { method: 'POST', body: form })).json()
 }
 
+// The running synthesis (src/voxcpm_studio/inference.py Progress).
+export interface TtsProgress {
+  phase: 'idle' | 'loading' | 'preparing' | 'compiling' | 'generating'
+  step: number
+  expected: number | null // an estimate: the text decides when generation stops
+  attempt: number // VoxCPM retries a generation that runs far too long
+  elapsed: number // seconds
+}
+
+export async function getTtsProgress(): Promise<TtsProgress> {
+  return (await request('/api/tts/progress')).json()
+}
+
 export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
   const form = new FormData()
   form.set('text', p.text)

@@ -166,3 +166,32 @@ def test_prompt_text_only_used_with_reference_audio(service, loader, tmp_path):
 def test_unknown_lora_raises_key_error(service):
     with pytest.raises(KeyError):
         service.synthesize(SynthesisRequest(text="hi", lora_id="nope"))
+
+
+def test_progress_follows_the_generation_loop(service, monkeypatch):
+    from voxcpm.model import voxcpm2
+
+    from conftest import FakeModel
+
+    seen = []
+
+    def generate(self, **kwargs):
+        # VoxCPM's loop: max_len = text tokens * 6 + 10; stops early.
+        for i in voxcpm2.tqdm(range(int(20 * inference.RATIO_LIMIT + 10))):
+            seen.append(dict(service.progress_public()))
+            if i == 23:
+                break
+        return torch.zeros(4800).numpy()
+
+    monkeypatch.setattr(FakeModel, "generate", generate)
+    service.optimize = True
+    service.synthesize(SynthesisRequest(text="示例"))
+
+    assert seen[0]["phase"] == "compiling"  # the first steps after loading compile
+    assert seen[-1]["phase"] == "generating" and seen[-1]["step"] == 24 and seen[-1]["attempt"] == 1
+    assert seen[-1]["expected"] == round(20 * inference.STEPS_PER_TOKEN)
+    assert service.progress_public()["phase"] == "idle"
+    # 24 steps for 20 tokens: the next estimate moves towards 1.2 per token.
+    service.synthesize(SynthesisRequest(text="示例"))
+    assert seen[-1]["phase"] == "generating"  # compiled already
+    assert seen[-1]["expected"] == round(20 * (0.7 * inference.STEPS_PER_TOKEN + 0.3 * 1.2))

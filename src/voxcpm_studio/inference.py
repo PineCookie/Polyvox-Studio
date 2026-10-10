@@ -6,6 +6,7 @@ import gc
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,43 @@ logger = logging.getLogger(__name__)
 
 # (settings, device, lora_config, optimize) -> voxcpm.VoxCPM
 ModelLoader = Callable[..., object]
+
+# VoxCPM's generation loop is `for i in tqdm(range(max_len))`, one step per audio
+# patch, max_len = int(text tokens * RATIO_LIMIT + 10) (its retry_badcase_ratio_threshold
+# default); it stops much earlier, after about STEPS_PER_TOKEN steps per token.
+RATIO_LIMIT = 6.0
+STEPS_PER_TOKEN = 1.1  # first guess; refined from finished generations
+MIN_STEPS = 12  # even "好的。" takes ~13 steps
+LEARN_MIN_TOKENS = 15  # shorter texts don't tell the pace (their fixed overhead dominates)
+
+_step_hook: Callable[[int, int], None] | None = None  # (step index, max_len) of the running generation
+
+
+def _tracked(iterable, *args, **kwargs):
+    """Stands in for tqdm in voxcpm's generation loop: reports each step."""
+    total = len(iterable) if hasattr(iterable, "__len__") else 0
+    for i, item in enumerate(iterable):
+        if _step_hook is not None:
+            _step_hook(i, total)
+        yield item
+
+
+def _hook_generation_loop() -> None:
+    try:
+        from voxcpm.model import voxcpm as v1
+        from voxcpm.model import voxcpm2 as v2
+    except ImportError:  # pragma: no cover
+        return
+    v1.tqdm = v2.tqdm = _tracked
+
+
+@dataclass
+class Progress:
+    phase: str = "idle"  # idle | loading | preparing | compiling | generating
+    step: int = 0
+    expected: int | None = None  # steps this text should take (estimate)
+    attempt: int = 0  # voxcpm retries a generation that ran far too long
+    started: float = 0.0  # time.time() of the request
 
 
 def load_voxcpm(settings: Settings, device: str, lora_config, optimize: bool):
@@ -165,6 +203,9 @@ class InferenceService:
         self._lora_active = False  # the loaded LoRA's weights stay resident while it is off
         # The reference denoiser needs ~2.7 GB more on the GPU; small cards run it on the CPU (vram.py).
         self.denoise_on_cpu = False
+        self.progress = Progress()
+        self._steps_per_token = STEPS_PER_TOKEN
+        self._fresh = False  # loaded but not generated yet: the first steps compile
 
     def status(self) -> dict:
         return {
@@ -181,27 +222,63 @@ class InferenceService:
         ckpt = lora_library.resolve(self.settings.lora_dir, req.lora_id) if req.lora_id else None
 
         with self._lock:
-            model = self._ensure_model(ckpt)
-            self._apply_lora(model, ckpt)
+            self.progress = Progress(phase="loading" if self._model is None else "preparing", started=time.time())
+            try:
+                return self._synthesize(req, final_text, ckpt)
+            finally:
+                self.progress.phase = "idle"
 
-            kwargs = dict(
-                text=final_text,
-                reference_wav_path=str(req.reference_wav) if req.reference_wav else None,
-                cfg_value=float(req.cfg_value),
-                inference_timesteps=int(req.inference_timesteps),
-                normalize=req.normalize,
-                denoise=req.denoise,
-                seed=req.seed,
-            )
-            prompt_text = (req.prompt_text or "").strip()
-            if prompt_text and req.reference_wav:
-                kwargs["prompt_wav_path"] = str(req.reference_wav)
-                kwargs["prompt_text"] = prompt_text
+    def _synthesize(self, req: SynthesisRequest, final_text: str, ckpt: LoraCheckpoint | None) -> SynthesisResult:
+        global _step_hook
+        model = self._ensure_model(ckpt)
+        self._apply_lora(model, ckpt)
+        self.progress.phase = "preparing"  # reference denoising and encoding come before the first step
 
-            logger.info("Synthesizing (lora=%s): %.80s", req.lora_id or "none", final_text)
+        kwargs = dict(
+            text=final_text,
+            reference_wav_path=str(req.reference_wav) if req.reference_wav else None,
+            cfg_value=float(req.cfg_value),
+            inference_timesteps=int(req.inference_timesteps),
+            normalize=req.normalize,
+            denoise=req.denoise,
+            seed=req.seed,
+        )
+        prompt_text = (req.prompt_text or "").strip()
+        if prompt_text and req.reference_wav:
+            kwargs["prompt_wav_path"] = str(req.reference_wav)
+            kwargs["prompt_text"] = prompt_text
+
+        logger.info("Synthesizing (lora=%s): %.80s", req.lora_id or "none", final_text)
+        _hook_generation_loop()
+        attempts: list[tuple[float, int]] = []  # (text tokens, step limit) per attempt
+
+        def on_step(i: int, total: int) -> None:
+            p = self.progress
+            if i == 0:
+                p.attempt += 1
+                attempts.append((max(1.0, (total - 10) / RATIO_LIMIT), total))
+                p.expected = max(MIN_STEPS, round(attempts[-1][0] * self._steps_per_token))
+                # The first steps after loading wait for torch.compile.
+                p.phase = "compiling" if self._fresh and self.optimize else "generating"
+            elif i == 1:
+                p.phase, self._fresh = "generating", False
+            p.step = i + 1
+
+        _step_hook = on_step
+        try:
             audio = model.generate(**kwargs)
-            seed = getattr(model.tts_model, "last_successful_seed", req.seed)
-            return SynthesisResult(model.tts_model.sample_rate, audio, seed)
+        finally:
+            _step_hook = None
+        tokens, limit = attempts[0] if attempts else (0.0, 0)
+        if len(attempts) == 1 and tokens >= LEARN_MIN_TOKENS and self.progress.step < limit:  # learn the pace
+            observed = self.progress.step / tokens
+            self._steps_per_token = 0.7 * self._steps_per_token + 0.3 * observed
+        seed = getattr(model.tts_model, "last_successful_seed", req.seed)
+        return SynthesisResult(model.tts_model.sample_rate, audio, seed)
+
+    def progress_public(self) -> dict:
+        p = self.progress
+        return {**p.__dict__, "elapsed": round(time.time() - p.started, 1) if p.started else 0.0}
 
     def unload(self) -> None:
         with self._lock:
@@ -224,6 +301,7 @@ class InferenceService:
         )
         self._model = self._loader(self.settings, self.device, target, self.optimize)
         self._lora_config = target
+        self._fresh = True
         if self.denoise_on_cpu:
             _denoiser_to_cpu(self._model)
         return self._model

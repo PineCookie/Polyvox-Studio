@@ -279,6 +279,27 @@ input[type='file']::file-selector-button {
   gap: 8px;
 }
 
+/* Non-verbal tag buttons under the text box. */
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: -6px;
+}
+
+.tag-row select {
+  width: auto;
+  padding: 2px 6px;
+  font-size: 0.82rem;
+}
+
+.synthesis-progress {
+  display: grid;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
 .advanced summary {
   cursor: pointer;
   font-size: 0.85rem;
