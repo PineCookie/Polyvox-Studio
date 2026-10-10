@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import importlib.metadata
 import io
 import logging
@@ -28,6 +29,7 @@ from .config import Settings
 from .inference import InferenceService, SynthesisRequest
 from .jobs import Job, JobRunner
 from .separation import SeparationService
+from .separation import load_models as separation_models
 from .singing import SingingService
 from .slicer import SliceOptions
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
@@ -315,7 +317,9 @@ def create_app(
     service = service or InferenceService(settings)
     asr = asr or AsrService(settings)
     align = align or AlignService(settings)
-    separation = separation or SeparationService(lambda: asr.device)
+    # Compiled on CUDA unless VOXCPM_STUDIO_OPTIMIZE is off (as the TTS model).
+    load_separation = functools.partial(separation_models, compile=settings.optimize is not False)
+    separation = separation or SeparationService(lambda: asr.device, load_separation)
     singing = singing or SingingService(settings, lambda: asr.device)
     jobs = jobs or JobRunner()
     training = training or TrainingManager(

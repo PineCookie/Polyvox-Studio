@@ -77,7 +77,7 @@ def _window(size: int, fade: int):
 class RoformerModel:
     """One checkpoint: separates its target stem (vocals, noreverb, dry, ...)."""
 
-    def __init__(self, ckpt: Path, config_path: Path, device: str):
+    def __init__(self, ckpt: Path, config_path: Path, device: str, compile: bool = True):
         import torch
 
         from .vendor.roformer import BSRoformer, MelBandRoformer
@@ -104,6 +104,7 @@ class RoformerModel:
         self.stem = target or (instruments[0] if instruments else "target")
         # Single-target models output one stem; multi-stem ones output all, in order.
         self.stem_index = 0 if target or params.get("num_stems", 1) == 1 else instruments.index(self.stem)
+        self._compiled = compile_transformers(self.model) if compile and device.startswith("cuda") else []
 
     def __call__(self, audio: np.ndarray) -> np.ndarray:
         """(channels, samples) at self.rate -> the target stem, same shape."""
@@ -117,7 +118,29 @@ class RoformerModel:
         if x.shape[0] != self.channels:  # mono model on stereo input or the reverse
             x = np.repeat(x.mean(axis=0, keepdims=True), self.channels, axis=0)
         with torch.inference_mode(), torch.autocast("cuda", enabled=self.device.startswith("cuda")):
-            return demix(run, x, self.chunk, self.overlap, self.device)
+            try:
+                return demix(run, x, self.chunk, self.overlap, self.device)
+            except Exception:
+                if not self._compiled:
+                    raise
+                # e.g. no working Triton: the same model, not compiled, still works.
+                logger.warning("Compiled separation failed; running it uncompiled", exc_info=True)
+                for module in self._compiled:
+                    module._compiled_call_impl = None  # what Module.compile() set
+                self._compiled = []
+                return demix(run, x, self.chunk, self.overlap, self.device)
+
+
+def compile_transformers(model) -> list:
+    """torch.compile each transformer block of a RoFormer ("regional"
+    compilation): the time and frequency transformers repeat with the same
+    shapes, so all share two compiled graphs and compiling takes seconds, not
+    the minutes a whole-model compile takes. About twice as fast on CUDA; the
+    first window pays the compile. Returns the compiled modules."""
+    modules = [m for m in model.modules() if type(m).__name__ == "Transformer"]
+    for module in modules:
+        module.compile()
+    return modules
 
 
 def demix(model: Callable, audio: np.ndarray, chunk: int, overlap: int, device: str = "cpu") -> np.ndarray:
@@ -179,8 +202,8 @@ class Chain:
 ModelLoader = Callable[[list[str], str], list]
 
 
-def load_models(specs: list[str], device: str) -> list:
-    return [RoformerModel(*resolve_model(spec), device) for spec in specs]
+def load_models(specs: list[str], device: str, compile: bool = True) -> list:
+    return [RoformerModel(*resolve_model(spec), device, compile) for spec in specs]
 
 
 class SeparationService:
