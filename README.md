@@ -63,9 +63,9 @@ Download the `.zip` (Windows) or `.tar.gz` (Linux) of the latest release and run
 From a git checkout instead, the first run also builds the UI, which needs
 Node.js 20+.
 
-On Linux, Triton (used to compile the model) needs a C compiler (`gcc`), and
-long recordings in m4a / mp3 are decoded with FFmpeg's shared libraries
-(e.g. `apt install build-essential ffmpeg`). To reach a server on another
+No FFmpeg install is needed: audio in other formats (m4a, video files) is
+decoded with PyAV, which brings its own. On Linux, Triton (used to compile the
+model) needs a C compiler (`apt install build-essential`). To reach a server on another
 machine, start it with `./run.sh --host 0.0.0.0` (it has no login: use it on a
 trusted network or through an SSH tunnel).
 
@@ -153,7 +153,7 @@ before anything is written; rows without audio are skipped. The import writes
 `data/<name>/train.jsonl` with paths relative to it and, by default, copies the
 audio into `data/<name>/wavs/` so the folder is self-contained.
 
-Long recordings (over 20 s, any format FFmpeg reads: WAV, FLAC, m4a, mp3, ...)
+Long recordings (over 20 s; WAV, FLAC, mp3, m4a, video files, ...)
 can be sliced into clips during the import. They are read 10 minutes at a time,
 so hours of audio are fine. Voice activity detection (Silero VAD) groups the
 speech into pieces of up to 28 s, Qwen3-ASR transcribes them, and the forced

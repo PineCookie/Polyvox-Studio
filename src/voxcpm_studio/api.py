@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import checks, fillers, importer, lora_library, manifests, models, sharing, slicer
+from . import audio_io, checks, fillers, importer, lora_library, manifests, models, sharing, slicer
 from .aligner import AlignService
 from .asr import SAMPLE_RATE as ASR_RATE
 from .asr import AsrService, language_of, load_audio
@@ -300,6 +300,7 @@ def create_app(
     singing: SingingService | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
+    audio_io.patch_torchaudio()  # voxcpm's torchaudio.load calls, without a system FFmpeg
     service = service or InferenceService(settings)
     asr = asr or AsrService(settings)
     align = align or AlignService(settings)
@@ -402,7 +403,8 @@ def create_app(
         seed: Annotated[int | None, Form()] = None,
         reference_audio: Annotated[UploadFile | None, File()] = None,
     ) -> Response:
-        ref_path = _save_upload(reference_audio) if reference_audio else None
+        # As WAV when soundfile can't read it (e.g. m4a): voxcpm can't without a system FFmpeg.
+        ref_path = audio_io.to_wav(_save_upload(reference_audio)) if reference_audio else None
         try:
             result = service.synthesize(
                 SynthesisRequest(

@@ -547,7 +547,7 @@ class TrainingManager:
         root = manifests.legacy_root(self.settings.data_dir)
 
         def absolute(value) -> Path:
-            path = Path(str(value))
+            path = manifests.local_path(str(value))
             return path if path.is_absolute() else root / path
 
         config["pretrained_path"] = str(absolute(config["pretrained_path"]))

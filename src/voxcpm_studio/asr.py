@@ -61,23 +61,11 @@ def load_qwen3_asr(model: str, device: str):
 
 
 def load_audio(path: Path) -> np.ndarray:
-    """Mono float32 at 16 kHz, from any format soundfile or torchaudio can read."""
-    try:
-        import soundfile as sf
+    """Mono float32 at 16 kHz, from any format audio_io reads (no system FFmpeg needed)."""
+    from . import audio_io
 
-        wav, sr = sf.read(str(path), dtype="float32", always_2d=True)
-        wav = wav.mean(axis=1)
-    except Exception:
-        import torchaudio
-
-        tensor, sr = torchaudio.load(str(path))
-        wav = tensor.mean(dim=0).numpy()
-    if sr != SAMPLE_RATE:
-        import torch
-        import torchaudio.functional as F
-
-        wav = F.resample(torch.from_numpy(np.ascontiguousarray(wav)), sr, SAMPLE_RATE).numpy()
-    return wav.astype(np.float32)
+    audio, rate = audio_io.read(path)
+    return audio_io.resample(audio.mean(axis=0, keepdims=True), rate, SAMPLE_RATE)[0].astype(np.float32)
 
 
 def _batches(order: list[int], lengths: list[int]) -> list[list[int]]:

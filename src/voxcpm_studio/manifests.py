@@ -18,7 +18,7 @@ import statistics
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 import soundfile as sf
@@ -58,8 +58,17 @@ def resolve(data_dir: Path, dataset_id: str) -> Path:
     return path
 
 
+def local_path(value: str) -> Path:
+    """A path as written in a manifest or config. Files written on Windows (the
+    webui's) may use backslashes; in a relative path they are separators on any
+    system (on Linux a backslash would otherwise be part of a file name)."""
+    if "\\" in value and not PureWindowsPath(value).drive:
+        value = PureWindowsPath(value).as_posix()
+    return Path(value)
+
+
 def _resolve_audio(value: str, manifest_dir: Path, root: Path | None) -> str:
-    path = Path(value).expanduser()
+    path = local_path(value).expanduser()
     if path.is_absolute():
         return str(path)
     candidates = [manifest_dir / path] + ([root / path] if root else [])

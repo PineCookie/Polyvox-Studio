@@ -28,6 +28,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from . import audio_io
+
 VAD_RATE = 16_000
 VAD_MIN_SILENCE_S = 0.1
 ENERGY_FRAME_S = 0.02
@@ -148,23 +150,13 @@ def silero_vad_many(wavs: list[np.ndarray]) -> list[list[tuple[float, float]]]:
 class Source:
     """An audio file read by time range, mono, at its own or a given rate.
 
-    soundfile handles WAV / FLAC / OGG with exact seeking; anything else (m4a,
-    mp3, video containers) is decoded by torchcodec (FFmpeg).
+    Read through audio_io: soundfile (WAV / FLAC / OGG / MP3, exact seeking),
+    else PyAV (m4a, video containers).
     """
 
     def __init__(self, path: Path):
         self.path = path
-        self._decoders: dict[tuple[int | None, int], object] = {}  # (rate, 0) -> decoder
-        try:
-            info = sf.info(str(path))
-            self.rate, self.duration, self._sf = info.samplerate, info.duration, True
-        except Exception:
-            from torchcodec.decoders import AudioDecoder
-
-            meta = AudioDecoder(str(path)).metadata
-            if not meta.duration_seconds or not meta.sample_rate:
-                raise ValueError(f"Unreadable audio: {path.name}") from None
-            self.rate, self.duration, self._sf = meta.sample_rate, meta.duration_seconds, False
+        self.duration, self.rate = audio_io.info(path)
 
     def read(self, start: float, end: float, rate: int | None = None) -> np.ndarray:
         """Mono float32 samples of [start, end) seconds, at ``rate`` (default: the file's)."""
@@ -176,31 +168,16 @@ class Source:
         start, end = max(0.0, start), min(self.duration, end)
         if end <= start:
             return np.zeros((channels, 0), dtype=np.float32)
-        if self._sf:
-            with sf.SoundFile(str(self.path)) as f:
-                f.seek(int(start * self.rate))
-                audio = f.read(int((end - start) * self.rate), dtype="float32", always_2d=True).T
-            audio = audio.mean(axis=0, keepdims=True) if channels == 1 else audio
-            if audio.shape[0] != channels:
-                audio = np.repeat(audio[:1], channels, axis=0)
-            if rate and rate != self.rate:
-                import torch
-                import torchaudio.functional as F
-
-                audio = F.resample(torch.from_numpy(np.ascontiguousarray(audio)), self.rate, rate).numpy()
-            return audio.astype(np.float32)
-        # Decode the file's own channels and mix them here: FFmpeg's downmix to mono
-        # sums the channels at -3 dB each, i.e. +3 dB for ordinary centered audio,
-        # which clipped loud moments once written as PCM16.
-        decoder = self._decoders.get((rate, 0))
-        if decoder is None:
-            from torchcodec.decoders import AudioDecoder
-
-            decoder = self._decoders[(rate, 0)] = AudioDecoder(str(self.path), sample_rate=rate)
-        audio = decoder.get_samples_played_in_range(start, end).data.numpy().astype(np.float32)
-        if channels == 1:
-            return audio.mean(axis=0, keepdims=True)
-        return audio[:channels] if audio.shape[0] >= channels else np.repeat(audio[:1], channels, axis=0)
+        # The file's own channels, mixed here: FFmpeg's downmix to mono sums the
+        # channels at -3 dB each, i.e. +3 dB for ordinary centered audio, which
+        # clipped loud moments once written as PCM16.
+        audio, file_rate = audio_io.read(self.path, start, end)
+        audio = audio.mean(axis=0, keepdims=True) if channels == 1 else audio[:channels]
+        if audio.shape[0] != channels:
+            audio = np.repeat(audio[:1], channels, axis=0)
+        if rate:
+            audio = audio_io.resample(audio, file_rate, rate)
+        return audio.astype(np.float32)
 
 
 def probe(path: Path) -> tuple[float, int]:

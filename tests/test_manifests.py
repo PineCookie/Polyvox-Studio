@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -147,3 +148,9 @@ def test_split_holdout_is_reproducible_and_keeps_training_data():
     assert len(train) == 8 and len(val) == 2
     assert manifests.split_holdout(entries, 2) == (train, val)
     assert manifests.split_holdout(entries[:1], 2) == (entries[:1], [])
+
+
+def test_backslash_paths_from_windows_files_work_everywhere():
+    assert manifests.local_path("lora\\legacy\\logs").as_posix() == "lora/legacy/logs"
+    assert manifests.local_path("data/voice/wavs/a.wav").as_posix() == "data/voice/wavs/a.wav"
+    assert manifests.local_path("X:\\old_pc\\a.wav") == Path("X:\\old_pc\\a.wav")  # a drive path stays as written

@@ -223,32 +223,51 @@ def test_windows_end_in_pauses_and_cover_the_recording(monkeypatch):
     assert t0 == pytest.approx(25.0)
 
 
+def write_m4a(path, audio, rate):
+    """AAC in an MP4 container, as phones and recorders make (written with PyAV's own FFmpeg)."""
+    import av
+
+    channels = audio.shape[0]
+    with av.open(str(path), "w") as out:
+        stream = out.add_stream("aac", rate=rate, layout="stereo" if channels == 2 else "mono")
+        fifo = av.AudioFifo()
+        frame = av.AudioFrame.from_ndarray(
+            np.ascontiguousarray(audio, dtype=np.float32), format="fltp", layout=stream.layout
+        )
+        frame.sample_rate = rate
+        fifo.write(frame)
+        size = stream.codec_context.frame_size or 1024
+        while (chunk := fifo.read(size)) is not None:
+            for packet in stream.encode(chunk):
+                out.mux(packet)
+        for packet in stream.encode(None):
+            out.mux(packet)
+
+
 def test_source_reads_ranges_through_either_backend(tmp_path):
-    path = tmp_path / "x.wav"
-    sf.write(path, bursts([(1.0, 2.0)], 3.0, 44100), 44100)
+    audio = bursts([(1.0, 2.0)], 3.0, 44100)
+    sf.write(tmp_path / "x.wav", audio, 44100)
+    write_m4a(tmp_path / "x.m4a", audio[None], 44100)  # not for soundfile: decoded by PyAV
 
-    src = slicer.Source(path)
-    assert (src.duration, src.rate) == (pytest.approx(3.0), 44100)
-    part = src.read(0.5, 1.5, 16000)
-    assert len(part) == 16000 and np.abs(part[:7000]).max() < 0.01 < np.abs(part[9000:]).max()
-
-    src._sf = False  # as for m4a / mp3: decoded by torchcodec
-    decoded = src.read(0.5, 1.5, 16000)
-    assert abs(len(decoded) - 16000) <= 16 and np.abs(decoded[9000:15000]).max() > 0.1
+    for name in ("x.wav", "x.m4a"):
+        src = slicer.Source(tmp_path / name)
+        assert (src.duration, src.rate) == (pytest.approx(3.0, abs=0.05), 44100), name
+        part = src.read(0.5, 1.5, 16000)
+        assert abs(len(part) - 16000) <= 16, name
+        assert np.abs(part[:7000]).max() < 0.02 < 0.1 < np.abs(part[9000:15000]).max(), name
 
 
 def test_compressed_stereo_is_mixed_to_mono_without_gain(tmp_path):
-    path = tmp_path / "stereo.wav"
+    path = tmp_path / "stereo.m4a"
     tone = bursts([(0.0, 1.0)], 1.0, 44100)
-    sf.write(path, np.stack([tone, tone], axis=1), 44100)
+    write_m4a(path, np.stack([tone, tone]), 44100)
     src = slicer.Source(path)
-    src._sf = False  # decoded by torchcodec, as m4a / mp3 are
 
-    mono = src.read(0.0, 1.0)
+    mono = src.read(0.1, 0.9)
 
     # FFmpeg's own downmix would be 3 dB louder (peaks over full scale on loud audio).
-    assert np.abs(mono).max() == pytest.approx(np.abs(tone).max(), rel=0.02)
-    assert src.read_channels(0.0, 1.0, None, 2).shape[0] == 2
+    assert np.abs(mono).max() == pytest.approx(np.abs(tone).max(), rel=0.05)
+    assert src.read_channels(0.1, 0.9, None, 2).shape[0] == 2
 
 
 def test_slicing_needs_copy_and_transcription(tmp_path, data_dir):
