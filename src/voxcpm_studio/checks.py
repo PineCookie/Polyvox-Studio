@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from . import slicer
+from . import slicer, timing
 from .aligner import (
     SAMPLE_RATE,
     Alignment,
@@ -372,7 +372,8 @@ def make_checker(
         asr_made: list[bool] | None = None,
     ) -> list[ClipCheck]:
         alignments = align(wavs, texts)
-        segments = [vad(w) for w in wavs] if vad else slicer.silero_vad_many(wavs)
+        with timing.stage("vad"):
+            segments = [vad(w) for w in wavs] if vad else slicer.silero_vad_many(wavs)
         out = [check_clip(w, a, kind, s) for w, a, s in zip(wavs, alignments, segments, strict=True)]
         for i, made in enumerate(asr_made or []):
             if made:

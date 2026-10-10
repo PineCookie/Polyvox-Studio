@@ -58,3 +58,11 @@ export function formatValue(v: number): string {
   if (v === 0) return '0'
   return Math.abs(v) < 0.001 ? v.toExponential(1) : v.toFixed(4)
 }
+
+// { separation: 250, asr: 130, vad: 0.4 } -> "Took 6 min: separation 4 min, asr 2 min"
+export function formatTimings(timings: Record<string, number>): string {
+  const entries = Object.entries(timings)
+  const total = entries.reduce((sum, [, s]) => sum + s, 0)
+  const parts = entries.filter(([, s]) => s >= 1).map(([stage, s]) => `${stage} ${formatDuration(s)}`)
+  return `Took ${formatDuration(total)}${parts.length ? `: ${parts.join(', ')}` : ''}`
+}

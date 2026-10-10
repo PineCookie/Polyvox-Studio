@@ -321,6 +321,9 @@ export interface ImportOptions {
   normalizeLufs: number | null // bring each clip to this loudness; null = as recorded
 }
 
+// Seconds per stage of a job ("separation", "asr", ...), longest first.
+export type Timings = Record<string, number>
+
 export type ImportJob = Job<{
   id: string
   imported: number
@@ -328,6 +331,7 @@ export type ImportJob = Job<{
   sliced: number
   trimmed: number
   checks: CheckSummary | null
+  timings?: Timings
 }>
 
 export async function importDataset(o: ImportOptions): Promise<ImportJob> {
@@ -355,7 +359,7 @@ export async function importDataset(o: ImportOptions): Promise<ImportJob> {
   return (await postJson('/api/datasets/import', body)).json()
 }
 
-export type CheckJob = Job<CheckSummary>
+export type CheckJob = Job<CheckSummary & { timings?: Timings }>
 
 /** Shorten runs of fillers in a dataset's transcripts, in place (the original manifest is kept). */
 export async function tidyFillers(id: string): Promise<{ changed: number }> {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import importlib.metadata
 import io
+import logging
 import os
 import shutil
 import tempfile
@@ -19,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import audio_io, checks, fillers, importer, lora_library, loudness, manifests, models, sharing, slicer
+from . import audio_io, checks, fillers, importer, lora_library, loudness, manifests, models, sharing, slicer, timing
 from .aligner import AlignService
 from .asr import SAMPLE_RATE as ASR_RATE
 from .asr import AsrService, LanguageLock, language_of, load_audio
@@ -32,6 +33,8 @@ from .slicer import SliceOptions
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
+
+logger = logging.getLogger(__name__)
 
 
 class LoraConfigOut(BaseModel):
@@ -518,6 +521,10 @@ def create_app(
             return heard([load_audio(p) for p in paths])
 
         def run(job: Job) -> dict:
+            with timing.collect() as times:
+                return {**import_(job), "timings": logged_timings(f"Import {body.name}", times)}
+
+        def import_(job: Job) -> dict:
             result = importer.import_dataset(
                 body.source,
                 body.audio_dir,
@@ -555,6 +562,12 @@ def create_app(
             }
 
         return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
+
+    def logged_timings(what: str, times: timing.Timings) -> dict[str, float]:
+        """Seconds per stage (timing.Timings.summary), also logged."""
+        summary = times.summary()
+        logger.info("%s took %s", what, ", ".join(f"{k} {v:.1f} s" for k, v in summary.items()))
+        return summary
 
     def checker(kind: str, compare_asr: bool = False, detect_singing: bool = False) -> checks.Checker:
         def heard_texts(wavs: list) -> list[str]:
@@ -595,14 +608,16 @@ def create_app(
         refuse_if_busy(gpu=True)
 
         def run(job: Job) -> dict:
-            return checks.check_dataset(
-                manifest,
-                manifests.legacy_root(settings.data_dir),
-                checker(body.aligner, body.compare_asr, body.detect_singing),
-                body.aligner,
-                load_audio,
-                job.progress,
-            )
+            with timing.collect() as times:
+                summary = checks.check_dataset(
+                    manifest,
+                    manifests.legacy_root(settings.data_dir),
+                    checker(body.aligner, body.compare_asr, body.detect_singing),
+                    body.aligner,
+                    load_audio,
+                    job.progress,
+                )
+                return {**summary, "timings": logged_timings(f"Check {body.id}", times)}
 
         return JobOut(**jobs.start("check", f"Check {body.id}", run).public())
 

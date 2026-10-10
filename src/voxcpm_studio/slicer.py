@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from . import audio_io
+from . import audio_io, timing
 
 VAD_RATE = 16_000
 VAD_MIN_SILENCE_S = 0.1
@@ -171,13 +171,14 @@ class Source:
         # The file's own channels, mixed here: FFmpeg's downmix to mono sums the
         # channels at -3 dB each, i.e. +3 dB for ordinary centered audio, which
         # clipped loud moments once written as PCM16.
-        audio, file_rate = audio_io.read(self.path, start, end)
-        audio = audio.mean(axis=0, keepdims=True) if channels == 1 else audio[:channels]
-        if audio.shape[0] != channels:
-            audio = np.repeat(audio[:1], channels, axis=0)
-        if rate:
-            audio = audio_io.resample(audio, file_rate, rate)
-        return audio.astype(np.float32)
+        with timing.stage("decoding"):
+            audio, file_rate = audio_io.read(self.path, start, end)
+            audio = audio.mean(axis=0, keepdims=True) if channels == 1 else audio[:channels]
+            if audio.shape[0] != channels:
+                audio = np.repeat(audio[:1], channels, axis=0)
+            if rate:
+                audio = audio_io.resample(audio, file_rate, rate)
+            return audio.astype(np.float32)
 
 
 def probe(path: Path) -> tuple[float, int]:
@@ -450,8 +451,10 @@ def windows(src: Source, vad: Vad, length: float = WINDOW_S, chain=None) -> Iter
         else:
             audio, rate = src.read(t0, end), src.rate
         audio = audio.astype(np.float32)
-        wav = _resample(audio, rate, VAD_RATE)
-        segments = vad(wav)
+        with timing.stage("decoding"):
+            wav = _resample(audio, rate, VAD_RATE)
+        with timing.stage("vad"):
+            segments = vad(wav)
         cut = len(wav) / VAD_RATE
         if end < src.duration:  # not the last window: end at a pause
             gaps = [
@@ -510,10 +513,11 @@ def slice_recording(
                 for c in word_clips(chunk_wavs[k], text, alignment, opts):
                     pieces.append((spans[k][0] + c.start, spans[k][0] + c.end, c.text, language))
         audio, rate = window.audio, window.rate
-        for start, end, text, language in pieces:
-            file = out_dir / f"{path.stem}_{int((t0 + start) * 1000):08d}_{int((t0 + end) * 1000):08d}.wav"
-            sf.write(file, audio[int(start * rate) : int(end * rate)], rate, subtype="PCM_16")
-            out.append(Slice(file, text, language))
+        with timing.stage("writing clips"):
+            for start, end, text, language in pieces:
+                file = out_dir / f"{path.stem}_{int((t0 + start) * 1000):08d}_{int((t0 + end) * 1000):08d}.wav"
+                sf.write(file, audio[int(start * rate) : int(end * rate)], rate, subtype="PCM_16")
+                out.append(Slice(file, text, language))
         if progress:
             progress(t0 + len(wav) / VAD_RATE)
     return out

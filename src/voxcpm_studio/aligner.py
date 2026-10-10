@@ -26,6 +26,7 @@ from typing import Protocol
 
 import numpy as np
 
+from . import timing
 from .config import Settings
 
 logger = logging.getLogger(__name__)
@@ -307,7 +308,7 @@ class AlignService:
         words = [split_words(t) for t in texts]
         results: list[Alignment | None] = [None] * len(audios)
         order = sorted(range(len(audios)), key=lambda i: len(audios[i]))  # similar lengths per batch
-        with self._lock:
+        with self._lock, timing.stage("alignment"):
             backend = self._ensure_loaded(kind, model)
             todo = [i for i in order if words[i]]
             for i in order:
@@ -337,7 +338,8 @@ class AlignService:
         if self._kind != kind:
             self._unload()
             logger.info("Loading %s aligner %s on %s", kind, model, self.device)
-            self._backend, self._kind = self._loader(kind, model, self.device), kind
+            with timing.stage("loading models"):
+                self._backend, self._kind = self._loader(kind, model, self.device), kind
         return self._backend  # type: ignore[return-value]
 
 

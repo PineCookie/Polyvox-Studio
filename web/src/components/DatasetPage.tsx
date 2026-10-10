@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { DEFAULT_LUFS, checkDataset, normalizeDataset, tidyFillers } from '../api'
 import type { Aligner, CheckJob, ImportJob, NormalizeJob } from '../api'
-import { ALIGNER_LABEL, datasetName } from '../format'
+import { ALIGNER_LABEL, datasetName, formatTimings } from '../format'
 import { useJob } from '../useJob'
 import { DatasetReview } from './DatasetReview'
 import { JobProgress } from './JobProgress'
@@ -96,11 +96,12 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
             {imported.sliced > 0 && `, sliced from ${imported.sliced} recordings`}
             {imported.transcribed > 0 && `; ${imported.transcribed.toLocaleString()} transcribed by ASR`}
             {imported.trimmed > 0 && `; ${imported.trimmed.toLocaleString()} trimmed`}.
+            {imported.timings && <span className="muted"> {formatTimings(imported.timings)}.</span>}
           </p>
         )}
         <div className="inline-field check-action">
           <button type="button" className="ghost" onClick={check} disabled={running}>
-            {running ? 'Checking…' : 'Check clips'}
+            {job?.state === 'running' ? 'Checking…' : 'Check clips'}
           </button>
           <span className="muted hint">against their text with</span>
           <select
@@ -183,6 +184,9 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
           {normalizing?.state === 'done' && <NormalizeSummary result={normalizing.result} />}
         </div>
         {job && <JobProgress job={job} what="Check" />}
+        {job?.state === 'done' && job.result.timings && (
+          <p className="muted hint">Check done. {formatTimings(job.result.timings)}.</p>
+        )}
         {normalizing && <JobProgress job={normalizing} what="Normalizing" />}
         {error && <p className="field-error">{error}</p>}
       </section>

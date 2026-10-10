@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import timing
 from .config import Settings
 
 logger = logging.getLogger(__name__)
@@ -95,8 +96,9 @@ def load_audio(path: Path) -> np.ndarray:
     """Mono float32 at 16 kHz, from any format audio_io reads (no system FFmpeg needed)."""
     from . import audio_io
 
-    audio, rate = audio_io.read(path)
-    return audio_io.resample(audio.mean(axis=0, keepdims=True), rate, SAMPLE_RATE)[0].astype(np.float32)
+    with timing.stage("decoding"):
+        audio, rate = audio_io.read(path)
+        return audio_io.resample(audio.mean(axis=0, keepdims=True), rate, SAMPLE_RATE)[0].astype(np.float32)
 
 
 def _batches(order: list[int], lengths: list[int]) -> list[list[int]]:
@@ -144,7 +146,7 @@ class AsrService:
         results: list[Transcript | None] = [None] * len(audios)
         # Similar lengths per batch keep padding small.
         order = sorted(range(len(audios)), key=lambda i: len(audios[i]))
-        with self._lock:
+        with self._lock, timing.stage("asr"):
             processor, model = self._ensure_loaded()
             for idx in _batches(order, [len(a) for a in audios]):
                 inputs = processor.apply_transcription_request(
@@ -175,5 +177,6 @@ class AsrService:
     def _ensure_loaded(self):
         if self._model is None:
             logger.info("Loading ASR model %s on %s", self.settings.model_path("asr_model"), self.device)
-            self._processor, self._model = self._loader(self.settings.model_path("asr_model"), self.device)
+            with timing.stage("loading models"):
+                self._processor, self._model = self._loader(self.settings.model_path("asr_model"), self.device)
         return self._processor, self._model

@@ -32,7 +32,7 @@ from pathlib import Path, PureWindowsPath
 
 import soundfile as sf
 
-from . import checks, fillers, loudness, slicer
+from . import checks, fillers, loudness, slicer, timing
 from .checks import Checker, ClipCheck
 from .manifests import ASR_FILE, legacy_root, write_manifest
 from .slicer import SliceOptions, Vad
@@ -408,7 +408,8 @@ def import_dataset(
     target = data_dir / name
 
     progress("scanning", 0, 0)
-    preview, rows = _scan(clean_path(source), clean_path(audio_dir) if audio_dir else None, data_dir)
+    with timing.stage("scanning"):
+        preview, rows = _scan(clean_path(source), clean_path(audio_dir) if audio_dir else None, data_dir)
 
     # Build next to the target and rename, so a failure leaves nothing half-written.
     staging = data_dir / f".import-{name}"
@@ -427,7 +428,8 @@ def import_dataset(
         rows_kept = [(i, row) for i, row in enumerate(rows) if row.text]
         if not rows_kept:
             raise ValueError("No clips with both audio and a transcript; nothing to import.")
-        clip_checks = _check([row for _, row in rows_kept], checker, progress) if checker else []
+        with timing.stage("checking"):  # alignment, VAD, ... count as themselves
+            clip_checks = _check([row for _, row in rows_kept], checker, progress) if checker else []
         # (start, end) to keep per clip, for those worth trimming.
         cuts = [c.trim_range() for c in clip_checks] if trim else [None] * len(rows_kept)
 
@@ -442,14 +444,15 @@ def import_dataset(
             for n, ((_, row), file, cut) in enumerate(zip(rows_kept, files, cuts, strict=True)):
                 if n % 50 == 0:
                     progress("copying", n, len(rows_kept))
-                if cut or normalize is not None:
-                    _write_clip(row.audio, staging / "wavs" / file, cut, normalize)
-                    if cut:
-                        clip_checks[n] = clip_checks[n].trimmed(*cut)
-                elif row.audio.is_relative_to(staging):
-                    row.audio.replace(staging / "wavs" / file)  # a fresh slice: move, don't copy
-                else:
-                    shutil.copy2(row.audio, staging / "wavs" / file)
+                with timing.stage("writing clips"):
+                    if cut or normalize is not None:
+                        _write_clip(row.audio, staging / "wavs" / file, cut, normalize)
+                        if cut:
+                            clip_checks[n] = clip_checks[n].trimmed(*cut)
+                    elif row.audio.is_relative_to(staging):
+                        row.audio.replace(staging / "wavs" / file)  # a fresh slice: move, don't copy
+                    else:
+                        shutil.copy2(row.audio, staging / "wavs" / file)
             shutil.rmtree(staging / "_slices", ignore_errors=True)
             shutil.rmtree(staging / "_separated", ignore_errors=True)
             paths = [f"wavs/{file}" for file in files]

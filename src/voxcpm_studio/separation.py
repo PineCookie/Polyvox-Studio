@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from . import timing
+
 logger = logging.getLogger(__name__)
 
 # Chunks per position. MSST configs ask 4-8; 1 (chunks only crossfade at their
@@ -204,14 +206,15 @@ class SeparationService:
             if tuple(specs) != self._specs:
                 self._unload()
                 logger.info("Loading separation models %s on %s", specs, self.device)
-                self._models, self._specs = self._loader(list(specs), self.device), tuple(specs)
+                with timing.stage("loading models"):
+                    self._models, self._specs = self._loader(list(specs), self.device), tuple(specs)
             models = self._models
         rates = {m.rate for m in models}
         if len(rates) != 1:
             raise ValueError(f"Separation models use different sample rates: {sorted(rates)}")
 
         def process(audio: np.ndarray) -> np.ndarray:
-            with self._lock:  # one GPU job at a time
+            with self._lock, timing.stage("separation"):  # one GPU job at a time
                 for m in models:
                     audio = m(audio)
             return audio

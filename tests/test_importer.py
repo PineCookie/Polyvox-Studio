@@ -223,6 +223,7 @@ def test_import_job_endpoints(service, training, asr_service, data_dir, tmp_path
     assert resp.status_code == 202 and resp.json()["kind"] == "import"
     job = wait_job(client, resp.json()["id"])
     assert job["state"] == "done", job
+    assert "asr" in job["result"].pop("timings")
     assert job["result"] == {
         "id": "speaker_a/train.jsonl",
         "imported": 3,
