@@ -43,3 +43,26 @@ def test_torchaudio_load_reads_through_audio_io(tmp_path, monkeypatch):
 
     torchaudio.save(str(tmp_path / "out.wav"), stereo, 16000)
     assert sf.info(str(tmp_path / "out.wav")).channels == 2
+
+
+def test_damaged_m4a_reads_with_the_damage_silent(tmp_path):
+    rate = 16000
+    t = np.arange(8 * rate) / rate
+    audio = (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    m4a = tmp_path / "rec.m4a"
+    write_m4a(m4a, audio[None], rate)
+    clean, _ = audio_io.read(m4a)
+    # Garbage over a stretch of the encoded audio in the middle of the file.
+    data = bytearray(m4a.read_bytes())
+    mid = len(data) // 2
+    data[mid : mid + 600] = bytes((i * 37 + 11) % 256 for i in range(600))
+    m4a.write_bytes(bytes(data))
+
+    damaged, got_rate = audio_io.read(m4a)
+
+    assert got_rate == rate and damaged.shape == clean.shape  # the full length, in place
+    same = np.isclose(damaged[0], clean[0], atol=1e-4)
+    assert same[: 2 * rate].all() and same[-2 * rate :].all()  # untouched before and after
+    assert not same.all()  # the damage didn't decode to the original audio
+    later, _ = audio_io.read(m4a, 6.0, 7.0)  # a range read past the damage is in place too
+    assert np.allclose(later[0], clean[0, 6 * rate : 7 * rate], atol=1e-4)
