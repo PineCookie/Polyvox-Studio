@@ -24,6 +24,10 @@ def test_override_and_cpu(monkeypatch):
     assert vram.detect("cpu") == (12.0, vram.profile_for(12))
     monkeypatch.delenv("VOXCPM_STUDIO_VRAM_GB")
     assert vram.detect("cpu") == (None, vram.CPU)
+    # A CUDA device name without the GPU (CPU-only PyTorch, as in CI): no profile, no crash.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert vram.detect("cuda:0") == (None, vram.CPU)
+    vram.apply_limit("cuda:0")  # nothing to limit
 
 
 def test_is_oom_follows_wrapped_errors():

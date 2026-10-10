@@ -69,7 +69,7 @@ def profile_for(total_gb: float) -> Profile:
 
 def total_gb(device: str) -> float | None:
     """Memory of a CUDA device in GB (VOXCPM_STUDIO_VRAM_GB if set), None for
-    other devices."""
+    other devices, or when that GPU isn't there (a CPU-only PyTorch, a wrong index)."""
     if override := os.environ.get("VOXCPM_STUDIO_VRAM_GB"):
         return float(override)
     if not device.startswith("cuda"):
@@ -77,6 +77,8 @@ def total_gb(device: str) -> float | None:
     import torch
 
     index = int(device.split(":")[1]) if ":" in device else 0
+    if not torch.cuda.is_available() or index >= torch.cuda.device_count():
+        return None
     return torch.cuda.get_device_properties(index).total_memory / 2**30
 
 
@@ -92,9 +94,9 @@ def apply_limit(device: str) -> None:
         return
     import torch
 
-    if not torch.cuda.is_available():
-        return
     index = int(device.split(":")[1]) if ":" in device else 0
+    if not torch.cuda.is_available() or index >= torch.cuda.device_count():
+        return
     total = torch.cuda.get_device_properties(index).total_memory / 2**30
     fraction = min(1.0, max(0.05, (float(override) - CONTEXT_GB) / total))
     torch.cuda.set_per_process_memory_fraction(fraction, index)
