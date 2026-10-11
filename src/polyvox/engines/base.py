@@ -49,6 +49,10 @@ class Capabilities:
     style: bool  # a free-text style / voice description
     tags: bool  # inline tags such as [laughing]
     lora_hot_swap: bool  # switching LoRAs needs no model reload
+    # Speech always clones a reference clip: one given with the request, else the
+    # voice's own (a checkpoint's reference.wav); none = refused.
+    reference_required: bool = False
+    training: bool = True  # New run offers it
 
 
 @dataclass

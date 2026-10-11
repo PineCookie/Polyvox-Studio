@@ -30,6 +30,21 @@ class LoraOut(BaseModel):
     rank: int | None
     alpha: float | None
     config: LoraConfigOut | None  # VoxCPM's layout (VoxCPM checkpoints only)
+    # Its default reference clip's transcript (GPT-SoVITS voices); None: it has none.
+    reference_text: str | None = None
+    version: str | None = None  # the model version, when the checkpoint records one (e.g. v2ProPlus)
+
+
+class GptSovitsImportIn(BaseModel):
+    """Weights the GPT-SoVITS webui trained, as server-local paths."""
+
+    name: str
+    sovits: str  # SoVITS_weights_*/<voice>.pth
+    gpt: str  # GPT_weights_*/<voice>.ckpt
+    # The default reference: picked from this dataset (manifest id), or this clip + transcript.
+    dataset: str | None = None
+    reference: str | None = None
+    reference_text: str = ""
 
 
 class DatasetReportOut(BaseModel):

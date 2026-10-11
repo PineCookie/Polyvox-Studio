@@ -28,6 +28,9 @@ src/polyvox/
                    worker.py (training subprocess around the vendored script)
     dots/          engine.py (dots.tts, 48 kHz); lora.py (LoRA layers, merging);
                    worker.py (training subprocess)
+    gpt_sovits/    engine.py (GPT-SoVITS v2Pro / v2ProPlus, 32 kHz); synth.py (the
+                   synthesis pipeline); voices.py (voice folders with a default
+                   reference clip, import of weights the GPT-SoVITS webui trained)
   data/            manifests.py (training manifests: discovery, path fixes,
                    inspection); audio_io.py (audio without a system FFmpeg)
   prep/            dataset preparation:
@@ -114,6 +117,9 @@ folder. A model variable set explicitly (below) always wins.
 | `POLYVOX_MODELS_DIR` | `models` | downloaded models (see Models) |
 | `POLYVOX_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` |
 | `POLYVOX_MODEL` | `openbmb/VoxCPM2` | local model dir or Hugging Face id |
+| `POLYVOX_DOTS_MODEL` | `rednote-hilab/dots.tts-soar` | dots.tts: local model dir or Hugging Face id |
+| `POLYVOX_GSV_MODEL` | (downloaded copy) | GPT-SoVITS: a folder laid out like `lj1995/GPT-SoVITS` (v2Pro, s1v3.ckpt, encoders) |
+| `POLYVOX_GSV_G2PW_MODEL` | (downloaded copy) | GPT-SoVITS: the G2PW folder (Chinese pronunciation) |
 | `POLYVOX_LORA_DIR` | `lora` | LoRA checkpoints and training runs |
 | `POLYVOX_DATA_DIR` | `data` | JSONL training manifests |
 | `POLYVOX_DEVICE` | `auto` | inference device: `cuda`, `cuda:1`, `cpu`, ... |

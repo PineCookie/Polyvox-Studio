@@ -103,9 +103,20 @@ interface Props {
   onError: (message: string) => void
   // Called after a transcription (it loads the ASR model).
   onTranscribed: () => void
+  // Transcript of the chosen voice's own reference clip (GPT-SoVITS voices); null: it has none.
+  voiceReference: string | null
 }
 
-export function SynthesisPanel({ engine, busy, seed, onSeedChange, onGenerate, onError, onTranscribed }: Props) {
+export function SynthesisPanel({
+  engine,
+  busy,
+  seed,
+  onSeedChange,
+  onGenerate,
+  onError,
+  onTranscribed,
+  voiceReference,
+}: Props) {
   const t = useT()
   const [text, setText] = useState('')
   const [control, setControl] = useState('')
@@ -131,7 +142,9 @@ export function SynthesisPanel({ engine, busy, seed, onSeedChange, onGenerate, o
     [referenceUrl],
   )
 
-  const canSubmit = !busy && !!engine && !engine.unavailable && text.trim().length > 0
+  // Engines that always clone a clip need one: chosen here, or the voice's own.
+  const needsReference = !!caps?.reference_required && !referenceAudio && voiceReference === null
+  const canSubmit = !busy && !!engine && !engine.unavailable && text.trim().length > 0 && !needsReference
 
   async function transcribeReference() {
     if (!referenceAudio) return
@@ -239,8 +252,18 @@ export function SynthesisPanel({ engine, busy, seed, onSeedChange, onGenerate, o
       {caps?.reference_audio !== false && (
         <fieldset className="field reference">
           <legend>
-            {t.referenceAudio} <span className="muted">{t.referenceOptional}</span>
+            {t.referenceAudio}{' '}
+            <span className="muted">
+              {!caps?.reference_required
+                ? t.referenceOptional
+                : voiceReference !== null
+                  ? t.referenceVoiceDefault
+                  : t.referenceRequired}
+            </span>
           </legend>
+          {caps?.reference_required && !referenceAudio && voiceReference !== null && (
+            <p className="muted hint">{t.usesVoiceReference(voiceReference)}</p>
+          )}
           <FilePicker
             file={referenceAudio}
             onChange={(f) => (f ? setReferenceAudio(f) : clearReference())}
@@ -314,6 +337,8 @@ export function SynthesisPanel({ engine, busy, seed, onSeedChange, onGenerate, o
       <div className="actions">
         {engine?.unavailable ? (
           <span className="field-error">{t.engineUnavailable(engine.name, engine.unavailable)}</span>
+        ) : needsReference ? (
+          <span className="field-error">{t.needsReference(engine!.name)}</span>
         ) : (
           <span className="muted hint">{t.ctrlEnter}</span>
         )}

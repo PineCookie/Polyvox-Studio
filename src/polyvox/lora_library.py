@@ -1,4 +1,5 @@
-"""Discovery and metadata for trained LoRA checkpoints."""
+"""Discovery and metadata for trained checkpoints: LoRAs (VoxCPM, dots.tts) and
+GPT-SoVITS voices (full weights; engines/gpt_sovits/voices.py), all in the LoRA folder."""
 
 from __future__ import annotations
 
@@ -14,6 +15,9 @@ from .engines import DEFAULT as DEFAULT_ENGINE
 logger = logging.getLogger(__name__)
 
 WEIGHTS_FILE = "lora_weights.safetensors"
+# A GPT-SoVITS voice's weights (its folder also holds a GPT checkpoint).
+VOICE_WEIGHTS_FILES = ("sovits_weights.pth", "gpt_weights.ckpt")
+MARKERS = (WEIGHTS_FILE, VOICE_WEIGHTS_FILES[0])  # a folder holding one of these is a checkpoint
 # {"lora_config": {...}, "base_model": ..., "engine": ...}; no engine: VoxCPM.
 CONFIG_FILE = "lora_config.json"
 
@@ -28,10 +32,13 @@ class LoraCheckpoint:
     engine: str = DEFAULT_ENGINE
     # The saved lora_config as written, for any engine (rank "r", "alpha", ...).
     raw_config: dict | None = None
+    version: str | None = None  # model version, when recorded (GPT-SoVITS: v2Pro / v2ProPlus)
 
     @property
     def weights_mtime(self) -> float:
-        return (self.path / WEIGHTS_FILE).stat().st_mtime
+        """When its weights last changed (any of its weight files)."""
+        files = [self.path / f for f in (WEIGHTS_FILE, *VOICE_WEIGHTS_FILES)]
+        return max(f.stat().st_mtime for f in files if f.is_file())
 
     @property
     def rank(self) -> int | None:
@@ -104,7 +111,10 @@ def _load(lora_dir: Path, ckpt_dir: Path) -> LoraCheckpoint:
         engine = str(info.get("engine") or DEFAULT_ENGINE)
         raw = info.get("lora_config") or None
         config = LoRAConfig(**raw) if raw and engine == DEFAULT_ENGINE else None
-        return replace(ckpt, config=config, base_model=info.get("base_model"), engine=engine, raw_config=raw)
+        version = info.get("version") if isinstance(info.get("version"), str) else None
+        return replace(
+            ckpt, config=config, base_model=info.get("base_model"), engine=engine, raw_config=raw, version=version
+        )
     except (OSError, ValueError, TypeError) as e:
         logger.warning("Ignoring unreadable %s: %s", config_file, e)
         return ckpt
@@ -115,7 +125,8 @@ def scan(lora_dir: Path) -> list[LoraCheckpoint]:
     lora_dir = lora_dir.resolve()
     if not lora_dir.is_dir():
         return []
-    ckpts = [_load(lora_dir, weights.parent) for weights in lora_dir.rglob(WEIGHTS_FILE)]
+    folders = {marker.parent for name in MARKERS for marker in lora_dir.rglob(name)}
+    ckpts = [_load(lora_dir, folder) for folder in folders if not folder.name.startswith(".")]
     return sorted(ckpts, key=lambda c: c.id, reverse=True)
 
 
@@ -123,6 +134,6 @@ def resolve(lora_dir: Path, lora_id: str) -> LoraCheckpoint:
     """Look up one checkpoint by id, refusing paths outside ``lora_dir``."""
     lora_dir = lora_dir.resolve()
     ckpt_dir = (lora_dir / lora_id).resolve()
-    if not ckpt_dir.is_relative_to(lora_dir) or not (ckpt_dir / WEIGHTS_FILE).is_file():
+    if not ckpt_dir.is_relative_to(lora_dir) or not any((ckpt_dir / m).is_file() for m in MARKERS):
         raise KeyError(f"Unknown LoRA checkpoint: {lora_id}")
     return _load(lora_dir, ckpt_dir)

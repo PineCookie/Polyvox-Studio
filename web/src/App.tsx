@@ -195,6 +195,7 @@ export default function App() {
             onGenerate={generate}
             onError={showError}
             onTranscribed={refreshStatus}
+            voiceReference={loras.find((l) => l.id === voice.lora)?.reference_text ?? null}
           />
           <History clips={clips} onUseSeed={setSeed} onRemove={removeClip} />
         </div>
@@ -207,6 +208,10 @@ export default function App() {
             onSelect={setVoice}
             onRefresh={refreshLoras}
             onImport={importPackage}
+            onImported={(id, engine) => {
+              refreshLoras()
+              setVoice({ engine, lora: id })
+            }}
             onError={showError}
             loading={lorasLoading}
           />

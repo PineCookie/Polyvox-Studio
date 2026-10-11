@@ -17,9 +17,10 @@ __all__ = ["DEFAULT", "Capabilities", "Engine", "Param", "SynthesisRequest", "Sy
 
 def classes() -> dict[str, type[Engine]]:
     from .dots.engine import DotsEngine
+    from .gpt_sovits.engine import GptSovitsEngine
     from .voxcpm.engine import VoxCPMEngine
 
-    return {VoxCPMEngine.id: VoxCPMEngine, DotsEngine.id: DotsEngine}
+    return {VoxCPMEngine.id: VoxCPMEngine, DotsEngine.id: DotsEngine, GptSovitsEngine.id: GptSovitsEngine}
 
 
 def create(settings: Settings, **instances: Engine) -> dict[str, Engine]:

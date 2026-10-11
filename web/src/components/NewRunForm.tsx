@@ -67,7 +67,11 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       },
       () => {},
     )
-    listEngines().then(setEngines, () => {})
+    // Only engines that can train yet.
+    listEngines().then(
+      (list) => setEngines(list.filter((e) => e.capabilities.training)),
+      () => {},
+    )
   }, [])
 
   const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(base.val_holdout, report.valid - 1)) : 0

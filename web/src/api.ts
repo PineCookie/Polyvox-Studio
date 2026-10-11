@@ -21,6 +21,8 @@ export interface Lora {
   rank: number | null
   alpha: number | null
   config: LoraConfig | null // VoxCPM's layout (VoxCPM LoRAs only)
+  reference_text: string | null // its default reference clip's transcript (GPT-SoVITS voices); null: none
+  version: string | null // model version, when recorded (e.g. v2ProPlus)
 }
 
 // A TTS model family (src/polyvox/engines/base.py).
@@ -46,6 +48,8 @@ export interface Engine {
     style: boolean
     tags: boolean
     lora_hot_swap: boolean
+    reference_required: boolean // always clones a clip: the request's or the voice's own
+    training: boolean // New run offers it
   }
   params: EngineParam[] // synthesis settings
   model_setting: string // its base model in the Models list
@@ -179,6 +183,50 @@ export async function importLora(file: File): Promise<{ id: string; engine: stri
   const form = new FormData()
   form.set('package', file)
   return (await request('/api/loras/import', { method: 'POST', body: form })).json()
+}
+
+export interface GptSovitsImport {
+  name: string
+  sovits: string // server-local path of the webui's SoVITS weights (.pth)
+  gpt: string // and of its GPT weights (.ckpt)
+  // The default reference: the best clip of a dataset, or a clip (server path) and its transcript.
+  dataset?: string
+  reference?: string
+  reference_text?: string
+}
+
+/** A voice from weights the GPT-SoVITS webui trained (v2Pro / v2ProPlus). */
+export async function importGptSovits(body: GptSovitsImport): Promise<{ id: string; engine: string }> {
+  return (
+    await request('/api/loras/import-gpt-sovits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  ).json()
+}
+
+/** A GPT-SoVITS voice's default reference clip. */
+export function voiceReferenceUrl(id: string, version: string | null = null): string {
+  const q = new URLSearchParams({ id })
+  if (version) q.set('v', version) // changes when the reference does (no stale cached audio)
+  return `/api/loras/reference?${q}`
+}
+
+/** A new default reference: the best clip of a dataset, or a clip and its transcript. */
+export async function setVoiceReference(
+  id: string,
+  source: { dataset: string } | { audio: File; text: string },
+): Promise<Lora> {
+  const form = new FormData()
+  form.set('id', id)
+  if ('dataset' in source) {
+    form.set('dataset', source.dataset)
+  } else {
+    form.set('audio', source.audio)
+    form.set('text', source.text)
+  }
+  return (await request('/api/loras/reference', { method: 'POST', body: form })).json()
 }
 
 export async function unloadModel(): Promise<Status> {

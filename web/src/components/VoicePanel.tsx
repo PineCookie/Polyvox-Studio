@@ -6,6 +6,8 @@ import { formatStep } from '../format'
 import { useT } from '../i18n'
 import type { Messages } from '../i18n'
 import { ExportDialog } from './ExportDialog'
+import { GptSovitsImportDialog } from './GptSovitsImportDialog'
+import { VoiceReference } from './VoiceReference'
 
 interface Props {
   engines: Engine[]
@@ -16,6 +18,7 @@ interface Props {
   onSelect: (choice: VoiceChoice) => void
   onRefresh: () => void
   onImport: (file: File) => Promise<void>
+  onImported: (id: string, engine: string) => void // a voice made from GPT-SoVITS webui weights
   onError: (message: string) => void
   loading: boolean
 }
@@ -65,6 +68,10 @@ function groupVoices(loras: Lora[], t: Messages): Voice[] {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
 }
 
+const GSV_ENGINE = 'gpt_sovits' // voices with a default reference clip
+// Engines whose checkpoints export as packages (sharing.ENGINE_BASE_MODELS).
+const EXPORTABLE = new Set([DEFAULT_ENGINE, 'dots_tts'])
+
 function shortModel(id: string): string {
   return id.split('/').at(-1) ?? id
 }
@@ -77,6 +84,7 @@ export function VoicePanel({
   onSelect,
   onRefresh,
   onImport,
+  onImported,
   onError,
   loading,
 }: Props) {
@@ -85,6 +93,7 @@ export function VoicePanel({
   const [filter, setFilter] = useState('')
   const [exporting, setExporting] = useState<Lora | null>(null)
   const [importing, setImporting] = useState(false)
+  const [importingGsv, setImportingGsv] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const engineName = (id: string) => engines.find((e) => e.id === id)?.name ?? id
@@ -102,17 +111,19 @@ export function VoicePanel({
   const shown = voices.filter((v) => v.name.toLowerCase().includes(filter.trim().toLowerCase()))
   const select = (lora: Lora) => onSelect({ engine: lora.engine, lora: lora.id })
   const layout = (lora: Lora) =>
-    lora.config
-      ? t.loraLayout(
-          lora.config.r,
-          lora.config.alpha,
-          [lora.config.enable_lm && 'LM', lora.config.enable_dit && 'DiT', lora.config.enable_proj && t.projections]
-            .filter(Boolean)
-            .join(' + '),
-        )
-      : lora.rank !== null && lora.alpha !== null
-        ? t.rankAlpha(lora.rank, lora.alpha)
-        : t.defaultLayout
+    lora.version
+      ? lora.version
+      : lora.config
+        ? t.loraLayout(
+            lora.config.r,
+            lora.config.alpha,
+            [lora.config.enable_lm && 'LM', lora.config.enable_dit && 'DiT', lora.config.enable_proj && t.projections]
+              .filter(Boolean)
+              .join(' + '),
+          )
+        : lora.rank !== null && lora.alpha !== null
+          ? t.rankAlpha(lora.rank, lora.alpha)
+          : t.defaultLayout
 
   async function importFile(file: File | undefined) {
     if (!file) return
@@ -146,6 +157,14 @@ export function VoicePanel({
           >
             {importing ? t.importing : t.import}
           </button>
+          <button
+            type="button"
+            className="ghost small"
+            onClick={() => setImportingGsv(true)}
+            title={t.gsvImportButtonTitle}
+          >
+            {t.gsvImportButton}
+          </button>
           <button type="button" className="ghost small" onClick={onRefresh} disabled={loading}>
             {loading ? t.scanning : t.refresh}
           </button>
@@ -157,9 +176,11 @@ export function VoicePanel({
           <>
             <div className="voice-current-head">
               <span className="voice-name">{currentVoice.name}</span>
-              <button type="button" className="ghost small" onClick={() => setExporting(current)}>
-                {t.export}
-              </button>
+              {EXPORTABLE.has(current.engine) && (
+                <button type="button" className="ghost small" onClick={() => setExporting(current)}>
+                  {t.export}
+                </button>
+              )}
             </div>
             {options.length > 1 && (
               <select
@@ -182,6 +203,7 @@ export function VoicePanel({
                 {t.baseOf(current.base_model_id ?? current.base_model ?? t.notRecorded)}
               </span>
             </p>
+            {current.engine === GSV_ENGINE && <VoiceReference lora={current} onChanged={onRefresh} onError={onError} />}
           </>
         ) : (
           <>
@@ -251,6 +273,7 @@ export function VoicePanel({
                   {otherEngine && <span className="tag subtle">{engineName(voice.engine)}</span>}{' '}
                   {[
                     best.lora.rank !== null && t.rank(best.lora.rank),
+                    best.lora.version,
                     best.step !== null && t.stepsCount(formatStep(best.step)),
                   ]
                     .filter(Boolean)
@@ -265,6 +288,9 @@ export function VoicePanel({
         {voices.length > 0 && shown.length === 0 && <p className="muted empty">{t.noVoiceMatches(filter)}</p>}
       </div>
 
+      {importingGsv && (
+        <GptSovitsImportDialog onImported={onImported} onError={onError} onClose={() => setImportingGsv(false)} />
+      )}
       {exporting && (
         <ExportDialog
           lora={exporting}

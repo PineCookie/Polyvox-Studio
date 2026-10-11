@@ -8,7 +8,9 @@ a downloaded copy unless a model was configured explicitly.
 
 from __future__ import annotations
 
+import shutil
 import threading
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +33,8 @@ class ModelSpec:
     license: str = ""
     required: bool = False
     hub: str = "huggingface"  # or "modelscope" (no endpoint choice there)
+    # A zip in the repo that holds ``files`` (one top folder, dropped when unpacking).
+    archive: str | None = None
 
     def path(self, models_dir: Path) -> Path:
         folder = models_dir / self.folder
@@ -93,6 +97,48 @@ MODELS: tuple[ModelSpec, ...] = (
         ),
         4920,
         license="Apache-2.0",
+    ),
+    ModelSpec(
+        "gsv_model",
+        "GPT-SoVITS v2Pro / v2ProPlus",
+        "Text to speech (32 kHz), voice training: base models with their HuBERT, RoBERTa and speaker encoders",
+        "lj1995/GPT-SoVITS",
+        "lj1995__GPT-SoVITS",
+        (
+            "s1v3.ckpt",
+            "v2Pro/s2Gv2ProPlus.pth",
+            "v2Pro/s2Gv2Pro.pth",
+            "v2Pro/s2Dv2ProPlus.pth",
+            "v2Pro/s2Dv2Pro.pth",
+            "chinese-hubert-base/config.json",
+            "chinese-hubert-base/preprocessor_config.json",
+            "chinese-hubert-base/pytorch_model.bin",
+            "chinese-roberta-wwm-ext-large/config.json",
+            "chinese-roberta-wwm-ext-large/pytorch_model.bin",
+            "chinese-roberta-wwm-ext-large/tokenizer.json",
+            "sv/pretrained_eres2netv2w24s4ep4.ckpt",
+        ),
+        1660,
+        license="MIT",
+    ),
+    ModelSpec(
+        "gsv_g2pw_model",
+        "G2PW",
+        "GPT-SoVITS: pronunciation of Chinese characters with several readings",
+        "kamiorinn/g2pw",
+        "G2PWModel",
+        (
+            "g2pW.onnx",
+            "config.py",
+            "char_bopomofo_dict.json",
+            "bopomofo_to_pinyin_wo_tune_dict.json",
+            "MONOPHONIC_CHARS.txt",
+            "POLYPHONIC_CHARS.txt",
+        ),
+        590,
+        license="Apache-2.0",
+        hub="modelscope",
+        archive="G2PWModel_1.1.zip",
     ),
     ModelSpec(
         "denoiser_model",
@@ -201,6 +247,23 @@ def _partial_bytes(folder: Path) -> int:
     return sum(p.stat().st_size for p in cache.rglob("*.incomplete")) if cache.is_dir() else 0
 
 
+def unpack(archive: Path, folder: Path, files: tuple[str, ...]) -> None:
+    """Extract ``files`` from a zip whose entries sit in one top folder, into
+    ``folder`` without it. Each lands complete or not at all (written aside, then renamed)."""
+    with zipfile.ZipFile(archive) as zf:
+        by_name = {n.split("/", 1)[1]: n for n in zf.namelist() if "/" in n and not n.endswith("/")}
+        missing = [f for f in files if f not in by_name]
+        if missing:
+            raise FileNotFoundError(f"{archive.name} has no {', '.join(missing)}.")
+        for name in files:
+            out = folder / name
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_name(out.name + ".part")
+            with zf.open(by_name[name]) as src, tmp.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+            tmp.replace(out)
+
+
 def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, progress: Progress | None = None) -> None:
     """Download the files of ``spec`` that are missing into its folder, from
     ``endpoint`` (default: huggingface.co). Interrupted files resume. When
@@ -211,11 +274,17 @@ def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, pro
     endpoint = endpoint or None
     folder = models_dir / spec.folder
     folder.mkdir(parents=True, exist_ok=True)
-    if spec.hub == "modelscope":  # small; one call, no byte progress
+    if spec.hub == "modelscope":  # one call, no byte progress
         from modelscope import snapshot_download
 
         progress(0, spec.size_mb)
-        snapshot_download(spec.repo, local_dir=str(folder), allow_patterns=list(spec.files))
+        if spec.archive:
+            staging = folder / ".download"
+            snapshot_download(spec.repo, local_dir=str(staging), allow_patterns=[spec.archive])
+            unpack(staging / spec.archive, folder, spec.files)
+            shutil.rmtree(staging, ignore_errors=True)
+        else:
+            snapshot_download(spec.repo, local_dir=str(folder), allow_patterns=list(spec.files))
         progress(spec.size_mb, spec.size_mb)
         return
     info = HfApi(endpoint=endpoint).model_info(spec.repo, files_metadata=True)
