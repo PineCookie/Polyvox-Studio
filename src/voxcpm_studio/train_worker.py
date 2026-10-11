@@ -17,6 +17,7 @@ On top of the script this adds:
   WAV files that the UI can play: samples at the model's own level, references
   as the original clips (``save_samples_to``).
 - Frozen base weights in bfloat16 for LoRA runs (``frozen_weights_in_bf16``).
+- Each clip's audio-VAE latents computed once (``cache_audio_latents``).
 - ``torchaudio.load`` / ``save`` through audio_io, as in the server
   (torchcodec, which they would use, is not installed).
 - On small GPUs (vram.Profile.train_checkpointing), gradient checkpointing
@@ -154,6 +155,28 @@ def frozen_weights_in_bf16() -> None:
             return model
 
         cls.from_local = classmethod(from_local)
+
+
+def cache_audio_latents() -> None:
+    """Encode each clip with the frozen audio VAE once, not at every step (about
+    a fifth of the step time). The script's batch packer encodes every clip of
+    every batch; the encoder is deterministic (its mean, no sampling) and a clip
+    is read the same way each epoch, so its latents are kept on the GPU, keyed by
+    a hash of the waveform. Same results; a few MB per hundred clips."""
+    import hashlib
+
+    from voxcpm.training import packers
+
+    encode = packers.AudioFeatureProcessingPacker.encode_audio
+    latents: dict[bytes, object] = {}
+
+    def encode_audio(self, wav):
+        key = hashlib.blake2b(wav.detach().float().cpu().numpy().tobytes(), digest_size=16).digest()
+        if key not in latents:
+            latents[key] = encode(self, wav)
+        return latents[key]
+
+    packers.AudioFeatureProcessingPacker.encode_audio = encode_audio
 
 
 def checkpoint_layers() -> None:
@@ -400,6 +423,7 @@ def main() -> None:
 
     save_samples_to(args.samples_dir, val_manifest_from_config(args.config_path))
     frozen_weights_in_bf16()
+    cache_audio_latents()
     from voxcpm_studio import audio_io, vram
 
     audio_io.patch_torchaudio()

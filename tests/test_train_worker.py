@@ -200,6 +200,25 @@ def test_schedule_free_follows_the_models_train_and_eval(restore_patches, monkey
     assert all(g["train_mode"] for g in opt.param_groups)
 
 
+def test_each_clip_is_encoded_once(monkeypatch):
+    from voxcpm.training import packers
+
+    encoded = []
+
+    def encode(self, wav):
+        encoded.append(wav)
+        return wav.sum().reshape(1, 1, 1)
+
+    monkeypatch.setattr(packers.AudioFeatureProcessingPacker, "encode_audio", encode)  # restored afterwards
+    train_worker.cache_audio_latents()
+    packer = object.__new__(packers.AudioFeatureProcessingPacker)
+    a, b = torch.rand(1600), torch.rand(1600)
+    first = packer.encode_audio(a)
+    assert packer.encode_audio(a.clone()) is first  # the same clip in a later epoch
+    assert packer.encode_audio(b).item() == pytest.approx(b.sum().item())
+    assert len(encoded) == 2
+
+
 def test_sample_paths_for_tensorboard_tags(tmp_path):
     assert train_worker.sample_path(tmp_path, "val_sample_1/generated_audio", 500) == tmp_path / "step_0000500_1.wav"
     assert train_worker.sample_path(tmp_path, "val_sample_0/reference_audio", 500) == tmp_path / "reference_0.wav"
