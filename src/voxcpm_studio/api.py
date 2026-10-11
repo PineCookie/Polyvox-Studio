@@ -24,6 +24,7 @@ from starlette.background import BackgroundTask
 from . import (
     audio_io,
     checks,
+    exporter,
     fillers,
     importer,
     lora_library,
@@ -130,6 +131,17 @@ class DatasetIn(BaseModel):
 class NormalizeIn(BaseModel):
     id: str  # dataset manifest id
     target_lufs: float = Field(loudness.TARGET_LUFS, ge=-40, le=-10)
+
+
+class ExportIn(BaseModel):
+    id: str  # dataset manifest id
+    format: str  # exporter.FORMATS id
+    # A folder on the server; empty: exporter.default_dir.
+    out_dir: str = ""
+    min_seconds: float | None = Field(None, ge=0)
+    max_seconds: float | None = Field(None, gt=0)
+    sample_rate: int | None = Field(None, ge=8000, le=96000)  # None: keep each clip's rate
+    language: str | None = None  # GPT-SoVITS code; None: per clip from the text
 
 
 class CheckIn(BaseModel):
@@ -729,6 +741,53 @@ def create_app(
             return loudness.normalize_dataset(manifest, root, body.target_lufs, job.progress)
 
         return JobOut(**jobs.start("normalize", f"Normalize {body.id}", run).public())
+
+    @app.get("/api/export-formats")
+    def export_formats() -> list[dict]:
+        return [dict(f.__dict__) for f in exporter.FORMATS]
+
+    @app.get("/api/datasets/export-dir")
+    def export_dir(id: str, format: str) -> dict:
+        """Where an export goes unless another folder is given."""
+        _found(manifests.resolve, settings.data_dir, id)
+        return {"dir": str(exporter.default_dir(settings.data_dir, id, format))}
+
+    @app.post("/api/datasets/export", status_code=202)
+    def export_dataset(body: ExportIn) -> JobOut:
+        """Write a dataset's training clips in another TTS tool's layout
+        (exporter.py). The job's result is exporter.export_dataset's summary."""
+        manifest = _found(manifests.resolve, settings.data_dir, body.id)
+        if body.format not in exporter.BY_ID:
+            raise HTTPException(422, f"Unknown export format: {body.format}")
+        if body.language is not None and body.language not in exporter.GPT_SOVITS_LANGUAGES:
+            raise HTTPException(422, f"Unknown language code: {body.language}")
+        out_dir = (
+            Path(body.out_dir)
+            if body.out_dir.strip()
+            else exporter.default_dir(settings.data_dir, body.id, body.format)
+        )
+        if not out_dir.is_absolute():
+            raise HTTPException(422, "The export folder must be an absolute path.")
+        if out_dir.exists() and any(out_dir.iterdir()):
+            raise HTTPException(409, f"{out_dir} already exists and is not empty.")
+        refuse_if_busy(gpu=False)
+        speaker = manifest.parent.name
+
+        def run(job: Job) -> dict:
+            return exporter.export_dataset(
+                manifest,
+                manifests.legacy_root(settings.data_dir),
+                out_dir,
+                body.format,
+                speaker,
+                min_seconds=body.min_seconds,
+                max_seconds=body.max_seconds,
+                sample_rate=body.sample_rate,
+                language=body.language,
+                progress=job.progress,
+            )
+
+        return JobOut(**jobs.start("export", f"Export {body.id}", run).public())
 
     @app.post("/api/dataset-clip/text")
     def set_clip_text(body: ClipTextIn) -> ClipDetailOut:

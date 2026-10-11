@@ -278,6 +278,28 @@ export const zh: Messages = {
   tidied: (n) => `整理了 ${n} 条文本；重新检查以更新它们的标记。`,
   tidyButton: '整理',
   normalizeTitle: '响度归一化',
+  dsExportTitle: '导出给其他 TTS',
+  dsExportHint: '按其他工具的格式写出训练片段（GPT-SoVITS、F5-TTS、Kaldi 等）。',
+  dsExportFormat: '导出格式',
+  dsExportButton: '导出',
+  dsExporting: '正在导出…',
+  dsExportWhat: '导出',
+  dsExportFailed: '导出失败。',
+  dsExportOptions: '导出选项',
+  dsExportFolder: '文件夹（服务器上）',
+  dsExportMinSeconds: '最短片段（秒）',
+  dsExportMaxSeconds: '最长片段（秒）',
+  dsExportRate: '采样率',
+  dsExportLanguage: '语言',
+  noLimit: '不限',
+  keepRate: '保持原样',
+  languageFromText: '根据文本判断',
+  dsExportedSummary: (clips: string, duration: string, dir: string) =>
+    `已导出 ${clips} 个片段（${duration}）到 ${dir}。`,
+  dsExportSkipped: (short: number, long: number, unreadable: number) =>
+    `未导出：${[short && `${short} 个过短`, long && `${long} 个过长`, unreadable && `${unreadable} 个无法读取`]
+      .filter(Boolean)
+      .join('，')}。`,
   normalizeHint: '每条音频一个增益（EBU R128），峰值保持在 -1 dBFS 以下；保留原始文件，检查结果仍然有效。',
   normalizing: '处理中…',
   normalizeButton: '归一化',

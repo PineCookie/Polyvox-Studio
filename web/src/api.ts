@@ -413,6 +413,46 @@ export async function normalizeDataset(id: string, targetLufs: number): Promise<
   return (await postJson('/api/datasets/normalize', { id, target_lufs: targetLufs })).json()
 }
 
+export interface ExportFormat {
+  id: string
+  label: string
+  description: string
+  min_seconds: number | null // suggested clip length range
+  max_seconds: number | null
+}
+
+export const EXPORT_LANGUAGES = ['zh', 'ja', 'en', 'ko', 'yue'] as const // GPT-SoVITS codes
+
+export interface ExportOptions {
+  format: string
+  out_dir: string // '' = the server's default folder
+  min_seconds: number | null
+  max_seconds: number | null
+  sample_rate: number | null // null = keep each clip's rate
+  language: string | null // GPT-SoVITS; null = per clip from the text
+}
+
+export type ExportJob = Job<{
+  dir: string
+  format: string
+  clips: number
+  seconds: number
+  skipped: { short: number; long: number; unreadable: number }
+}>
+
+export async function listExportFormats(): Promise<ExportFormat[]> {
+  return (await request('/api/export-formats')).json()
+}
+
+export async function exportDir(id: string, format: string): Promise<string> {
+  const query = new URLSearchParams({ id, format })
+  return (await (await request(`/api/datasets/export-dir?${query}`)).json()).dir
+}
+
+export async function exportDataset(id: string, options: ExportOptions): Promise<ExportJob> {
+  return (await postJson('/api/datasets/export', { id, ...options })).json()
+}
+
 export async function checkDataset(
   id: string,
   aligner: Aligner,

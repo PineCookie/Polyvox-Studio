@@ -884,6 +884,14 @@ select {
   stroke-opacity: 0.6;
 }
 
+.export-options {
+  margin: -6px 0 6px;
+}
+
+.export-options .export-dir {
+  grid-column: 1 / -1;
+}
+
 .legend-toggle {
   border: none;
   background: none;

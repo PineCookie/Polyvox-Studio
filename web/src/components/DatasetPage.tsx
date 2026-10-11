@@ -5,6 +5,7 @@ import { ALIGNER_LABEL, datasetName, formatTimings } from '../format'
 import { useT } from '../i18n'
 import { useJob } from '../useJob'
 import { DatasetReview } from './DatasetReview'
+import { ExportTool } from './ExportTool'
 import { JobProgress } from './JobProgress'
 
 interface Props {
@@ -190,6 +191,8 @@ export function DatasetPage({ id, imported, onTrain }: Props) {
               </button>
             </div>
           </div>
+
+          <ExportTool id={id} disabled={running} />
         </div>
         {job && <JobProgress job={job} what={t.checkWhat} />}
         {job?.state === 'done' && job.result.timings && (

@@ -7,6 +7,7 @@ __pycache__/
 models/
 lora/
 data/
+exports/
 output/
 
 # Local agent notes (machine-specific)

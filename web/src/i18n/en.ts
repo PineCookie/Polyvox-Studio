@@ -296,6 +296,28 @@ export const en = {
   tidied: (n: string) => `${n} transcripts tidied; check again to refresh their flags.`,
   tidyButton: 'Tidy',
   normalizeTitle: 'Normalize loudness',
+  dsExportTitle: 'Export for other TTS',
+  dsExportHint: 'Write the training clips in another tool’s layout (GPT-SoVITS, F5-TTS, Kaldi …).',
+  dsExportFormat: 'Export format',
+  dsExportButton: 'Export',
+  dsExporting: 'Exporting…',
+  dsExportWhat: 'Exporting',
+  dsExportFailed: 'Export failed.',
+  dsExportOptions: 'Export options',
+  dsExportFolder: 'Folder (on the server)',
+  dsExportMinSeconds: 'Shortest clip (s)',
+  dsExportMaxSeconds: 'Longest clip (s)',
+  dsExportRate: 'Sample rate',
+  dsExportLanguage: 'Language',
+  noLimit: 'No limit',
+  keepRate: 'Keep',
+  languageFromText: 'From the text',
+  dsExportedSummary: (clips: string, duration: string, dir: string) =>
+    `Exported ${clips} clips (${duration}) to ${dir}.`,
+  dsExportSkipped: (short: number, long: number, unreadable: number) =>
+    `Left out: ${[short && `${short} too short`, long && `${long} too long`, unreadable && `${unreadable} unreadable`]
+      .filter(Boolean)
+      .join(', ')}.`,
   normalizeHint: 'One gain per clip (EBU R128), kept below -1 dBFS peaks; originals are kept, checks stay valid.',
   normalizing: 'Normalizing…',
   normalizeButton: 'Normalize',
