@@ -32,7 +32,7 @@ def tidy(text: str) -> str:
 def tidy_manifest(path: Path) -> int:
     """Tidy the ``text`` of every entry of a manifest in place (see
     manifests.rewrite_manifest). Returns the number of entries changed."""
-    from .manifests import rewrite_manifest
+    from ..data.manifests import rewrite_manifest
 
     def change(entry: dict) -> dict | None:
         text = tidy(entry["text"])

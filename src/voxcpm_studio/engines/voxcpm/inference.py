@@ -13,9 +13,9 @@ from pathlib import Path
 
 import numpy as np
 
-from . import lora_library, vram
-from .config import Settings
-from .lora_library import LoraCheckpoint
+from ... import lora_library, vram
+from ...config import Settings
+from ...lora_library import LoraCheckpoint
 
 logger = logging.getLogger(__name__)
 

@@ -5,8 +5,8 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 from test_importer import wait_job, write_list
 
-from voxcpm_studio import fillers
 from voxcpm_studio.api import create_app
+from voxcpm_studio.prep import fillers
 
 
 def test_tidy_shortens_long_runs_and_keeps_fillers_distinct():

@@ -13,10 +13,10 @@ from safetensors.torch import save_file
 from torch import nn
 from voxcpm.modules.layers.lora import apply_lora_to_named_linear_modules
 
-from voxcpm_studio.aligner import Alignment, AlignService, Word
-from voxcpm_studio.asr import AsrService
 from voxcpm_studio.config import Settings
-from voxcpm_studio.inference import InferenceService
+from voxcpm_studio.engines.voxcpm.inference import InferenceService
+from voxcpm_studio.prep.aligner import Alignment, AlignService, Word
+from voxcpm_studio.prep.asr import AsrService
 from voxcpm_studio.training import TrainingManager
 
 FAKE_WORKER = Path(__file__).with_name("fake_train_worker.py")
@@ -239,7 +239,7 @@ class FakeSingingModel:
 @pytest.fixture(autouse=True)
 def fake_singing_detector(monkeypatch):
     """No test downloads or runs the real tagger."""
-    from voxcpm_studio import singing
+    from voxcpm_studio.prep import singing
 
     def extractor(wavs, sampling_rate, return_tensors):
         n = max(len(w) for w in wavs)

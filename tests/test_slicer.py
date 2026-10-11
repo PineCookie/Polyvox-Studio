@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from voxcpm_studio import importer, slicer
-from voxcpm_studio.slicer import SliceOptions
+from voxcpm_studio.prep import importer, slicer
+from voxcpm_studio.prep.slicer import SliceOptions
 
 OPTS = SliceOptions(min_seconds=2.0, max_seconds=10.0, target_seconds=6.0, max_inner_gap=1.0, pad_seconds=0.1)
 
@@ -133,7 +133,7 @@ def loud_runs(wav, rate=RATE):
 def fake_guide(texts_by_words: dict[int, str]):
     """ASR that "hears" the text listed for a chunk's number of bursts; an
     aligner that puts word k on burst k."""
-    from voxcpm_studio.aligner import Alignment, Word, split_words
+    from voxcpm_studio.prep.aligner import Alignment, Word, split_words
 
     calls = {"transcribe": 0, "align": 0}
 
@@ -153,7 +153,7 @@ def fake_guide(texts_by_words: dict[int, str]):
 
 
 def test_word_spans_keep_offsets_into_the_text():
-    from voxcpm_studio.aligner import word_spans
+    from voxcpm_studio.prep.aligner import word_spans
 
     text = "你好，world！再见。"
     assert [text[s:e] for s, e in word_spans(text)] == ["你", "好", "world", "再", "见"]
@@ -170,7 +170,7 @@ def test_word_plan_cuts_at_sentence_ends_even_without_a_longer_pause():
 
 
 def test_word_clips_survive_words_placed_past_the_audio():
-    from voxcpm_studio.aligner import Alignment, Word
+    from voxcpm_studio.prep.aligner import Alignment, Word
 
     wav = bursts([(0.5, 0.9), (1.1, 1.5), (1.7, 2.1), (2.3, 2.7)], 4.0, 16000)
     # The aligner put the second sentence (text ASR heard) after the chunk's end.

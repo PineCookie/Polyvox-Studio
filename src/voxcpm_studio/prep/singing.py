@@ -16,8 +16,8 @@ from collections.abc import Callable
 
 import numpy as np
 
-from . import timing, vram
-from .config import Settings
+from .. import timing, vram
+from ..config import Settings
 
 logger = logging.getLogger(__name__)
 

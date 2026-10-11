@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from .manifests import read_manifest, row_key
+from ..data.manifests import read_manifest, row_key
 
 TARGET_LUFS = -20.0
 PEAK_CEILING_DB = -1.0  # dBFS, sample peak after normalizing

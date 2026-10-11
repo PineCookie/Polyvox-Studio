@@ -28,7 +28,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from . import audio_io, timing
+from .. import timing
+from ..data import audio_io
 
 VAD_RATE = 16_000
 VAD_MIN_SILENCE_S = 0.1

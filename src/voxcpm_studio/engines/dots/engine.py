@@ -3,7 +3,7 @@
 2B continuous autoregressive TTS: a Qwen2.5 1.5B language model over 48 kHz
 audio-VAE latents and a diffusion head; it hears and writes 48 kHz audio, so a
 LoRA learns a voice's whole band. Clones from a reference clip, with or without
-its transcript. LoRAs: dots_lora.py; training: dots_worker.py.
+its transcript. LoRAs: lora.py; training: worker.py.
 """
 
 from __future__ import annotations
@@ -18,13 +18,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .. import lora_library
-from ..config import Settings
-from . import dots_lora
-from .base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
+from ... import lora_library
+from ...config import Settings
+from ..base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
+from . import lora as dots_lora
 
 if TYPE_CHECKING:
-    from ..training import TrainParams
+    from ...training import TrainParams
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def load_runtime(model: str, optimize: bool):
     step (~4x faster here: 0.19 vs 0.8 s per second of audio). Its warm-up (the
     compilation, minutes with a cold Inductor cache) is left to the caller, which
     must snapshot the model before it (dots_lora.Merger)."""
-    from ..vendor.dots_tts.runtime import DotsTtsRuntime
+    from ...vendor.dots_tts.runtime import DotsTtsRuntime
 
     dots_lora.quiet_logging()
     return DotsTtsRuntime.from_pretrained(model, precision="bfloat16", optimize=optimize, warmup_on_optimize=False)
@@ -77,7 +77,7 @@ class DotsEngine(Engine):
         Param("normalize", "bool", False),  # spell out numbers, dates, ... first
     )
     model_setting = "dots_model"
-    worker_module = "voxcpm_studio.engines.dots_worker"
+    worker_module = "voxcpm_studio.engines.dots.worker"
 
     def __init__(self, settings: Settings, loader: RuntimeLoader = load_runtime):
         self.settings = settings
@@ -118,7 +118,7 @@ class DotsEngine(Engine):
         return {**p.__dict__, "elapsed": round(time.time() - p.started, 1) if p.started else 0.0}
 
     def synthesize(self, req: SynthesisRequest) -> SynthesisResult:
-        from ..vendor.dots_tts.utils import text as dots_text
+        from ...vendor.dots_tts.utils import text as dots_text
 
         text = req.text.strip()
         if not text:

@@ -6,9 +6,10 @@ from safetensors.torch import save_file
 from torch import nn
 
 from voxcpm_studio import lora_library, training
-from voxcpm_studio.engines import SynthesisRequest, dots_lora
-from voxcpm_studio.engines.dots import DotsEngine
-from voxcpm_studio.engines.dots_worker import cache_key, cached, format_metrics, make_optimizer, rates
+from voxcpm_studio.engines import SynthesisRequest
+from voxcpm_studio.engines.dots import lora as dots_lora
+from voxcpm_studio.engines.dots.engine import DotsEngine
+from voxcpm_studio.engines.dots.worker import cache_key, cached, format_metrics, make_optimizer, rates
 
 from conftest import make_lora
 

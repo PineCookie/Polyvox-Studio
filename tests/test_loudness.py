@@ -7,8 +7,8 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 from test_importer import wait_job, write_list
 
-from voxcpm_studio import importer, loudness
 from voxcpm_studio.api import create_app
+from voxcpm_studio.prep import importer, loudness
 
 RATE = 44100
 

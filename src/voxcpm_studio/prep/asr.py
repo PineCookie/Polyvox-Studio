@@ -18,8 +18,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import timing, vram
-from .config import Settings
+from .. import timing, vram
+from ..config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ def load_qwen3_asr(model: str, device: str):
 
 def load_audio(path: Path) -> np.ndarray:
     """Mono float32 at 16 kHz, from any format audio_io reads (no system FFmpeg needed)."""
-    from . import audio_io
+    from ..data import audio_io
 
     with timing.stage("decoding"):
         audio, rate = audio_io.read(path)

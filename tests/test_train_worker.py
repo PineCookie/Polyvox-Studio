@@ -10,7 +10,7 @@ from voxcpm.model import voxcpm2 as v2
 from voxcpm.training import TrainingTracker
 from voxcpm.training import config as config_module
 
-from voxcpm_studio import train_worker
+from voxcpm_studio.engines.voxcpm import worker as train_worker
 
 
 @pytest.fixture
@@ -238,7 +238,7 @@ def test_stop_file_runs_the_sigint_handler(tmp_path):
     script.write_text(
         "import signal, sys, threading, time\n"
         "from pathlib import Path\n"
-        "from voxcpm_studio import train_worker\n"
+        "from voxcpm_studio.engines.voxcpm import worker as train_worker\n"
         "train_worker.POLL_S = 0.02\n"
         "signal.signal(signal.SIGINT, lambda *a: (print('saved', flush=True), sys.exit(0)))\n"
         f"threading.Thread(target=train_worker.watch_for_stop, args=(Path(r'{tmp_path / 'stop'}'), None), daemon=True).start()\n"

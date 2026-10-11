@@ -8,10 +8,11 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from voxcpm_studio import importer, manifests
 from voxcpm_studio.api import create_app
-from voxcpm_studio.asr import AsrService
+from voxcpm_studio.data import manifests
 from voxcpm_studio.jobs import JobCancelled
+from voxcpm_studio.prep import importer
+from voxcpm_studio.prep.asr import AsrService
 from voxcpm_studio.training import TrainParams
 
 from conftest import make_dataset, wait_for

@@ -6,7 +6,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from voxcpm_studio.api import create_app, free_gpu_for_training
-from voxcpm_studio.inference import SynthesisRequest
+from voxcpm_studio.engines.voxcpm.inference import SynthesisRequest
 
 from conftest import make_dataset, make_lora, wait_idle
 

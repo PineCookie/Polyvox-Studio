@@ -18,22 +18,27 @@ lora/              training runs and LoRA checkpoints (git-ignored)
 src/voxcpm_studio/
   config.py        settings from VOXCPM_STUDIO_* env vars
   models.py        the models used, and downloading them (Hugging Face / mirror)
-  engines/         TTS engines behind one interface (base.py): synthesis settings,
-                   capabilities, training config; voxcpm.py wraps the modules below;
-                   dots.py (dots.tts, 48 kHz) with its LoRA (dots_lora.py) and
-                   training worker (dots_worker.py)
+  vram.py          settings per GPU size (batches, which models share the GPU)
+  engines/         TTS engines behind one interface (base.py: synthesis settings,
+                   capabilities, training config; __init__.py: the registry)
+    voxcpm/        engine.py; inference.py (model cache, LoRA hot-swap, synthesis);
+                   worker.py (training subprocess around the vendored script)
+    dots/          engine.py (dots.tts, 48 kHz); lora.py (LoRA layers, merging);
+                   worker.py (training subprocess)
+  data/            manifests.py (training manifests: discovery, path fixes,
+                   inspection); audio_io.py (audio without a system FFmpeg)
+  prep/            dataset preparation:
+    importer.py    import from GPT-SoVITS lists, CSV, JSONL, folders
+    slicer.py      long recordings -> clips at pauses (Silero VAD)
+    asr.py         speech recognition (Qwen3-ASR, transformers-native)
+    aligner.py     forced alignment (Qwen3-ForcedAligner or a wav2vec2 CTC model)
+    checks.py      per-clip checks from alignment: mismatch, cut edges, silence
+    separation.py  optional vocal separation / de-reverb / denoise (RoFormer)
+    singing.py, fillers.py, loudness.py, exporter.py
   lora_library.py  checkpoint discovery and metadata (each records its engine)
-  inference.py     VoxCPM model cache, LoRA hot-swap, synthesis
-  manifests.py     training manifests: discovery, path fixes, inspection
-  importer.py      dataset import from GPT-SoVITS lists, CSV, JSONL, folders
-  slicer.py        long recordings -> clips at pauses (Silero VAD)
-  asr.py           speech recognition (Qwen3-ASR, transformers-native)
-  aligner.py       forced alignment (Qwen3-ForcedAligner or a wav2vec2 CTC model)
-  checks.py        per-clip checks from alignment: mismatch, cut edges, silence
-  separation.py    optional vocal separation / de-reverb / denoise (RoFormer)
   jobs.py          in-process background jobs with progress and cancel
   training.py      training runs: config, job control, metrics
-  train_worker.py  VoxCPM's training subprocess around the vendored script
+  speaker.py       speaker similarity of samples (CAM++)
   sharing.py       export / import of shareable LoRA packages
   vendor/          train_voxcpm_finetune.py, unmodified from the pinned commit;
                    roformer/ from Music-Source-Separation-Training (MIT);

@@ -22,8 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import audio_io, manifests
 from .config import Settings
+from .data import audio_io, manifests
 
 logger = logging.getLogger(__name__)
 

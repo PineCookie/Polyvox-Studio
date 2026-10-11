@@ -16,8 +16,8 @@ __all__ = ["DEFAULT", "Capabilities", "Engine", "Param", "SynthesisRequest", "Sy
 
 
 def classes() -> dict[str, type[Engine]]:
-    from .dots import DotsEngine
-    from .voxcpm import VoxCPMEngine
+    from .dots.engine import DotsEngine
+    from .voxcpm.engine import VoxCPMEngine
 
     return {VoxCPMEngine.id: VoxCPMEngine, DotsEngine.id: DotsEngine}
 

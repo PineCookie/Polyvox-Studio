@@ -74,7 +74,7 @@ def test_status_reports_the_profile_and_services_use_it(monkeypatch, service, tr
 
 
 def test_dots_checkpoints_batches_too_large_for_the_card(monkeypatch):
-    from voxcpm_studio.engines.dots_worker import use_checkpointing
+    from voxcpm_studio.engines.dots.worker import use_checkpointing
 
     monkeypatch.delenv("VOXCPM_STUDIO_TRAIN_CHECKPOINT", raising=False)
     big, mid, small = vram.profile_for(16), vram.profile_for(12), vram.profile_for(8)

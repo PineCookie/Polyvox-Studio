@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import timing, vram
+from .. import timing, vram
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class RoformerModel:
     def __init__(self, ckpt: Path, config_path: Path, device: str, compile: bool = True, batch: int = BATCH_SIZE):
         import torch
 
-        from .vendor.roformer import BSRoformer, MelBandRoformer
+        from ..vendor.roformer import BSRoformer, MelBandRoformer
 
         config = load_config(config_path)
         params = dict(config["model"])

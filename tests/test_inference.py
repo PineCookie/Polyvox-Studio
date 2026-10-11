@@ -5,8 +5,8 @@ import torch
 from safetensors.torch import load_file
 from voxcpm.modules.layers.lora import LoRALinear
 
-from voxcpm_studio import inference
-from voxcpm_studio.inference import SynthesisRequest, compose_text
+from voxcpm_studio.engines.voxcpm import inference
+from voxcpm_studio.engines.voxcpm.inference import SynthesisRequest, compose_text
 
 from conftest import LM_LAYERS, make_lora
 

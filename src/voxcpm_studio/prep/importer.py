@@ -32,9 +32,10 @@ from pathlib import Path, PureWindowsPath
 
 import soundfile as sf
 
-from . import checks, fillers, loudness, slicer, timing
+from .. import timing
+from ..data.manifests import ASR_FILE, legacy_root, write_manifest
+from . import checks, fillers, loudness, slicer
 from .checks import Checker, ClipCheck
-from .manifests import ASR_FILE, legacy_root, write_manifest
 from .slicer import SliceOptions, Vad
 
 AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a"}

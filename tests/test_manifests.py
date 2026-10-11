@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from voxcpm_studio import manifests
+from voxcpm_studio.data import manifests
 
 from conftest import make_dataset
 

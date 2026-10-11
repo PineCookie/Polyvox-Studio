@@ -1,6 +1,6 @@
 """Training subprocess: runs the vendored VoxCPM training script unmodified.
 
-``python -m voxcpm_studio.train_worker <train_config.yaml> --samples-dir <dir>
+``python -m voxcpm_studio.engines.voxcpm.worker <train_config.yaml> --samples-dir <dir>
 --stop-file <path> [--parent-pid <pid>]``
 
 On top of the script this adds:
@@ -73,7 +73,7 @@ def save_samples_to(samples_dir: Path, val_manifest: Path | None = None) -> None
     from voxcpm.model import voxcpm as v1
     from voxcpm.model import voxcpm2 as v2
 
-    from voxcpm_studio import audio_io, manifests
+    from voxcpm_studio.data import audio_io, manifests
 
     raw: list[np.ndarray] = []  # the model's last generated audio
     for cls in (v2.VoxCPM2Model, v1.VoxCPMModel):
@@ -424,7 +424,8 @@ def main() -> None:
     save_samples_to(args.samples_dir, val_manifest_from_config(args.config_path))
     frozen_weights_in_bf16()
     cache_audio_latents()
-    from voxcpm_studio import audio_io, vram
+    from voxcpm_studio import vram
+    from voxcpm_studio.data import audio_io
 
     audio_io.patch_torchaudio()
     vram.apply_limit("cuda")  # VOXCPM_STUDIO_VRAM_GB, as in the server

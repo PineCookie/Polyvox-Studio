@@ -37,7 +37,7 @@ class Profile:
     train_checkpointing: bool = False  # recompute layer activations in the backward pass (less memory, slower)
     note: str = ""  # shown to the user: what doesn't fit
     # dots.tts training: the micro-batch to use, and the largest one that trains
-    # without gradient checkpointing (larger ones checkpoint: dots_worker)
+    # without gradient checkpointing (larger ones checkpoint: engines.dots.worker)
     dots_train_batch: int = 1
     dots_plain_batch: int = 0
 

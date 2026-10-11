@@ -21,7 +21,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .engines import DEFAULT as DEFAULT_ENGINE
-from .engines import dots_lora
+from .engines.dots import lora as dots_lora
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
 
 README_FILE = "README.md"

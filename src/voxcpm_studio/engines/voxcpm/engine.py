@@ -1,4 +1,4 @@
-"""VoxCPM (2 and 1.5) as an engine: inference.py's service and train_worker's
+"""VoxCPM (2 and 1.5) as an engine: inference.py's service and worker.py's
 hooks around the vendored training script."""
 
 from __future__ import annotations
@@ -7,14 +7,14 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .. import manifests
-from ..config import Settings
-from ..inference import InferenceService
-from ..inference import SynthesisRequest as VoxRequest
-from .base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
+from ...config import Settings
+from ...data import manifests
+from ..base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
+from .inference import InferenceService
+from .inference import SynthesisRequest as VoxRequest
 
 if TYPE_CHECKING:
-    from ..training import TrainParams
+    from ...training import TrainParams
 
 LORA_TARGETS = ["q_proj", "v_proj", "k_proj", "o_proj"]
 
@@ -51,7 +51,7 @@ def build_config(
         "valid_interval": params.valid_interval,
         "save_interval": params.save_interval,
         "learning_rate": params.learning_rate,
-        # Read (and removed) by train_worker.
+        # Read (and removed) by worker.py.
         "optimizer": params.optimizer,
         "prodigy_steps": params.prodigy_steps,
         "weight_decay": params.weight_decay,
@@ -94,7 +94,7 @@ class VoxCPMEngine(Engine):
         Param("denoise", "bool", True),
     )
     model_setting = "model"
-    worker_module = "voxcpm_studio.train_worker"
+    worker_module = "voxcpm_studio.engines.voxcpm.worker"
 
     def __init__(self, settings: Settings, service: InferenceService | None = None):
         self.settings = settings

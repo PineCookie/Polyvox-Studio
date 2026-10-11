@@ -1,9 +1,9 @@
 """Training subprocess for dots.tts LoRAs.
 
-``python -m voxcpm_studio.engines.dots_worker <train_config.yaml> --samples-dir
+``python -m voxcpm_studio.engines.dots.worker <train_config.yaml> --samples-dir
 <dir> --stop-file <path> [--parent-pid <pid>]``
 
-Same contract as train_worker (VoxCPM), so runs look alike in the studio:
+Same contract as VoxCPM's worker, so runs look alike in the studio:
 ``[train]`` / ``[val]`` lines in checkpoints/train.log (loss/diff = the
 diffusion head's flow-matching loss, loss/stop = the end-of-speech loss),
 checkpoints/step_NNNNNNN/ and latest/ (training_state.json), samples/ with
@@ -12,7 +12,7 @@ exiting) saves a checkpoint and ends the run.
 
 Training follows the official script (scripts/train_dots_tts.py: the "basic"
 text -> speech template, losses averaged over the accumulated batch, gradient
-clipping) with LoRA (dots_lora) instead of full fine-tuning: frozen weights in
+clipping) with LoRA (lora.py) instead of full fine-tuning: frozen weights in
 bfloat16 under bfloat16 autocast, the audio VAE and speaker encoder in float32.
 Steps count optimizer updates, 1..num_iters.
 
@@ -52,7 +52,7 @@ def log(message: str) -> None:
 
 
 def watch_for_stop(stop_file: Path, parent_pid: int | None, stop: threading.Event) -> None:
-    from voxcpm_studio.train_worker import process_alive
+    from voxcpm_studio.engines.voxcpm.worker import process_alive
 
     while not stop_file.exists():
         if parent_pid is not None and not process_alive(parent_pid):
@@ -64,7 +64,7 @@ def watch_for_stop(stop_file: Path, parent_pid: int | None, stop: threading.Even
 
 
 def make_optimizer(name: str, groups: list[dict], config: dict, num_iters: int):
-    """(optimizer, scheduler or None) as train_worker.use_optimizer chooses them."""
+    """(optimizer, scheduler or None) as engines.voxcpm.worker.use_optimizer chooses them."""
     import torch
 
     lr, wd = float(config["learning_rate"]), float(config["weight_decay"])
@@ -100,7 +100,7 @@ def make_optimizer(name: str, groups: list[dict], config: dict, num_iters: int):
 
 
 def rates(opt) -> dict[str, float]:
-    """lr = d x lr for Prodigy (per group lr_<net>, elr_<net> for Schedule-Free), as train_worker logs."""
+    """lr = d x lr for Prodigy (per group lr_<net>, elr_<net> for Schedule-Free), as VoxCPM's worker logs."""
     out: dict[str, float] = {}
     for i, g in enumerate(opt.param_groups):
         d = float(g.get("d", 1.0))
@@ -321,8 +321,9 @@ def main() -> None:
     import torch
     from safetensors.torch import save_file
 
-    from voxcpm_studio import audio_io, manifests, vram
-    from voxcpm_studio.engines import dots_lora
+    from voxcpm_studio import vram
+    from voxcpm_studio.data import audio_io, manifests
+    from voxcpm_studio.engines.dots import lora as dots_lora
     from voxcpm_studio.vendor.dots_tts.data.pipelines.tts_pipeline import BasicTtsPipeline
     from voxcpm_studio.vendor.dots_tts.models.dots_tts.model import DotsTtsModel
     from voxcpm_studio.vendor.dots_tts.runtime import DotsTtsRuntime

@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from . import audio_io, manifests
+from ..data import audio_io, manifests
 from .asr import language_of
 
 PROGRESS_EVERY = 10

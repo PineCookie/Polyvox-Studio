@@ -7,10 +7,10 @@ layout ``lora_ft_webui`` uses, so its runs show up and can be resumed):
     manifests/          the run's own copies of its manifests, absolute paths
     checkpoints/        step_NNNNNNN/, latest/, train.log (written by the script)
     logs/               TensorBoard events
-    samples/            validation audio (written by train_worker)
+    samples/            validation audio (written by the engine's worker)
     console.log         the training process's output
 
-One job runs at a time, as a ``train_worker`` subprocess.
+One job runs at a time, as the engine's worker subprocess (engines/<engine>/worker.py).
 """
 
 from __future__ import annotations
@@ -34,8 +34,9 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from . import engines, manifests
+from . import engines
 from .config import Settings
+from .data import manifests
 from .engines import Engine
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ class TrainParams(BaseModel):
     learning_rate: float = Field(1e-4, gt=0, le=1)
     # adamw: the script's own (AdamW, cosine with warmup). prodigy / prodigy_sf find
     # their own step size; learning_rate is then a multiplier, 1.0 as their authors
-    # recommend (see train_worker.use_optimizer).
+    # recommend (see engines.voxcpm.worker.use_optimizer).
     optimizer: Literal["adamw", "prodigy", "prodigy_sf"] = "adamw"
     # prodigy_sf: keep its step size fixed after this many steps (0 = adapt throughout).
     prodigy_steps: int = Field(0, ge=0)
@@ -546,7 +547,7 @@ class TrainingManager:
         console = run_dir / CONSOLE_FILE
         with console.open("a", encoding="utf-8") as f:
             f.write(f"[studio] {time.strftime('%Y-%m-%d %H:%M:%S')} starting: {' '.join(cmd)}\n")
-        # No stdin pipe: see train_worker's docstring.
+        # No stdin pipe: see engines.voxcpm.worker's docstring.
         process = subprocess.Popen(
             cmd, cwd=run_dir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )

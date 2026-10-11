@@ -22,35 +22,22 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import (
-    audio_io,
-    checks,
-    engines,
-    exporter,
-    fillers,
-    importer,
-    lora_library,
-    loudness,
-    manifests,
-    models,
-    sharing,
-    slicer,
-    timing,
-    vram,
-)
-from . import separation as separation_mod
-from .aligner import AlignService
-from .asr import SAMPLE_RATE as ASR_RATE
-from .asr import AsrService, LanguageLock, language_of, load_audio
+from . import engines, lora_library, models, sharing, timing, vram
 from .config import Settings
+from .data import audio_io, manifests
 from .engines import Engine
-from .engines.voxcpm import VoxCPMEngine
-from .inference import InferenceService
+from .engines.voxcpm.engine import VoxCPMEngine
+from .engines.voxcpm.inference import InferenceService
 from .jobs import Job, JobRunner
-from .separation import SeparationService
-from .separation import load_models as separation_models
-from .singing import SingingService
-from .slicer import SliceOptions
+from .prep import checks, exporter, fillers, importer, loudness, slicer
+from .prep import separation as separation_mod
+from .prep.aligner import AlignService
+from .prep.asr import SAMPLE_RATE as ASR_RATE
+from .prep.asr import AsrService, LanguageLock, language_of, load_audio
+from .prep.separation import SeparationService
+from .prep.separation import load_models as separation_models
+from .prep.singing import SingingService
+from .prep.slicer import SliceOptions
 from .speaker import SpeakerService
 from .training import RunDetail, RunSummary, TrainingConflict, TrainingManager, TrainParams
 

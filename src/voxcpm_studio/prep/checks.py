@@ -38,7 +38,9 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from . import slicer, timing
+from .. import timing
+from ..data.manifests import ALIGN_FILE, ASR_FILE, read_manifest, read_sidecar, row_key, text_key
+from . import slicer
 from .aligner import (
     SAMPLE_RATE,
     Alignment,
@@ -50,7 +52,6 @@ from .aligner import (
     words_score,
 )
 from .fillers import is_filler
-from .manifests import ALIGN_FILE, ASR_FILE, read_manifest, read_sidecar, row_key, text_key
 from .singing import is_sung
 from .slicer import Vad
 

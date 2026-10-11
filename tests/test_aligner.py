@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import torch
 
-from voxcpm_studio import aligner
-from voxcpm_studio.aligner import AlignService
+from voxcpm_studio.prep import aligner
+from voxcpm_studio.prep.aligner import AlignService
 
 
 def tone(spans, seconds, rate=16000):

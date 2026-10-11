@@ -10,10 +10,11 @@ from fastapi.testclient import TestClient
 from test_aligner import tone
 from test_importer import wait_job, write_list
 
-from voxcpm_studio import checks, importer, manifests, slicer
-from voxcpm_studio.aligner import Alignment, Word
 from voxcpm_studio.api import create_app
-from voxcpm_studio.asr import load_audio
+from voxcpm_studio.data import manifests
+from voxcpm_studio.prep import checks, importer, slicer
+from voxcpm_studio.prep.aligner import Alignment, Word
+from voxcpm_studio.prep.asr import load_audio
 
 
 def aligned(start, end, score=0.9):
