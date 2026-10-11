@@ -145,7 +145,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <h1>
-          VoxCPM <span>Studio</span>
+          Polyvox <span>Studio</span>
         </h1>
         <nav className="tabs" aria-label={t.sections}>
           {TABS.map((name) => (
