@@ -1,6 +1,7 @@
 """LoRA training runs: configuration, job control and progress.
 
-A run is a directory ``<lora_dir>/<name>/`` holding ``train_config.yaml`` (the
+A run is a directory ``<lora_dir>/<engine>/<name>/`` (runs from before engine
+folders: ``<lora_dir>/<name>/`` until lora_library.migrate moves them) holding ``train_config.yaml`` (the
 layout ``lora_ft_webui`` uses, so its runs show up and can be resumed):
 
     train_config.yaml   arguments for the training script
@@ -34,7 +35,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from . import engines
+from . import engines, lora_library
 from .config import Settings
 from .data import manifests
 from .engines import Engine
@@ -105,6 +106,8 @@ class TrainParams(BaseModel):
 class RunSummary(BaseModel):
     name: str
     engine: str
+    # The run's folder from the LoRA folder ("<engine>/<name>"): its checkpoints' ids start with it.
+    path: str
     # running | stopping | complete | incomplete | failed
     status: str
     # Latest logged step while running, else the last saved step.
@@ -330,8 +333,8 @@ class TrainingManager:
 
         with self._lock:
             self._ensure_idle()
-            run_dir = self.lora_dir / params.name
-            if run_dir.exists():
+            run_dir = lora_library.engine_dir(self.lora_dir, engine.id) / params.name
+            if run_dir.exists() or self._find_run(params.name) is not None:
                 raise TrainingConflict(f"A run named '{params.name}' already exists.")
 
             # Clips dropped in review stay out of the run.
@@ -417,13 +420,8 @@ class TrainingManager:
             self._kill(job)
 
     def list_runs(self) -> list[RunSummary]:
-        lora_dir = self.lora_dir
-        if not lora_dir.is_dir():
-            return []
         runs = []
-        for run_dir in lora_dir.iterdir():
-            if not (run_dir / CONFIG_FILE).is_file():
-                continue
+        for run_dir in self._run_dirs():
             try:
                 runs.append(self._summary(run_dir, read_config(run_dir)))
             except (OSError, ValueError, yaml.YAMLError) as e:
@@ -495,9 +493,31 @@ class TrainingManager:
         if self._job is not None:
             raise TrainingConflict(f"Run '{self._job.run}' is already training.")
 
+    def _engine_folders(self) -> set[str]:
+        return lora_library.engine_folders() | set(self.engines)
+
+    def _places(self) -> list[Path]:
+        """Where runs are: the engine folders, then the LoRA folder itself (runs from before them)."""
+        return [*(self.lora_dir / f for f in sorted(self._engine_folders())), self.lora_dir]
+
+    def _run_dirs(self) -> list[Path]:
+        folders = self._engine_folders()
+        return [
+            d
+            for place in self._places()
+            if place.is_dir()
+            for d in place.iterdir()
+            if (d / CONFIG_FILE).is_file() and not (place == self.lora_dir and d.name in folders)
+        ]
+
+    def _find_run(self, name: str) -> Path | None:
+        if not re.fullmatch(RUN_NAME, name):
+            return None
+        return next((d for d in self._run_dirs() if d.name == name), None)
+
     def _run_dir(self, name: str) -> Path:
-        run_dir = self.lora_dir / name
-        if not re.fullmatch(RUN_NAME, name) or not (run_dir / CONFIG_FILE).is_file():
+        run_dir = self._find_run(name)
+        if run_dir is None:
             raise KeyError(f"Unknown training run: {name}")
         return run_dir
 
@@ -526,6 +546,7 @@ class TrainingManager:
         return RunSummary(
             name=name,
             engine=engine_of(config),
+            path=run_dir.relative_to(self.lora_dir).as_posix(),
             status=status,
             step=step,
             saved_step=saved,

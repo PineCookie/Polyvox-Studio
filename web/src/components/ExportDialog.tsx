@@ -18,9 +18,9 @@ const HUB_ID_PATTERN = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/
 // The usual base model per engine (sharing.ENGINE_BASE_MODELS).
 const BASE_MODELS: Record<string, string> = { voxcpm: 'openbmb/VoxCPM2', dots_tts: 'rednote-hilab/dots.tts-soar' }
 
-// "speaker_r64/checkpoints/step_0004000" -> "speaker_r64_step4000"; the run name for its final weights.
+// "voxcpm/speaker_r64/checkpoints/step_0004000" -> "speaker_r64_step4000"; the run name for its final weights.
 function defaultName(lora: Lora, final: boolean): string {
-  const run = lora.id.split('/')[0]
+  const run = lora.voice
   return !final && lora.step !== null ? `${run}_step${lora.step}` : run
 }
 
@@ -75,7 +75,7 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
         <header className="panel-head">
           <h2>{t.exportTitle}</h2>
           <span className="muted hint">
-            {lora.id.split('/')[0]}
+            {lora.voice}
             {lora.step !== null && t.stepSuffix(formatStep(lora.step))}
           </span>
         </header>

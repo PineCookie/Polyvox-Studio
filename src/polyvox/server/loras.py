@@ -32,6 +32,8 @@ def router(s: Studio) -> APIRouter:
             LoraOut(
                 id=c.id,
                 engine=c.engine,
+                voice_path=c.voice_path,
+                voice=c.voice,
                 base_model=c.base_model,
                 base_model_id=sharing.hub_id(c.base_model),
                 step=sharing.checkpoint_step(c),
@@ -85,8 +87,8 @@ def router(s: Studio) -> APIRouter:
         else:
             reference, origin = None, ""  # added later in the Voices panel
         try:
-            id = voices.import_webui(
-                settings.lora_dir,
+            name = voices.import_webui(
+                lora_library.engine_dir(settings.lora_dir, voices.ENGINE),
                 body.name.strip(),
                 importer.clean_path(body.sovits),
                 importer.clean_path(body.gpt),
@@ -97,7 +99,7 @@ def router(s: Studio) -> APIRouter:
             raise HTTPException(409, str(e)) from e
         except (ValueError, OSError) as e:
             raise HTTPException(422, str(e)) from e
-        return {"id": id, "engine": voices.ENGINE}
+        return {"id": f"{voices.ENGINE}/{name}", "engine": voices.ENGINE}
 
     @api.get("/api/loras/reference")
     def voice_reference(id: str) -> FileResponse:

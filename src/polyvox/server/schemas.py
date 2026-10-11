@@ -23,6 +23,9 @@ class LoraConfigOut(BaseModel):
 class LoraOut(BaseModel):
     id: str
     engine: str
+    # The run / voice it belongs to: its folder's id (e.g. "gpt_sovits/speaker_a") and name.
+    voice_path: str
+    voice: str
     base_model: str | None
     # Hugging Face id guessed from base_model; the default when exporting.
     base_model_id: str | None

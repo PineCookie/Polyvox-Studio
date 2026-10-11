@@ -30,24 +30,22 @@ interface Checkpoint {
 }
 
 interface Voice {
+  key: string // its folder (Lora.voice_path): names may repeat across engines
   name: string
   engine: string
   checkpoints: Checkpoint[] // best (highest step) first
   baseModelId: string | null
 }
 
-// Groups checkpoints by run ("speaker_r64/checkpoints/step_0005000" -> "speaker_r64") and drops
+// Groups checkpoints by run / voice folder (Lora.voice_path) and drops
 // copies of the final weights: the script saves the last step twice (N-1 and N), and
 // "latest" duplicates whichever step it was copied from.
 function groupVoices(loras: Lora[], t: Messages): Voice[] {
-  const byName = new Map<string, Lora[]>()
-  for (const lora of loras) {
-    const name = lora.id.split('/')[0]
-    byName.set(name, [...(byName.get(name) ?? []), lora])
-  }
+  const byFolder = new Map<string, Lora[]>()
+  for (const lora of loras) byFolder.set(lora.voice_path, [...(byFolder.get(lora.voice_path) ?? []), lora])
 
-  return [...byName.entries()]
-    .map(([name, list]) => {
+  return [...byFolder.entries()]
+    .map(([key, list]) => {
       const stepDirs = list.filter((l) => /step_\d+$/.test(l.id))
       const steps = new Set(stepDirs.map((l) => l.step))
       const max = Math.max(-1, ...stepDirs.map((l) => l.step ?? -1))
@@ -63,7 +61,14 @@ function groupVoices(loras: Lora[], t: Messages): Voice[] {
         }))
         .sort((a, b) => (b.step ?? -1) - (a.step ?? -1))
       const best = checkpoints[0]?.lora
-      return { name, engine: best?.engine ?? DEFAULT_ENGINE, checkpoints, baseModelId: best?.base_model_id ?? null }
+      const name = list[0].voice
+      return {
+        key,
+        name,
+        engine: best?.engine ?? DEFAULT_ENGINE,
+        checkpoints,
+        baseModelId: best?.base_model_id ?? null,
+      }
     })
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
 }
@@ -116,7 +121,7 @@ export function VoicePanel({
 
   const engineName = (id: string) => engines.find((e) => e.id === id)?.name ?? id
   const current = loras.find((l) => l.id === selected.lora) ?? null
-  const currentVoice = current ? voices.find((v) => v.name === current.id.split('/')[0]) : null
+  const currentVoice = current ? voices.find((v) => v.key === current.voice_path) : null
   // A hidden duplicate (e.g. picked from the Train tab) still needs an option.
   const options =
     currentVoice && current && !currentVoice.checkpoints.some((c) => c.lora.id === current.id)
@@ -192,7 +197,7 @@ export function VoicePanel({
     const blocked = incompatible(voice) || unknownEngine(voice)
     return (
       <button
-        key={voice.name}
+        key={voice.key}
         type="button"
         role="radio"
         aria-checked={active}

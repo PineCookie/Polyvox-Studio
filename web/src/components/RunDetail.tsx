@@ -24,7 +24,8 @@ interface Props {
   onTryCheckpoint: (loraId: string) => void
 }
 
-const checkpointId = (run: string, step: number) => `${run}/checkpoints/step_${String(step).padStart(7, '0')}`
+// A run's checkpoint id, from the run's folder (RunSummary.path).
+const checkpointId = (runPath: string, step: number) => `${runPath}/checkpoints/step_${String(step).padStart(7, '0')}`
 
 // The losses a run's worker logs, in order (the first two charted up front);
 // before its first step, the ones its engine will log.
@@ -401,7 +402,7 @@ function Samples({
           )}
 
           {byStep.map(([step, files]) => {
-            const id = checkpointId(run.name, step)
+            const id = checkpointId(run.path, step)
             return (
               <div key={step} className="sample-row">
                 <span className="sample-step">

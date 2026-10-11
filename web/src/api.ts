@@ -12,8 +12,10 @@ export interface LoraConfig {
 }
 
 export interface Lora {
-  id: string
+  id: string // its path in the LoRA folder, e.g. "gpt_sovits/speaker_a/checkpoints/step_0000100"
   engine: string // the engine it was trained for (Engine.id)
+  voice_path: string // the run / voice folder it belongs to, e.g. "gpt_sovits/speaker_a"
+  voice: string // that folder's name
   base_model: string | null
   // Hugging Face id guessed from base_model (the export default).
   base_model_id: string | null
@@ -295,6 +297,7 @@ export type RunStatus = 'running' | 'stopping' | 'complete' | 'incomplete' | 'fa
 export interface RunSummary {
   name: string
   engine: string
+  path: string // its folder in the LoRA folder ("<engine>/<name>"): its checkpoints' ids start with it
   status: RunStatus
   step: number | null
   saved_step: number | null

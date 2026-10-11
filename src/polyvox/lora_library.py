@@ -1,10 +1,18 @@
 """Discovery and metadata for trained checkpoints: LoRAs (VoxCPM, dots.tts) and
-GPT-SoVITS voices (full weights; engines/gpt_sovits/voices.py), all in the LoRA folder."""
+GPT-SoVITS voices (full weights; engines/gpt_sovits/voices.py), all in the LoRA folder.
+
+The LoRA folder has one folder per engine (``voxcpm/``, ``dots_tts/``,
+``gpt_sovits/``) holding its runs and voices; a checkpoint's id is its path
+from the LoRA folder, e.g. ``gpt_sovits/speaker_a/checkpoints/step_0000100``.
+Runs and voices from before that sat directly in the LoRA folder: ``migrate``
+moves them into their engine's folder (still found where they are until then).
+"""
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -33,6 +41,17 @@ class LoraCheckpoint:
     # The saved lora_config as written, for any engine (rank "r", "alpha", ...).
     raw_config: dict | None = None
     version: str | None = None  # model version, when recorded (GPT-SoVITS: v2Pro / v2ProPlus)
+
+    @property
+    def voice_path(self) -> str:
+        """The id of the run / voice folder holding it, e.g. ``gpt_sovits/speaker_a``."""
+        parts = self.id.split("/")
+        return "/".join(parts[: 2 if len(parts) > 1 and parts[0] in engine_folders() else 1])
+
+    @property
+    def voice(self) -> str:
+        """The run / voice name (its folder's name)."""
+        return self.voice_path.split("/")[-1]
 
     @property
     def weights_mtime(self) -> float:
@@ -137,3 +156,95 @@ def resolve(lora_dir: Path, lora_id: str) -> LoraCheckpoint:
     if not ckpt_dir.is_relative_to(lora_dir) or not any((ckpt_dir / m).is_file() for m in MARKERS):
         raise KeyError(f"Unknown LoRA checkpoint: {lora_id}")
     return _load(lora_dir, ckpt_dir)
+
+
+def engine_folders() -> set[str]:
+    """The names of the LoRA folder's engine folders (the engine ids)."""
+    from . import engines
+
+    return set(engines.classes())
+
+
+def engine_dir(lora_dir: Path, engine: str) -> Path:
+    """The folder of an engine's runs and voices."""
+    return lora_dir / engine
+
+
+def folder_engine(folder: Path) -> str | None:
+    """The engine of a run or voice folder (its train_config.yaml, else its
+    checkpoints' lora_config.json), or None when it holds neither."""
+    import yaml
+
+    config = folder / "train_config.yaml"
+    if config.is_file():
+        try:
+            data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            return None
+        return str(data.get("engine") or DEFAULT_ENGINE) if isinstance(data, dict) else None
+    for ckpt in scan(folder):
+        return ckpt.engine
+    return None
+
+
+def migrate(lora_dir: Path) -> list[tuple[str, str]]:
+    """Move runs and voices lying directly in ``lora_dir`` into their engine's
+    folder; returns the (from, to) names moved. Paths into the folder that a
+    run's train_config records (absolute, or the webui's ``lora/<name>/...``)
+    follow it. A folder whose engine can't be told, or whose name is taken in
+    its engine folder, stays (and is logged)."""
+    lora_dir = lora_dir.resolve()
+    if not lora_dir.is_dir():
+        return []
+    folders, moved = engine_folders(), []
+    for item in sorted(lora_dir.iterdir()):
+        if not item.is_dir() or item.name.startswith(".") or item.name in folders:
+            continue
+        engine = folder_engine(item)
+        if engine is None:
+            logger.warning("Left %s in the LoRA folder: no run or checkpoint found in it", item.name)
+            continue
+        target = engine_dir(lora_dir, engine) / item.name
+        if target.exists():
+            logger.warning("Left %s in the LoRA folder: %s already exists", item.name, target)
+            continue
+        target.parent.mkdir(exist_ok=True)
+        item.rename(target)
+        _repoint_configs(target, item, lora_dir.name, engine)
+        moved.append((item.name, f"{engine}/{item.name}"))
+        logger.info("Moved %s into the LoRA folder's %s/", item.name, engine)
+    return moved
+
+
+def _repoint_configs(folder: Path, old: Path, lora_name: str, engine: str) -> None:
+    """In a moved run's configs, paths into its old folder point into the new one."""
+    import yaml
+
+    # The old folder as an absolute path, or as the webui wrote it (relative to its working directory).
+    old_forms = re.compile(
+        "^(" + "|".join(re.escape(form) for form in (str(old), f"{lora_name}\\{old.name}", f"{lora_name}/{old.name}"))
+        + r")(?=$|[\\/])"
+    )  # fmt: skip
+
+    def repoint(value):
+        if isinstance(value, dict):
+            return {k: repoint(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [repoint(v) for v in value]
+        if isinstance(value, str) and (m := old_forms.match(value)):
+            new = (
+                str(folder)
+                if m.group(1) == str(old)
+                else f"{lora_name}{value[len(lora_name)]}{engine}{value[len(lora_name)]}{old.name}"
+            )
+            return new + value[m.end() :]
+        return value  # fmt: skip
+
+    for name in ("train_config.yaml", "train_config.orig.yaml"):
+        path = folder / name
+        if not path.is_file():
+            continue
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        new = repoint(data)
+        if new != data:
+            path.write_text(yaml.safe_dump(new, sort_keys=False, allow_unicode=True), encoding="utf-8")

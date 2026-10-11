@@ -236,20 +236,20 @@ def test_voice_api_import_reference_and_list(settings, service, training, engine
         "/api/loras/import-gpt-sovits",
         json={"name": "voice_b", "sovits": f'"{sovits}"', "gpt": str(gpt), "dataset": "speaker_a/train.jsonl"},
     )
-    assert r.status_code == 200 and r.json() == {"id": "voice_b", "engine": "gpt_sovits"}
+    assert r.status_code == 200 and r.json() == {"id": "gpt_sovits/voice_b", "engine": "gpt_sovits"}
     (lora,) = client.get("/api/loras").json()
     assert (lora["reference_text"], lora["version"]) == ("很好。", "v2ProPlus")
-    assert client.get("/api/loras/reference", params={"id": "voice_b"}).status_code == 200
+    assert client.get("/api/loras/reference", params={"id": "gpt_sovits/voice_b"}).status_code == 200
 
     with (tmp_path / "new.wav").open("wb") as f:
         sf.write(f, np.zeros(int(4 * RATE), dtype=np.float32), RATE, format="WAV")
     r = client.post(
         "/api/loras/reference",
-        data={"id": "voice_b", "text": "新的参考。"},
+        data={"id": "gpt_sovits/voice_b", "text": "新的参考。"},
         files={"audio": ("new.wav", (tmp_path / "new.wav").read_bytes(), "audio/wav")},
     )
     assert r.status_code == 200 and r.json()["reference_text"] == "新的参考。"
-    assert client.post("/api/loras/reference", data={"id": "voice_b"}).status_code == 422
+    assert client.post("/api/loras/reference", data={"id": "gpt_sovits/voice_b"}).status_code == 422
     assert client.post("/api/loras/import-gpt-sovits", json={"name": "x", "sovits": "a", "gpt": "b"}).status_code == 422
 
 
@@ -518,7 +518,7 @@ def test_voice_packages_round_trip_without_local_details(lora_dir, tmp_path):
 
     other = tmp_path / "other_lora"
     other.mkdir()
-    assert sharing.import_package(other, package, "shared_voice.zip") == ("shared_voice", "gpt_sovits")
+    assert sharing.import_package(other, package, "shared_voice.zip") == ("gpt_sovits/shared_voice", "gpt_sovits")
     (imported,) = lora_library.scan(other)
     assert (imported.engine, imported.version) == ("gpt_sovits", "v2ProPlus")
     assert get_sovits_version_from_path_fast(str(imported.path / voices.SOVITS_FILE))[1] == "v2ProPlus"
@@ -544,4 +544,7 @@ def test_a_voice_package_may_lack_the_gpt_and_reference(lora_dir, tmp_path):
     other = tmp_path / "other_lora"
     other.mkdir()
     sharing.import_package(other, package, "x.zip")
-    assert sorted(p.name for p in (other / "sovits_only_pkg").iterdir()) == ["lora_config.json", voices.SOVITS_FILE]
+    assert sorted(p.name for p in (other / "gpt_sovits" / "sovits_only_pkg").iterdir()) == [
+        "lora_config.json",
+        voices.SOVITS_FILE,
+    ]

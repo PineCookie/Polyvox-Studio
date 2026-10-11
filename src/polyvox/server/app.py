@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import engines, vram
+from .. import engines, lora_library, vram
 from ..config import Settings
 from ..data import audio_io
 from ..engines import Engine
@@ -49,6 +49,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     audio_io.patch_torchaudio()  # voxcpm's torchaudio.load calls, without a system FFmpeg
+    lora_library.migrate(settings.lora_dir)  # runs and voices from before the engine folders
     service = service or InferenceService(settings)
     # Every engine; VoxCPM's wraps ``service`` (the status fields and GPU rules use it).
     registry = engines_ or engines.create(settings, voxcpm=VoxCPMEngine(settings, service))

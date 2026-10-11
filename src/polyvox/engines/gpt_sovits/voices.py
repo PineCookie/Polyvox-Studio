@@ -156,6 +156,7 @@ def import_webui(
     target = lora_dir / name
     if target.exists():
         raise FileExistsError(f"A voice or run named '{name}' already exists.")
+    lora_dir.mkdir(parents=True, exist_ok=True)
     staging = lora_dir / f".import-{name}"
     shutil.rmtree(staging, ignore_errors=True)
     try:

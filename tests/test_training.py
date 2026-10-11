@@ -49,7 +49,7 @@ def test_start_prepares_run_and_completes(training, data_dir, lora_dir):
     training.start(TrainParams(name="voice_r32", dataset="voice/train.jsonl", num_iters=20))
     wait_idle(training)
 
-    run = lora_dir / "voice_r32"
+    run = lora_dir / "voxcpm" / "voice_r32"
     config = yaml.safe_load((run / "train_config.yaml").read_text(encoding="utf-8"))
     assert config["sample_rate"] == 16000 and config["out_sample_rate"] == 48000
     assert config["lora"]["r"] == 32 and config["save_path"] == str(run / "checkpoints")
@@ -71,7 +71,7 @@ def test_start_prepares_run_and_completes(training, data_dir, lora_dir):
 def test_stop_saves_checkpoint_and_resume_continues(training, data_dir, lora_dir):
     make_dataset(data_dir, "voice")
     training.start(TrainParams(name="long", dataset="voice/train.jsonl", num_iters=1000))
-    wait_for(lora_dir / "long" / "console.log", "waiting for stop")
+    wait_for(lora_dir / "voxcpm" / "long" / "console.log", "waiting for stop")
 
     assert training.detail("long").status == "running"
     training.stop()
@@ -81,8 +81,8 @@ def test_stop_saves_checkpoint_and_resume_continues(training, data_dir, lora_dir
     assert (summary.status, summary.saved_step) == ("incomplete", 20)
 
     training.resume("long")
-    samples = lora_dir / "long" / "samples"
-    wait_for(lora_dir / "long" / "checkpoints" / "train.log", "[val] step 20:")
+    samples = lora_dir / "voxcpm" / "long" / "samples"
+    wait_for(lora_dir / "voxcpm" / "long" / "checkpoints" / "train.log", "[val] step 20:")
     training.stop()
     wait_idle(training)
 
@@ -173,9 +173,9 @@ def test_latest_only_checkpoint_takes_its_step_from_the_log(training, lora_dir, 
 def test_failed_job_is_reported(training, data_dir, lora_dir):
     make_dataset(data_dir, "voice")
     training.start(TrainParams(name="a", dataset="voice/train.jsonl", num_iters=1000))
-    wait_for(lora_dir / "a" / "console.log", "waiting for stop")
+    wait_for(lora_dir / "voxcpm" / "a" / "console.log", "waiting for stop")
 
-    (lora_dir / "a" / "crash").touch()
+    (lora_dir / "voxcpm" / "a" / "crash").touch()
     wait_idle(training)
 
     assert training.detail("a").status == "failed"

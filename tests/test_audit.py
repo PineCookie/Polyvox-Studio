@@ -64,7 +64,9 @@ def test_dropped_clips_stay_listed_but_leave_training_and_stats(client, training
     assert (report["samples"], report["dropped"], report["valid"]) == (3, 1, 3)
 
     training.start(TrainParams(name="run", dataset=ID, val_holdout=0, num_iters=1))
-    lines = (training.lora_dir / "run" / "manifests" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+    lines = (
+        (training.lora_dir / "voxcpm" / "run" / "manifests" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+    )
     assert [json.loads(line)["text"] for line in lines] == ["第一句", "第三句", "第四句"]
 
     client.post("/api/dataset-clip/drop", json={"id": ID, "index": 1, "dropped": False})

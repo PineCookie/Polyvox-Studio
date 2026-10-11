@@ -17,7 +17,8 @@ To develop against a local VoxCPM checkout instead, temporarily set
 ```
 models/            downloaded models, e.g. models/openbmb__VoxCPM2 (git-ignored)
 data/              training datasets: <name>/train.jsonl + audio (git-ignored)
-lora/              training runs and LoRA checkpoints (git-ignored)
+lora/              training runs, LoRAs and voices, one folder per model:
+                   voxcpm/, dots_tts/, gpt_sovits/ (git-ignored)
 src/polyvox/
   config.py        settings from POLYVOX_* env vars
   models.py        the models used, and downloading them (Hugging Face / mirror)
@@ -166,9 +167,12 @@ batch that still runs out of memory is retried in halves.
 The Train tab starts, stops and resumes LoRA runs, one at a time. A new run
 starts from a dataset: its stats, warnings and a browsable list of its clips
 (play, transcript, length, search; ASR-made transcripts are marked), then the
-training parameters. A run lives in `<lora dir>/<name>/` in the layout
-`lora_ft_webui.py` uses, so its runs appear too and can be resumed or
-continued with more steps.
+training parameters. A run lives in `<lora dir>/<model>/<name>/` (`<model>` is
+`voxcpm`, `dots_tts` or `gpt_sovits`) in the layout `lora_ft_webui.py` uses, so
+its runs appear too and can be resumed or continued with more steps. Runs and
+voices lying directly in the LoRA dir (from before these folders, or copied in)
+are moved into their model's folder when the server starts, with the paths
+their configs record.
 
 - Stop saves a checkpoint first; Resume continues from it.
 - Validation clips (held out from the training set by default) produce loss

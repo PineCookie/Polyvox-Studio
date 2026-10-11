@@ -254,7 +254,7 @@ def test_transcribing_import_refused_while_training_shares_the_gpu(
 ):
     make_dataset(data_dir, "voice")
     training.start(TrainParams(name="busy", dataset="voice/train.jsonl", num_iters=1000))
-    wait_for(training.lora_dir / "busy" / "console.log", "waiting for stop")
+    wait_for(training.lora_dir / "voxcpm" / "busy" / "console.log", "waiting for stop")
     monkeypatch.setattr(AsrService, "device", property(lambda self: "cuda:0"))
     lst = write_list(tmp_path / "speaker_a.list", [f"{c}|clips|EN|" for c in clips])
     client = TestClient(create_app(service.settings, service, training, asr_service))

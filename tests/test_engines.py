@@ -141,11 +141,11 @@ def test_runs_record_their_engine(client, manager, data_dir, lora_dir):
         resp = client.post("/api/training/runs", json={"name": name, "engine": engine, "dataset": "voice/train.jsonl"})
         assert resp.status_code == 200, resp.text
         assert resp.json()["engine"] == engine
-        assert training.read_config(lora_dir / name)["engine"] == engine
+        assert training.read_config(lora_dir / engine / name)["engine"] == engine
         wait_idle(manager)
 
-    assert training.read_config(lora_dir / "b")["lora"] == {"r": 32, "alpha": 32}
-    assert "pretrained_path" not in training.read_config(lora_dir / "b")  # VoxCPM's keys stay VoxCPM's
+    assert training.read_config(lora_dir / "other" / "b")["lora"] == {"r": 32, "alpha": 32}
+    assert "pretrained_path" not in training.read_config(lora_dir / "other" / "b")  # VoxCPM's keys stay VoxCPM's
     bad = client.post("/api/training/runs", json={"name": "c", "engine": "nope", "dataset": "voice/train.jsonl"})
     assert bad.status_code == 422
 

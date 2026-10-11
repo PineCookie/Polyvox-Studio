@@ -33,6 +33,7 @@ from .engines import DEFAULT as DEFAULT_ENGINE
 from .engines.dots import lora as dots_lora
 from .engines.gpt_sovits import voices as gsv_voices
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
+from .lora_library import engine_dir as engine_folder
 
 README_FILE = "README.md"
 GSV_GPT_FILE = "gpt_weights.ckpt"
@@ -313,7 +314,7 @@ def _check_config(data: bytes) -> str:
 
 
 def import_package(lora_dir: Path, package: Path, filename: str) -> tuple[str, str]:
-    """Unpack a package into ``lora_dir/<name>/``; returns the new LoRA id and its engine.
+    """Unpack a package into ``lora_dir/<engine>/<name>/``; returns the new LoRA id and its engine.
 
     ``filename`` is the uploaded file's name; it names the LoRA when the zip
     holds the files without a folder.
@@ -346,18 +347,19 @@ def import_package(lora_dir: Path, package: Path, filename: str) -> tuple[str, s
         name = folders.pop()
         if not re.fullmatch(PACKAGE_NAME, name):
             raise ValueError(f"Invalid package name: {name}")
-        target = lora_dir.resolve() / name
-        if target.exists():
-            raise FileExistsError(f"A LoRA named '{name}' already exists.")
-
         contents = {file: zf.read(info) for file, info in files.items()}
+    lora_dir = lora_dir.resolve()
     if voice:
         voice_files = {f: d for f, d in contents.items() if f in GSV_PACKAGE_FILES}
-        return gsv_voices.import_package(lora_dir.resolve(), name, voice_files), gsv_voices.ENGINE
+        engine_dir = engine_folder(lora_dir, gsv_voices.ENGINE)
+        return f"{gsv_voices.ENGINE}/{gsv_voices.import_package(engine_dir, name, voice_files)}", gsv_voices.ENGINE
     _check_weights(contents[WEIGHTS_FILE])
     engine = _check_config(contents[CONFIG_FILE])
+    target = engine_folder(lora_dir, engine) / name
+    if target.exists():
+        raise FileExistsError(f"A LoRA named '{name}' already exists.")
 
     target.mkdir(parents=True)
     for file, data in contents.items():
         (target / file).write_bytes(data)
-    return name, engine
+    return f"{engine}/{name}", engine
