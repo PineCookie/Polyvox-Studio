@@ -28,17 +28,20 @@ const checkpointId = (run: string, step: number) => `${run}/checkpoints/step_${S
 
 // The losses a run's worker logs, in order (the first two charted up front);
 // before its first step, the ones its engine will log.
-const FIRST_LOSSES: Record<string, string[]> = { gpt_sovits: ['loss/mel', 'loss/kl'] }
+// GPT-SoVITS: each stage's main loss up front (SoVITS mel, then the GPT's).
+const FIRST_LOSSES: Record<string, string[]> = { gpt_sovits: ['loss/mel', 'loss/gpt'] }
 const DEFAULT_LOSSES = ['loss/diff', 'loss/stop']
 
 function lossKeys(run: Run): string[] {
+  const first = FIRST_LOSSES[run.engine] ?? DEFAULT_LOSSES
   const keys: string[] = []
   for (const point of run.train) {
     for (const key of Object.keys(point)) {
       if (key.startsWith('loss/') && key !== 'loss/total' && !keys.includes(key)) keys.push(key)
     }
   }
-  return keys.length ? keys : (FIRST_LOSSES[run.engine] ?? DEFAULT_LOSSES)
+  if (!keys.length) return first
+  return [...first.filter((k) => keys.includes(k)), ...keys.filter((k) => !first.includes(k))]
 }
 
 type Tab = 'progress' | 'dataset' | 'parameters'
@@ -284,9 +287,10 @@ function MetricsTable({ run, losses }: { run: Run; losses: string[] }) {
               <tr key={train.step}>
                 <td>{formatStep(train.step)}</td>
                 {losses.map((key) => (
-                  <td key={key}>{formatValue(train[key])}</td>
+                  <td key={key}>{key in train ? formatValue(train[key]) : ''}</td>
                 ))}
-                {hasVal && losses.map((key) => <td key={`val-${key}`}>{val ? formatValue(val[key]) : ''}</td>)}
+                {hasVal &&
+                  losses.map((key) => <td key={`val-${key}`}>{val && key in val ? formatValue(val[key]) : ''}</td>)}
                 <td>{formatValue(train.lr)}</td>
                 <td>{train.epoch?.toFixed(2)}</td>
               </tr>

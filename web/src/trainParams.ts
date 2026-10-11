@@ -37,6 +37,9 @@ export const DEFAULT_PARAMS: Params = {
   enable_lm: true,
   enable_dit: true,
   enable_proj: false,
+  sovits_epochs: 8,
+  gpt_epochs: 15,
+  gpt_batch_size: 8,
 }
 
 // Prodigy finds its own step size: learning_rate is a multiplier, 1 by its authors' advice.
@@ -44,18 +47,28 @@ export const OPTIMIZER_LR: Record<Optimizer, number> = { adamw: 1e-4, prodigy: 1
 
 export const EFFECTIVE_BATCH = 16
 
-// Full fine-tuning (GPT-SoVITS, as its webui trains voices): AdamW at the
-// upstream rate, the batch as is (a GAN: no accumulation), the webui's default
-// epochs; checkpoints are whole models (~170 MB), so fewer of them.
-export const FULL_FINETUNE = { epochs: 8, learning_rate: 1e-4, checkpoint_epochs: 4, sample_epochs: 1 }
+// Full fine-tuning (GPT-SoVITS, as its webui trains voices): SoVITS with AdamW at
+// the upstream rate, the batch as is (a GAN: no accumulation); then the GPT with
+// upstream's own optimizer, an update per 4 batches. Epochs: the webui's defaults.
+export const FULL_FINETUNE = { learning_rate: 1e-4, gpt_accum: 4 }
+
+/** Steps of a full fine-tuning run (as the GPT-SoVITS worker plans them): whole
+ * batches per SoVITS epoch, GPT updates of 4 batches of at most a quarter of the clips. */
+export function fullSteps(clips: number, params: Params): { sovits: number; gpt: number } {
+  const gptBatch = Math.max(1, Math.min(params.gpt_batch_size, Math.floor(clips / 4)))
+  return {
+    sovits: Math.ceil(params.sovits_epochs * Math.ceil(clips / Math.max(1, params.batch_size))),
+    gpt: Math.ceil((params.gpt_epochs * Math.ceil(clips / gptBatch)) / FULL_FINETUNE.gpt_accum),
+  }
+}
 
 /** The batch that fits the GPU (its profile's micro-batch for the params' engine),
  * accumulated to the same effective batch: smaller cards train slower, not differently.
  * `full`: a full fine-tuning engine, whose batch is not accumulated. */
 export function forGpu(params: Params, gpu: GpuProfile, full = false): Params {
   const batch = Math.max(1, Math.min(gpu.train_batches?.[params.engine] ?? gpu.train_batch, EFFECTIVE_BATCH))
-  const accum = full ? 1 : Math.max(1, Math.round(EFFECTIVE_BATCH / batch))
-  return { ...params, batch_size: batch, grad_accum_steps: accum }
+  if (full) return { ...params, batch_size: batch, grad_accum_steps: 1, gpt_batch_size: batch } // both stages, as the webui
+  return { ...params, batch_size: batch, grad_accum_steps: Math.max(1, Math.round(EFFECTIVE_BATCH / batch)) }
 }
 
 /** The optimizer settings that go with an engine (`full`: full fine-tuning). */
@@ -69,17 +82,16 @@ export type Schedule = Pick<Params, 'num_iters' | 'warmup_steps' | 'save_interva
 
 /** Steps for `epochs` passes over `clips` at the params' effective batch, and the
  * warmup, checkpoint / validation and log intervals that go with them. */
-export function scheduleFor(epochs: number, clips: number, params: Params, full = false): Schedule {
+export function scheduleFor(epochs: number, clips: number, params: Params): Schedule {
   const perStep = Math.max(1, params.batch_size * params.grad_accum_steps)
-  // The GPT-SoVITS worker's epochs are whole batches (its last one filled up).
-  const stepsPerEpoch = Math.max(1, full ? Math.ceil(clips / perStep) : clips / perStep)
+  const stepsPerEpoch = Math.max(1, clips / perStep)
   const steps = Math.max(1, Math.ceil(epochs * stepsPerEpoch))
   const interval = Math.max(1, Math.round(stepsPerEpoch / CHECKPOINTS_PER_EPOCH))
   return {
     num_iters: steps,
     warmup_steps: Math.max(1, Math.round(steps * WARMUP_SHARE)),
-    save_interval: full ? Math.max(1, Math.round(stepsPerEpoch * FULL_FINETUNE.checkpoint_epochs)) : interval,
-    valid_interval: full ? Math.max(1, Math.round(stepsPerEpoch * FULL_FINETUNE.sample_epochs)) : interval,
+    save_interval: interval,
+    valid_interval: interval,
     log_interval: Math.max(1, Math.min(10, Math.round(stepsPerEpoch / 10))),
   }
 }
@@ -120,5 +132,8 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     enable_lm: flag(lora.enable_lm, d.enable_lm),
     enable_dit: flag(lora.enable_dit, d.enable_dit),
     enable_proj: flag(lora.enable_proj, d.enable_proj),
+    sovits_epochs: num(config.sovits_epochs, d.sovits_epochs),
+    gpt_epochs: num(config.gpt_epochs, 0),
+    gpt_batch_size: num(config.gpt_batch_size, d.gpt_batch_size),
   }
 }

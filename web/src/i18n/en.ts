@@ -512,6 +512,7 @@ export const en = {
     'loss/fm': 'Feature matching loss (SoVITS)',
     'loss/gen': 'Generator loss (SoVITS)',
     'loss/disc': 'Discriminator loss (SoVITS)',
+    'loss/gpt': 'GPT loss (per token)',
   } as Record<string, string>,
   lossShort: {
     'loss/diff': 'Diffusion',
@@ -521,6 +522,7 @@ export const en = {
     'loss/fm': 'Feature matching',
     'loss/gen': 'Generator',
     'loss/disc': 'Discriminator',
+    'loss/gpt': 'GPT',
   } as Record<string, string>,
   moreLosses: 'More losses',
   runDatasetHint: 'The clips this run trains on (validation clips not included).',
@@ -619,16 +621,9 @@ export const en = {
     warmup: string,
   ) =>
     `= ${steps} steps of ${per} clips (${batch} × ${accum} accumulated${gpu ? `, the batch that fits this ${gpu} GB GPU` : ''}) over ${clips} training clips${approx ? ` (≈ ${approx} epochs)` : ''}; checkpoint and validation every ${every} steps, warmup ${warmup}. For one speaker, 3–6 epochs usually sound most like them; compare the checkpoints by listening.`,
-  fullScheduleHint: (
-    steps: string,
-    batch: number,
-    gpu: string,
-    clips: string,
-    approx: string,
-    samplesEvery: string,
-    saveEvery: string,
-  ) =>
-    `= ${steps} steps of ${batch} clips${gpu ? ` (the batch that fits this ${gpu} GB GPU)` : ''} over ${clips} training clips${approx ? ` (≈ ${approx} epochs)` : ''}; samples every ${samplesEvery} steps, a checkpoint every ${saveEvery}. GPT-SoVITS trains whole models, as its webui does (default 8 epochs there). This trains SoVITS (the voice's timbre); its checkpoints speak with the base GPT until the GPT stage is added.`,
+  stageSteps: (sovits: string, gpt: string) => `${sovits} SoVITS + ${gpt} GPT steps`,
+  fullScheduleHint: (sovits: string, batch: number, gpt: string, gptBatch: number, gpu: string, clips: string) =>
+    `= ${sovits} SoVITS steps of ${batch} clips${gpu ? ` (the batch that fits this ${gpu} GB GPU)` : ''}, then ${gpt} GPT steps of 4 × ${gptBatch} clips, over ${clips} training clips (exact counts once the clips are read). GPT-SoVITS trains whole models, as its webui does, with its defaults (8 and 15 epochs): SoVITS learns the voice's timbre, the GPT how they speak. Samples after every epoch; checkpoints every 4 SoVITS and 5 GPT epochs, and at the end of each stage (SoVITS checkpoints speak with the base GPT).`,
   stepsFollow: 'Steps follow from the epochs once a dataset is chosen.',
 
   // Parameters
@@ -656,6 +651,9 @@ export const en = {
     enable_lm: 'LoRA on LM',
     enable_dit: 'LoRA on DiT',
     enable_proj: 'LoRA on projections',
+    sovits_epochs: 'SoVITS epochs',
+    gpt_epochs: 'GPT epochs',
+    gpt_batch_size: 'GPT batch size',
   },
   optimizers: {
     adamw: 'AdamW',

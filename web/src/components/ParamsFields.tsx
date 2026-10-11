@@ -87,7 +87,12 @@ export function ParamsFields({
             </select>
           </label>
         )}
-        {epochs ? (
+        {!lora ? (
+          <>
+            {numberField('sovits_epochs', { min: 0, max: 100 })}
+            {numberField('gpt_epochs', { min: 0, max: 100 })}
+          </>
+        ) : epochs ? (
           <label className="field">
             <span>{t.params.epochs}</span>
             <input
@@ -128,6 +133,7 @@ export function ParamsFields({
           lora && params.optimizer !== 'adamw' ? t.params.lr_multiplier : undefined,
         )}
         {!lora && numberField('batch_size', { min: 1 })}
+        {!lora && numberField('gpt_batch_size', { min: 1, max: 64 })}
       </div>
       {hint}
       {validation}
@@ -135,7 +141,7 @@ export function ParamsFields({
       <details className="advanced" open={readOnly || undefined}>
         <summary>{t.advanced}</summary>
         <div className="form-grid">
-          {epochs && numberField('num_iters', { min: 1 })}
+          {(epochs || (!lora && readOnly)) && numberField('num_iters', { min: 1 })}
           {lora && numberField('batch_size', { min: 1 })}
           {lora && numberField('grad_accum_steps', { min: 1 })}
           {lora &&
@@ -146,8 +152,8 @@ export function ParamsFields({
           {lora && numberField('weight_decay', { min: 0, step: 'any' })}
           {lora && numberField('max_grad_norm', { min: 0, step: 'any' })}
           {lora && numberField('lora_dropout', { min: 0, max: 0.99, step: 'any' })}
-          {numberField('save_interval', { min: 1 })}
-          {numberField('valid_interval', { min: 1 })}
+          {lora && numberField('save_interval', { min: 1 })}
+          {lora && numberField('valid_interval', { min: 1 })}
           {numberField('log_interval', { min: 1 })}
           {lora && numberField('num_workers', { min: 0, max: 16 })}
           {lora && (

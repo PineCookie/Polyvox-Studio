@@ -235,17 +235,62 @@ def test_voice_api_import_reference_and_list(settings, service, training, engine
 # --------------------------------------------------------------------------- training
 
 
-def test_training_config_is_full_finetuning_with_the_datasets_best_reference(engine, data_dir, tmp_path):
+def test_training_config_is_full_finetuning_in_two_stages(engine, data_dir, tmp_path):
     from polyvox.training import TrainParams
 
     dataset(data_dir, [("good", 6.0, "很好。", {"score": 0.9, "flags": []}), ("ok", 5.0, "还行。", None)])
-    params = TrainParams(name="run_a", engine="gpt_sovits", dataset="speaker_a/train.jsonl", num_iters=50, batch_size=8)
-    config = engine.training_config(params, tmp_path / "run_a", tmp_path / "train.jsonl", None)
+    run_manifest = tmp_path / "train.jsonl"
+    manifests.write_manifest([{"audio": f"wavs/{i}.wav", "text": "示例。"} for i in range(20)], run_manifest)
+    params = TrainParams(name="run_a", engine="gpt_sovits", dataset="speaker_a/train.jsonl", batch_size=8)
+    config = engine.training_config(params, tmp_path / "run_a", run_manifest, None)
 
-    assert (config["num_iters"], config["batch_size"], config["version"]) == (50, 8, "v2ProPlus")
+    # SoVITS 8 epochs of ceil(20 / 8) batches; GPT 15 epochs of 4 batches of 5 (a quarter of the clips), 4 per update
+    assert config["num_iters"] == 8 * 3 + 15
+    assert (config["sovits_epochs"], config["gpt_epochs"], config["gpt_batch_size"]) == (8, 15, 8)
     assert "lora" not in config and "optimizer" not in config  # every weight trains, as upstream
     assert Path(config["reference"]["audio"]).name == "good.wav" and config["reference"]["text"] == "很好。"
     assert GptSovitsEngine.capabilities.training and GptSovitsEngine.capabilities.full_finetune
+    with pytest.raises(ValueError, match="epochs"):
+        engine.training_config(
+            params.model_copy(update={"sovits_epochs": 0, "gpt_epochs": 0}), tmp_path, run_manifest, None
+        )
+
+
+def test_a_run_the_engine_refuses_leaves_nothing_behind(settings, engine, data_dir, lora_dir):
+    from polyvox.training import TrainingManager, TrainParams
+
+    dataset(data_dir, [("short", 2.0, "短。", None), ("long", 12.0, "长。", None)])  # no clip fits a reference
+    manager = TrainingManager(settings, command=lambda *paths: ["python"], engines_={"gpt_sovits": engine})
+    with pytest.raises(ValueError, match="No clip"):
+        manager.start(TrainParams(name="run_x", engine="gpt_sovits", dataset="speaker_a/train.jsonl", val_holdout=0))
+    assert not (lora_dir / "run_x").exists()
+
+
+def test_stage_plans_and_the_gpts_clip_rules():
+    from polyvox.engines.gpt_sovits import worker
+
+    assert worker.plan_steps(20, 8, 2, 20, 8, 3) == (6, 3)
+    assert worker.plan_steps(100, 8, 0, 96, 8, 1) == (0, 3)  # GPT only: 12 batches of 8
+    assert worker.gpt_batch_size(10, 8) == 2 and worker.gpt_batch_size(2, 8) == 1
+
+    def clip(seconds, phones):
+        return {"semantic": torch.zeros(int(seconds * 25)), "phones": torch.zeros(phones)}
+
+    assert worker.gpt_keeps(clip(4, 40))
+    assert not worker.gpt_keeps(clip(4, 4))  # 1 phoneme per second: text missing words
+    assert not worker.gpt_keeps(clip(4, 120))  # 30 per second: audio missing speech
+    assert not worker.gpt_keeps(clip(60, 600))  # longer than upstream's 54 s
+
+
+def test_trained_gpt_weights_are_saved_as_the_webui_saves_them(tmp_path):
+    from polyvox.engines.gpt_sovits.worker import save_gpt
+    from polyvox.vendor.gpt_sovits.process_ckpt import load_weights
+
+    path = tmp_path / voices.GPT_FILE
+    save_gpt(path, {"h.w": torch.ones(2)}, {"data": {"max_sec": 54}}, "GPT-e15")
+    saved = load_weights(path)
+    assert list(saved["weight"]) == ["model.h.w"] and saved["weight"]["model.h.w"].dtype == torch.float16
+    assert (saved["config"]["data"]["max_sec"], saved["info"]) == (54, "GPT-e15")
 
 
 def test_length_batches_are_whole_epochs_of_similar_lengths():

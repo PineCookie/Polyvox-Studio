@@ -201,15 +201,24 @@ class GptSovitsEngine(Engine):
     def training_config(
         self, params: TrainParams, run_dir: Path, train_manifest: Path, val_manifest: Path | None
     ) -> dict:
-        """Full fine-tuning (worker.py); batch_size and learning_rate are the
-        SoVITS stage's, the optimizer and LoRA settings don't apply. The run's
+        """Full fine-tuning in two stages (worker.py): sovits_epochs at
+        batch_size and learning_rate, then gpt_epochs at gpt_batch_size (the
+        GPT's optimizer is upstream's); num_iters follows from them (estimated
+        here, exact once the worker has the clips' features). The run's
         reference clip (samples, checkpoints) is the dataset's best one."""
         if reason := self.unavailable():
             raise ValueError(f"GPT-SoVITS can't train yet: {reason}")
+        if not params.sovits_epochs and not params.gpt_epochs:
+            raise ValueError("Train SoVITS, the GPT or both: set their epochs.")
         from ...data import manifests
+        from .worker import plan_steps
 
         dataset = manifests.resolve(self.settings.data_dir, params.dataset)
         audio, text = voices.pick_reference(dataset, manifests.legacy_root(self.settings.data_dir))
+        clips = len(manifests.read_manifest(train_manifest)[0])
+        sovits_steps, gpt_steps = plan_steps(
+            clips, params.batch_size, params.sovits_epochs, clips, params.gpt_batch_size, params.gpt_epochs
+        )
         return {
             "version": BASE_VERSION,
             "pretrained_path": self.settings.model_path("gsv_model"),
@@ -217,11 +226,12 @@ class GptSovitsEngine(Engine):
             "train_manifest": str(train_manifest),
             "val_manifest": str(val_manifest) if val_manifest else "",
             "save_path": str(run_dir / "checkpoints"),
-            "num_iters": params.num_iters,
+            "num_iters": sovits_steps + gpt_steps,
+            "sovits_epochs": params.sovits_epochs,
             "batch_size": params.batch_size,
             "learning_rate": params.learning_rate,
+            "gpt_epochs": params.gpt_epochs,
+            "gpt_batch_size": params.gpt_batch_size,
             "log_interval": params.log_interval,
-            "valid_interval": params.valid_interval,
-            "save_interval": params.save_interval,
             "reference": {"audio": str(audio), "text": text, "source": f"{params.dataset}: {audio.name}"},
         }

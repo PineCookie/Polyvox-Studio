@@ -9,7 +9,7 @@ Changes from upstream:
   ``polyvox.vendor.gpt_sovits``; the eres2net modules import each other relatively;
 - left out: webui, gradio, i18n, tools/, v3 / v4 / v5 parts (f5_tts DiT,
   BigVGAN, models_v5, Accel), training scripts and data loaders (the studio's
-  worker trains with module/losses.py), Japanese / Korean / Cantonese text;
+  worker trains with module/losses.py and AR/modules/optim.py), Japanese / Korean / Cantonese text;
 - text/LangSegmenter: Chinese / English split by script instead of split_lang +
   fast_langdetect (which download a 125 MB detector model);
 - text/chinese2.py: jieba instead of jieba_fast (no Python 3.13 wheel; same

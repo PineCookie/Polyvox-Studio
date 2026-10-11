@@ -12,7 +12,7 @@ while generating, ~10.5 GB with the reference denoiser on the GPU; separation
 3.9 GB (2 chunks); aligner 3.1 GB (160 s); training batch 1 / 2 / 4: ~7 / 8.2 /
 10.9 GB. dots.tts training (clips up to ~17 s): batch 4 13.5 GB; with gradient
 checkpointing 4 / 8: 6.9 / 7.7 GB, ~1.9x / 1.3x the time per clip. GPT-SoVITS SoVITS
-training incl. its front ends: batch 4 / 6 / 8: 6.6 / 7.2 / 8.3 GB.
+training incl. its front ends: batch 4 / 6 / 8: 6.6 / 7.2 / 8.3 GB; its GPT stage at 8: 5.8 GB.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ class Profile:
     # without gradient checkpointing (larger ones checkpoint: engines.dots.worker)
     dots_train_batch: int = 1
     dots_plain_batch: int = 0
-    # GPT-SoVITS SoVITS training batch (no accumulation: a GAN, as upstream trains it)
+    # GPT-SoVITS training batch of both stages (as the webui: no accumulation for SoVITS, a GAN)
     gsv_train_batch: int = 1
 
     def public(self) -> dict:

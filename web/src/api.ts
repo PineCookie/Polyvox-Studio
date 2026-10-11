@@ -349,6 +349,10 @@ export interface TrainParams {
   enable_lm: boolean
   enable_dit: boolean
   enable_proj: boolean
+  // GPT-SoVITS (full fine-tuning in two stages): num_iters follows from these
+  sovits_epochs: number
+  gpt_epochs: number
+  gpt_batch_size: number
 }
 
 function postJson(url: string, body?: unknown): Promise<Response> {

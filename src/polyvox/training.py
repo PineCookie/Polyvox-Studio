@@ -94,6 +94,11 @@ class TrainParams(BaseModel):
     enable_lm: bool = True
     enable_dit: bool = True
     enable_proj: bool = False
+    # GPT-SoVITS (full fine-tuning, two stages; the webui's defaults): epochs of
+    # each stage (num_iters then follows from them) and the GPT stage's batch.
+    sovits_epochs: int = Field(8, ge=0, le=100)
+    gpt_epochs: int = Field(15, ge=0, le=100)
+    gpt_batch_size: int = Field(8, ge=1, le=64)
 
 
 class RunSummary(BaseModel):
@@ -339,11 +344,15 @@ class TrainingManager:
 
             train_manifest = run_dir / "manifests" / "train.jsonl"
             val_manifest = run_dir / "manifests" / "val.jsonl" if val else None
-            config = {"engine": engine.id, **engine.training_config(params, run_dir, train_manifest, val_manifest)}
             run_dir.mkdir(parents=True)
-            manifests.write_manifest(train, train_manifest)
-            if val_manifest:
-                manifests.write_manifest(val, val_manifest)
+            try:  # the manifests first: an engine may size the run from them
+                manifests.write_manifest(train, train_manifest)
+                if val_manifest:
+                    manifests.write_manifest(val, val_manifest)
+                config = {"engine": engine.id, **engine.training_config(params, run_dir, train_manifest, val_manifest)}
+            except BaseException:
+                shutil.rmtree(run_dir, ignore_errors=True)
+                raise
             write_config(run_dir, config)
             self._launch(params.name, run_dir)
         return self.detail(params.name)

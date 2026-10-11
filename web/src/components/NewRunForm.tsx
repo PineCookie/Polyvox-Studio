@@ -4,7 +4,7 @@ import type { DatasetReport, Engine, GpuProfile, TrainParams } from '../api'
 import { datasetName, formatStep } from '../format'
 import { useT } from '../i18n'
 import { DatasetReview } from './DatasetReview'
-import { DEFAULT_EPOCHS, DEFAULT_PARAMS, FULL_FINETUNE, epochsOf, forEngine, forGpu, scheduleFor } from '../trainParams'
+import { DEFAULT_EPOCHS, DEFAULT_PARAMS, epochsOf, forEngine, forGpu, fullSteps, scheduleFor } from '../trainParams'
 import type { Params, Schedule } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { SubTabs } from './SubTabs'
@@ -79,11 +79,15 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
   const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(base.val_holdout, report.valid - 1)) : 0
   const isFull = (id: string) => !!engines.find((e) => e.id === id)?.capabilities.full_finetune
   const full = isFull(base.engine)
-  const params: Params = {
-    ...base,
-    ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base, full) : {}),
-    ...overrides,
-  }
+  // Full fine-tuning (GPT-SoVITS): steps follow from each stage's epochs.
+  const stages = full && trainClips > 0 ? fullSteps(trainClips, base) : null
+  const params: Params = full
+    ? { ...base, ...(stages ? { num_iters: stages.sovits + stages.gpt } : {}), ...overrides }
+    : {
+        ...base,
+        ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base) : {}),
+        ...overrides,
+      }
   const name =
     customName ?? (dataset ? suggestName(dataset, params.engine, full ? null : params.lora_rank, runNames) : '')
   const engineName = engines.find((e) => e.id === params.engine)?.name ?? params.engine
@@ -93,9 +97,8 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       return
     }
     if (key === 'engine') {
-      // Each model has its own batch that fits the GPU, optimizer settings and epochs.
+      // Each model has its own batch that fits the GPU, and optimizer settings.
       const nextFull = isFull(value as string)
-      if (nextFull !== full) setEpochTarget(nextFull ? FULL_FINETUNE.epochs : DEFAULT_EPOCHS)
       setOverrides({})
       setBase((p) => {
         const next = forEngine({ ...p, engine: value as string }, nextFull)
@@ -113,7 +116,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
   // Unreadable clips would crash the job mid-epoch, so they block the start.
   const datasetValid = !!report && report.valid > 0 && report.errors.length === 0
 
-  const epochs = epochsOf(params, trainClips)
+  const epochs = full ? null : epochsOf(params, trainClips)
   const perStep = params.batch_size * params.grad_accum_steps
 
   // What still blocks the start, in the order the page is filled in.
@@ -200,7 +203,11 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             <>
               <span>{t.trainingClipsFrom(trainClips.toLocaleString(), datasetName(dataset))}</span>
               {epochs !== null && <span>{t.epochsValue(epochs.toFixed(1))}</span>}
-              <span className="muted">{t.stepsTimesClips(formatStep(params.num_iters), perStep)}</span>
+              <span className="muted">
+                {stages
+                  ? t.stageSteps(formatStep(stages.sovits), formatStep(stages.gpt))
+                  : t.stepsTimesClips(formatStep(params.num_iters), perStep)}
+              </span>
               <span className="muted">
                 {engines.length > 1 && `${engineName} · `}
                 {full ? t.fullFinetune : t.rankAlpha(params.lora_rank, params.lora_alpha)}
@@ -259,29 +266,32 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
                 />
               </label>
             }
-            epochs={{
-              value: epochTarget,
-              onChange: (v) => {
-                setEpochTarget(v)
-                // Steps follow the epochs again.
-                setOverrides((o) => {
-                  const rest = { ...o }
-                  delete rest.num_iters
-                  return rest
-                })
-              },
-            }}
+            epochs={
+              full
+                ? undefined
+                : {
+                    value: epochTarget,
+                    onChange: (v) => {
+                      setEpochTarget(v)
+                      // Steps follow the epochs again.
+                      setOverrides((o) => {
+                        const rest = { ...o }
+                        delete rest.num_iters
+                        return rest
+                      })
+                    },
+                  }
+            }
             hint={
-              trainClips > 0 && full ? (
+              stages ? (
                 <p className="muted hint">
                   {t.fullScheduleHint(
-                    formatStep(params.num_iters),
+                    formatStep(stages.sovits),
                     params.batch_size,
+                    formatStep(stages.gpt),
+                    Math.max(1, Math.min(params.gpt_batch_size, Math.floor(trainClips / 4))),
                     gpu?.total_gb ? String(gpu.total_gb) : '',
                     trainClips.toLocaleString(),
-                    epochs !== null && Math.abs(epochs - epochTarget) > 0.05 ? epochs.toFixed(1) : '',
-                    formatStep(params.valid_interval),
-                    formatStep(params.save_interval),
                   )}
                 </p>
               ) : trainClips > 0 ? (

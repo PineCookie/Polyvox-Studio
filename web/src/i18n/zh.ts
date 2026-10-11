@@ -484,6 +484,7 @@ export const zh: Messages = {
     'loss/fm': '特征匹配损失（SoVITS）',
     'loss/gen': '生成器损失（SoVITS）',
     'loss/disc': '判别器损失（SoVITS）',
+    'loss/gpt': 'GPT 损失（每个 token）',
   },
   lossShort: {
     'loss/diff': '扩散',
@@ -493,6 +494,7 @@ export const zh: Messages = {
     'loss/fm': '特征匹配',
     'loss/gen': '生成器',
     'loss/disc': '判别器',
+    'loss/gpt': 'GPT',
   },
   moreLosses: '更多损失',
   runDatasetHint: '这次训练使用的片段（不含验证片段）。',
@@ -580,8 +582,9 @@ export const zh: Messages = {
   chooseDatasetFirst: '请先选择数据集',
   scheduleHint: (steps, per, batch, accum, gpu, clips, approx, every, warmup) =>
     `= ${steps} 步，每步 ${per} 条（${batch} × ${accum} 梯度累积${gpu ? `，按这块 ${gpu} GB 显卡选择的批大小` : ''}），共 ${clips} 条训练片段${approx ? `（约 ${approx} 轮）` : ''}；每 ${every} 步保存检查点并验证，预热 ${warmup} 步。单个说话人通常训练 3–6 轮最像本人；请试听比较各个检查点。`,
-  fullScheduleHint: (steps, batch, gpu, clips, approx, samplesEvery, saveEvery) =>
-    `= ${steps} 步，每步 ${batch} 条${gpu ? `（按这块 ${gpu} GB 显卡选择的批大小）` : ''}，共 ${clips} 条训练片段${approx ? `（约 ${approx} 轮）` : ''}；每 ${samplesEvery} 步生成样本，每 ${saveEvery} 步保存检查点。GPT-SoVITS 与其 webui 一样训练完整模型（webui 默认 8 轮）。这里训练的是 SoVITS（声音的音色）；在加入 GPT 阶段之前，它的检查点使用基础 GPT 说话。`,
+  stageSteps: (sovits, gpt) => `SoVITS ${sovits} 步 + GPT ${gpt} 步`,
+  fullScheduleHint: (sovits, batch, gpt, gptBatch, gpu, clips) =>
+    `= SoVITS ${sovits} 步，每步 ${batch} 条${gpu ? `（按这块 ${gpu} GB 显卡选择的批大小）` : ''}，然后 GPT ${gpt} 步，每步 4 × ${gptBatch} 条，共 ${clips} 条训练片段（读取片段后得到确切步数）。GPT-SoVITS 与其 webui 一样训练完整模型，默认值也相同（8 轮和 15 轮）：SoVITS 学习声音的音色，GPT 学习说话方式。每轮结束后生成样本；SoVITS 每 4 轮、GPT 每 5 轮以及每个阶段结束时保存检查点（SoVITS 阶段的检查点使用基础 GPT 说话）。`,
   stepsFollow: '选择数据集后，步数会根据轮数自动计算。',
 
   // 参数
@@ -609,6 +612,9 @@ export const zh: Messages = {
     enable_lm: 'LoRA 作用于 LM',
     enable_dit: 'LoRA 作用于 DiT',
     enable_proj: 'LoRA 作用于投影层',
+    sovits_epochs: 'SoVITS 轮数',
+    gpt_epochs: 'GPT 轮数',
+    gpt_batch_size: 'GPT 批大小',
   },
   optimizers: {
     adamw: 'AdamW',
