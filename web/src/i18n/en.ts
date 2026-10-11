@@ -87,10 +87,11 @@ export const en = {
   paramHints: {
     cfg_value:
       'Lower sounds more natural and closer to the voice; raise toward 2.0 if words get dropped or sounds added. Above 2 the voice drifts away.',
-    guidance_scale: 'dots.tts default 1.2; higher follows the text more strictly.',
+    guidance_scale: 'Changes a trained voice little (1.0–2.5 all close); 1.2 was the steadiest.',
     inference_timesteps: 'Detail passes per sound chunk: 10 is enough; more is slower and rarely better.',
-    num_steps: 'Detail passes per sound chunk: 10 is enough; more is slower and rarely better.',
-    speaker_scale: 'With reference audio: how strongly its voice steers the result.',
+    num_steps: 'Detail passes per sound chunk: below 10 loses some likeness; 16 is a touch closer at +25% time.',
+    speaker_scale:
+      'Only with reference audio (no effect on a trained voice alone). Below 1 the cloned voice fades; above 1.5 gains little.',
   } as Record<string, string>,
   seed: 'Seed',
   random: 'Random',
