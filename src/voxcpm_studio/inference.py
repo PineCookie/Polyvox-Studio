@@ -19,6 +19,8 @@ from .lora_library import LoraCheckpoint
 
 logger = logging.getLogger(__name__)
 
+ENGINE = "voxcpm"  # checkpoints of other engines are not loaded here
+
 # (settings, device, lora_config, optimize) -> voxcpm.VoxCPM
 ModelLoader = Callable[..., object]
 
@@ -220,6 +222,8 @@ class InferenceService:
     def synthesize(self, req: SynthesisRequest) -> SynthesisResult:
         final_text = compose_text(req.text, req.control)
         ckpt = lora_library.resolve(self.settings.lora_dir, req.lora_id) if req.lora_id else None
+        if ckpt and ckpt.engine != ENGINE:
+            raise ValueError(f"LoRA '{ckpt.id}' was trained for another model ({ckpt.engine}), not VoxCPM.")
 
         with self._lock:
             self.progress = Progress(phase="loading" if self._model is None else "preparing", started=time.time())
@@ -292,7 +296,11 @@ class InferenceService:
 
         # Cover every checkpoint present, so switching among them never reloads;
         # only a LoRA with a larger rank or new targets added later does.
-        configs = [c.config or lora_library.default_lora_config() for c in lora_library.scan(self.settings.lora_dir)]
+        configs = [
+            c.config or lora_library.default_lora_config()
+            for c in lora_library.scan(self.settings.lora_dir)
+            if c.engine == ENGINE
+        ]
         target = lora_library.layout_covering(configs + ([needed] if needed else []))
 
         self._release()

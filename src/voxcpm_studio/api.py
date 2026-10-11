@@ -6,6 +6,7 @@ import dataclasses
 import functools
 import importlib.metadata
 import io
+import json
 import logging
 import os
 import shutil
@@ -24,6 +25,7 @@ from starlette.background import BackgroundTask
 from . import (
     audio_io,
     checks,
+    engines,
     exporter,
     fillers,
     importer,
@@ -41,7 +43,9 @@ from .aligner import AlignService
 from .asr import SAMPLE_RATE as ASR_RATE
 from .asr import AsrService, LanguageLock, language_of, load_audio
 from .config import Settings
-from .inference import InferenceService, SynthesisRequest
+from .engines import Engine
+from .engines.voxcpm import VoxCPMEngine
+from .inference import InferenceService
 from .jobs import Job, JobRunner
 from .separation import SeparationService
 from .separation import load_models as separation_models
@@ -68,11 +72,14 @@ class LoraConfigOut(BaseModel):
 
 class LoraOut(BaseModel):
     id: str
+    engine: str
     base_model: str | None
     # Hugging Face id guessed from base_model; the default when exporting.
     base_model_id: str | None
     step: int | None
-    config: LoraConfigOut | None
+    rank: int | None
+    alpha: float | None
+    config: LoraConfigOut | None  # VoxCPM's layout (VoxCPM checkpoints only)
 
 
 class DatasetReportOut(BaseModel):
@@ -319,9 +326,10 @@ def _cuda_index(device: str) -> int | None:
 def free_gpu_for_training(
     service: InferenceService,
     train_gpu: int | None,
-    *helpers: AsrService | AlignService | SeparationService | SingingService,
+    *helpers: Engine | AsrService | AlignService | SeparationService | SingingService,
 ) -> None:
-    """Unload the models that sit on the GPU a training job will use."""
+    """Unload the models that sit on the GPU a training job will use (``service``:
+    VoxCPM's; other engines among the helpers)."""
     if _cuda_index(service.device) == (train_gpu or 0):
         service.unload()
     for helper in helpers:
@@ -339,10 +347,14 @@ def create_app(
     separation: SeparationService | None = None,
     singing: SingingService | None = None,
     speaker: SpeakerService | None = None,
+    engines_: dict[str, Engine] | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     audio_io.patch_torchaudio()  # voxcpm's torchaudio.load calls, without a system FFmpeg
     service = service or InferenceService(settings)
+    # Every engine; VoxCPM's wraps ``service`` (the status fields and GPU rules below use it).
+    registry = engines_ or engines.create(settings, voxcpm=VoxCPMEngine(settings, service))
+    others = [e for e in registry.values() if e.id != "voxcpm"]
     asr = asr or AsrService(settings)
     align = align or AlignService(settings)
     slicer.vad_device = lambda: asr.device  # VAD of long recordings runs where ASR does
@@ -363,7 +375,10 @@ def create_app(
     jobs = jobs or JobRunner()
     training = training or TrainingManager(
         settings,
-        before_start=lambda: free_gpu_for_training(service, settings.train_gpu, asr, align, separation, singing),
+        before_start=lambda: free_gpu_for_training(
+            service, settings.train_gpu, *others, asr, align, separation, singing
+        ),
+        engines_=registry,
     )
 
     @asynccontextmanager
@@ -390,6 +405,8 @@ def create_app(
         # The hub id lets the UI flag LoRAs trained on a different base model.
         return {
             **service.status(),
+            # Engines with a model in memory (one per GPU at a time).
+            "loaded_engines": [e.id for e in registry.values() if e.loaded],
             "model_id": sharing.hub_id(settings.model_path("model")),
             # The PyTorch build (e.g. 2.14.1+cu130): which of run.bat / run.sh's variants runs.
             "torch": importlib.metadata.version("torch"),
@@ -413,14 +430,22 @@ def create_app(
     def status() -> dict:
         return status_with_model_id()
 
+    @app.get("/api/engines")
+    def list_engines() -> list[dict]:
+        """Each engine: capabilities, synthesis settings (params) and whether it can run here."""
+        return [e.public() for e in registry.values()]
+
     @app.get("/api/loras")
     def list_loras() -> list[LoraOut]:
         return [
             LoraOut(
                 id=c.id,
+                engine=c.engine,
                 base_model=c.base_model,
                 base_model_id=sharing.hub_id(c.base_model),
                 step=sharing.checkpoint_step(c),
+                rank=c.rank,
+                alpha=c.alpha,
                 config=LoraConfigOut(**c.config.model_dump()) if c.config else None,
             )
             for c in lora_library.scan(settings.lora_dir)
@@ -429,6 +454,8 @@ def create_app(
     @app.get("/api/loras/export", responses={200: {"content": {"application/zip": {}}}})
     def export_lora(id: str, name: str, base_model: str, half: bool = True) -> FileResponse:
         ckpt = _found(lora_library.resolve, settings.lora_dir, id)
+        if ckpt.engine != "voxcpm":
+            raise HTTPException(422, "Only VoxCPM LoRAs can be exported as packages so far.")
         path = _checked(sharing.export_package, ckpt, name, base_model, half)
         return FileResponse(
             path, media_type="application/zip", filename=f"{name}.zip", background=BackgroundTask(path.unlink)
@@ -449,34 +476,50 @@ def create_app(
     @app.post("/api/tts", responses={200: {"content": {"audio/wav": {}}}})
     def tts(
         text: Annotated[str, Form()],
-        control: Annotated[str, Form()] = "",
+        engine: Annotated[str, Form()] = engines.DEFAULT,
+        # The engine's settings (its params in /api/engines) as a JSON object.
+        options: Annotated[str | None, Form()] = None,
+        control: Annotated[str, Form()] = "",  # style / voice description
         lora_id: Annotated[str | None, Form()] = None,
         prompt_text: Annotated[str | None, Form()] = None,
-        cfg_value: Annotated[float, Form(ge=0.5, le=5.0)] = 2.0,
-        inference_timesteps: Annotated[int, Form(ge=1, le=50)] = 10,
-        normalize: Annotated[bool, Form()] = True,
-        denoise: Annotated[bool, Form()] = True,
+        # VoxCPM's settings as separate fields (as before engines); override ``options``.
+        cfg_value: Annotated[float | None, Form(ge=0.5, le=5.0)] = None,
+        inference_timesteps: Annotated[int | None, Form(ge=1, le=50)] = None,
+        normalize: Annotated[bool | None, Form()] = None,
+        denoise: Annotated[bool | None, Form()] = None,
         seed: Annotated[int | None, Form()] = None,
         reference_audio: Annotated[UploadFile | None, File()] = None,
     ) -> Response:
+        tts_engine = registry.get(engine)
+        if tts_engine is None:
+            raise HTTPException(404, f"Unknown engine '{engine}'.")
+        if reason := tts_engine.unavailable():
+            raise HTTPException(503, f"{tts_engine.name} can't run here: {reason}")
+        try:
+            values = json.loads(options) if options else {}
+            if not isinstance(values, dict):
+                raise ValueError("options must be a JSON object.")
+        except ValueError as e:
+            raise HTTPException(422, f"Invalid options: {e}") from e
+        legacy = dict(
+            cfg_value=cfg_value, inference_timesteps=inference_timesteps, normalize=normalize, denoise=denoise
+        )
+        values |= {k: v for k, v in legacy.items() if v is not None}
         if profile.exclusive and (running := jobs.running("import") or jobs.running("check")):
             raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
-        make_room_for_tts()
+        make_room_for_tts(tts_engine)
         # As WAV when soundfile can't read it (e.g. m4a): voxcpm can't without a system FFmpeg.
         ref_path = audio_io.to_wav(_save_upload(reference_audio)) if reference_audio else None
         try:
-            result = service.synthesize(
-                SynthesisRequest(
+            result = tts_engine.synthesize(
+                engines.SynthesisRequest(
                     text=text,
-                    control=control,
+                    style=control,
                     lora_id=lora_id or None,
                     reference_wav=ref_path,
                     prompt_text=prompt_text,
-                    cfg_value=cfg_value,
-                    inference_timesteps=inference_timesteps,
-                    normalize=normalize,
-                    denoise=denoise,
                     seed=seed,
+                    options=values,
                 )
             )
         except KeyError as e:
@@ -506,12 +549,16 @@ def create_app(
         """The running synthesis: phase (idle | loading | preparing | compiling |
         generating), step and expected steps (an estimate; the text decides when
         it stops), attempt (VoxCPM retries a run-away generation) and elapsed seconds."""
+        for engine in registry.values():
+            if (progress := engine.progress())["phase"] != "idle":
+                return progress
         return service.progress_public()
 
     @app.post("/api/model/unload")
     def unload() -> dict:
-        # Frees all GPU memory the server holds: TTS, ASR and the aligner.
-        service.unload()
+        # Frees all GPU memory the server holds: TTS engines, ASR and the aligner.
+        for engine in registry.values():
+            engine.unload()
         asr.unload()
         align.unload()
         separation.unload()
@@ -653,8 +700,10 @@ def create_app(
     def make_room_for_prep() -> None:
         """On a card that fits one model group (vram.Profile.exclusive), unload TTS
         before ASR / alignment / separation work on its GPU."""
-        if profile.exclusive and same_gpu(service.device, asr.device):
-            service.unload()
+        if profile.exclusive:
+            for engine in registry.values():
+                if engine.loaded and same_gpu(engine.device, asr.device):
+                    engine.unload()
 
     def take_gpu(owner) -> None:
         """On cards that fit one preparation model at a time (Profile.swap_prep_models),
@@ -679,10 +728,14 @@ def create_app(
 
         return dataclasses.replace(chain, process=process)
 
-    def make_room_for_tts() -> None:
+    def make_room_for_tts(engine: Engine) -> None:
+        # One TTS engine per GPU: each takes 5-8 GB.
+        for other in registry.values():
+            if other is not engine and other.loaded and same_gpu(other.device, engine.device):
+                other.unload()
         if profile.exclusive:
             for helper in (asr, align, separation, singing):
-                if helper.loaded and same_gpu(helper.device, service.device):
+                if helper.loaded and same_gpu(helper.device, engine.device):
                     helper.unload()
 
     def refuse_if_busy(gpu: bool) -> None:

@@ -328,7 +328,8 @@ def use_optimizer(name: str, prodigy_steps: int = 0) -> None:
     print(f"[studio] Optimizer: {name}.", file=sys.stderr)
 
 
-OPTIMIZER_KEYS = ("optimizer", "prodigy_steps")  # config keys for use_optimizer, not the script
+# Config keys for use_optimizer and the studio (the run's engine), not the script.
+OPTIMIZER_KEYS = ("optimizer", "prodigy_steps", "engine")
 
 
 def optimizer_from_config(config_path: Path) -> tuple[str, int]:

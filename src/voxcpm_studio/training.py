@@ -26,7 +26,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -34,8 +34,9 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from . import manifests
+from . import engines, manifests
 from .config import Settings
+from .engines import Engine
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,6 @@ SAMPLE_FILE = re.compile(r"step_(\d{7})_(\d+)\.wav")
 REFERENCE_FILE = re.compile(r"reference_(\d+)\.wav")
 MODEL_INPUT_FILE = re.compile(r"reference_(\d+)_16k\.wav")  # a reference as the model hears it
 METRIC_LINE = re.compile(r"\[(train|val)\] step (\d+): (.*)")
-LORA_TARGETS = ["q_proj", "v_proj", "k_proj", "o_proj"]
 STOP_TIMEOUT_S = 120.0  # saving a checkpoint takes seconds; kill after this
 MAX_POINTS = 1000  # per metric series sent to the UI
 LOG_TAIL_LINES = 200
@@ -61,6 +61,7 @@ class TrainingConflict(Exception):
 
 class TrainParams(BaseModel):
     name: str = Field(pattern=RUN_NAME)
+    engine: str = engines.DEFAULT
     # Manifest ids relative to the data dir.
     dataset: str
     val_dataset: str | None = None
@@ -96,6 +97,7 @@ class TrainParams(BaseModel):
 
 class RunSummary(BaseModel):
     name: str
+    engine: str
     # running | stopping | complete | incomplete | failed
     status: str
     # Latest logged step while running, else the last saved step.
@@ -232,59 +234,9 @@ def write_config(run_dir: Path, config: dict) -> None:
     (run_dir / CONFIG_FILE).write_text(text, encoding="utf-8")
 
 
-def resolve_model(model: str) -> tuple[str, int, int]:
-    """Return (local path, encoder sample rate, decoder output rate) for a model."""
-    from voxcpm.core import resolve_model_path
-
-    path = Path(resolve_model_path(model)).resolve()
-    vae = json.loads((path / "config.json").read_text(encoding="utf-8")).get("audio_vae_config") or {}
-    return str(path), int(vae.get("sample_rate", 16_000)), int(vae.get("out_sample_rate") or 0)
-
-
-def build_config(
-    params: TrainParams,
-    run_dir: Path,
-    model: tuple[str, int, int],
-    train_manifest: Path,
-    val_manifest: Path | None,
-) -> dict:
-    pretrained_path, sample_rate, out_sample_rate = model
-    return {
-        "pretrained_path": pretrained_path,
-        "train_manifest": str(train_manifest),
-        "val_manifest": str(val_manifest) if val_manifest else "",
-        "sample_rate": sample_rate,
-        "out_sample_rate": out_sample_rate,
-        "batch_size": params.batch_size,
-        "max_batch_tokens": params.max_batch_tokens,
-        "grad_accum_steps": params.grad_accum_steps,
-        "num_workers": params.num_workers,
-        "num_iters": params.num_iters,
-        "log_interval": params.log_interval,
-        "valid_interval": params.valid_interval,
-        "save_interval": params.save_interval,
-        "learning_rate": params.learning_rate,
-        # Read (and removed) by train_worker.
-        "optimizer": params.optimizer,
-        "prodigy_steps": params.prodigy_steps,
-        "weight_decay": params.weight_decay,
-        "warmup_steps": params.warmup_steps,
-        "max_steps": params.num_iters,
-        "max_grad_norm": params.max_grad_norm,
-        "save_path": str(run_dir / "checkpoints"),
-        "tensorboard": str(run_dir / "logs"),
-        "lambdas": {"loss/diff": 1.0, "loss/stop": 1.0},
-        "lora": {
-            "enable_lm": params.enable_lm,
-            "enable_dit": params.enable_dit,
-            "enable_proj": params.enable_proj,
-            "r": params.lora_rank,
-            "alpha": params.lora_alpha,
-            "dropout": params.lora_dropout,
-            "target_modules_lm": LORA_TARGETS,
-            "target_modules_dit": LORA_TARGETS,
-        },
-    }
+def engine_of(config: dict) -> str:
+    """The engine a run trains (runs from before engines: VoxCPM)."""
+    return str(config.get("engine") or engines.DEFAULT)
 
 
 def _count_lines(manifest: str) -> int:
@@ -317,8 +269,11 @@ CommandFactory = Callable[[Path, Path, Path], list[str]]
 
 
 def worker_command(config_path: Path, samples_dir: Path, stop_file: Path) -> list[str]:
+    """The training process of the run's engine."""
+    engine = engine_of(read_config(config_path.parent))
+    module = engines.classes()[engine].worker_module
     return [
-        sys.executable, "-m", "voxcpm_studio.train_worker", str(config_path),
+        sys.executable, "-m", module, str(config_path),
         "--samples-dir", str(samples_dir),
         "--stop-file", str(stop_file),
         "--parent-pid", str(os.getpid()),
@@ -339,8 +294,10 @@ class TrainingManager:
         settings: Settings,
         command: CommandFactory = worker_command,
         before_start: Callable[[], None] | None = None,
+        engines_: Mapping[str, Engine] | None = None,
     ):
         self.settings = settings
+        self.engines = engines_ if engines_ is not None else engines.create(settings)
         self._command = command
         # Called before a job launches, e.g. to free the GPU it will use.
         self._before_start = before_start
@@ -358,6 +315,7 @@ class TrainingManager:
         return job.run if job else None
 
     def start(self, params: TrainParams) -> RunDetail:
+        engine = self._engine(params.engine)
         data_dir = self.settings.data_dir
         root = manifests.legacy_root(data_dir)
         train_path = manifests.resolve(data_dir, params.dataset)
@@ -377,15 +335,15 @@ class TrainingManager:
                 val, _ = manifests.training_entries(val_path, root)
             else:
                 train, val = manifests.split_holdout(train, params.val_holdout)
-            model = resolve_model(self.settings.model_path("model"))
 
-            run_dir.mkdir(parents=True)
             train_manifest = run_dir / "manifests" / "train.jsonl"
             val_manifest = run_dir / "manifests" / "val.jsonl" if val else None
+            config = {"engine": engine.id, **engine.training_config(params, run_dir, train_manifest, val_manifest)}
+            run_dir.mkdir(parents=True)
             manifests.write_manifest(train, train_manifest)
             if val_manifest:
                 manifests.write_manifest(val, val_manifest)
-            write_config(run_dir, build_config(params, run_dir, model, train_manifest, val_manifest))
+            write_config(run_dir, config)
             self._launch(params.name, run_dir)
         return self.detail(params.name)
 
@@ -394,14 +352,16 @@ class TrainingManager:
             self._ensure_idle()
             run_dir = self._run_dir(name)
             original = read_config(run_dir)
-            config = self._adopt(run_dir, dict(original))
+            config = self._engine(engine_of(original)).adopt(run_dir, dict(original))
 
             saved = saved_step(run_dir)
             if num_iters is not None:
                 if num_iters <= (saved or 0) + 1:
                     raise ValueError(f"Step count must exceed the saved step ({saved}).")
                 # The cosine schedule restarts its decay over the new length.
-                config["num_iters"] = config["max_steps"] = num_iters
+                config["num_iters"] = num_iters
+                if "max_steps" in config:
+                    config["max_steps"] = num_iters
             if is_complete(saved, int(config.get("num_iters", 0))):
                 raise ValueError("This run is complete; raise the step count to continue training.")
 
@@ -512,6 +472,14 @@ class TrainingManager:
 
     # ------------------------------------------------------------------ #
 
+    def _engine(self, id: str) -> Engine:
+        engine = self.engines.get(id)
+        if engine is None:
+            raise ValueError(f"Unknown engine '{id}'.")
+        if reason := engine.unavailable():
+            raise ValueError(f"{engine.name} can't train here: {reason}")
+        return engine
+
     def _ensure_idle(self) -> None:
         if self._job is not None:
             raise TrainingConflict(f"Run '{self._job.run}' is already training.")
@@ -546,6 +514,7 @@ class TrainingManager:
         lora = config.get("lora") or {}
         return RunSummary(
             name=name,
+            engine=engine_of(config),
             status=status,
             step=step,
             saved_step=saved,
@@ -556,36 +525,6 @@ class TrainingManager:
             val_manifest=str(config.get("val_manifest") or ""),
             updated=(log if log.is_file() else run_dir / CONFIG_FILE).stat().st_mtime,
         )
-
-    def _adopt(self, run_dir: Path, config: dict) -> dict:
-        """Make a run's config self-contained: absolute paths, own manifest copies.
-
-        Webui configs hold paths relative to the VoxCPM checkout and manifests
-        whose audio paths the current loader would misread.
-        """
-        root = manifests.legacy_root(self.settings.data_dir)
-
-        def absolute(value) -> Path:
-            path = manifests.local_path(str(value))
-            return path if path.is_absolute() else root / path
-
-        config["pretrained_path"] = str(absolute(config["pretrained_path"]))
-        config["save_path"] = str(run_dir / "checkpoints")
-        config["tensorboard"] = (
-            str(absolute(config["tensorboard"])) if config.get("tensorboard") else str(run_dir / "logs")
-        )
-        for key, file in (("train_manifest", "train.jsonl"), ("val_manifest", "val.jsonl")):
-            if not config.get(key):
-                continue
-            source, local = absolute(config[key]), run_dir / "manifests" / file
-            if source.resolve() == local.resolve():
-                continue
-            if not source.is_file():
-                raise ValueError(f"Manifest not found: {source}")
-            entries, _ = manifests.read_manifest(source, root)
-            manifests.write_manifest(entries, local)
-            config[key] = str(local)
-        return config
 
     def _launch(self, name: str, run_dir: Path) -> None:
         if self._before_start:

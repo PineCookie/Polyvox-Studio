@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from voxcpm.model.voxcpm import LoRAConfig
 
+from .engines import DEFAULT as DEFAULT_ENGINE
+
 logger = logging.getLogger(__name__)
 
 WEIGHTS_FILE = "lora_weights.safetensors"
+# {"lora_config": {...}, "base_model": ..., "engine": ...}; no engine: VoxCPM.
 CONFIG_FILE = "lora_config.json"
 
 
@@ -20,12 +23,25 @@ class LoraCheckpoint:
     # POSIX path relative to the LoRA directory, e.g. "speaker_r64/checkpoints/step_0005000".
     id: str
     path: Path
-    config: LoRAConfig | None
+    config: LoRAConfig | None  # VoxCPM checkpoints only
     base_model: str | None
+    engine: str = DEFAULT_ENGINE
+    # The saved lora_config as written, for any engine (rank "r", "alpha", ...).
+    raw_config: dict | None = None
 
     @property
     def weights_mtime(self) -> float:
         return (self.path / WEIGHTS_FILE).stat().st_mtime
+
+    @property
+    def rank(self) -> int | None:
+        r = (self.raw_config or {}).get("r")
+        return int(r) if isinstance(r, int | float) else None
+
+    @property
+    def alpha(self) -> float | None:
+        alpha = (self.raw_config or {}).get("alpha")
+        return float(alpha) if isinstance(alpha, int | float) else None
 
 
 def default_lora_config() -> LoRAConfig:
@@ -78,27 +94,20 @@ def covers(layout: LoRAConfig, config: LoRAConfig) -> bool:
     )
 
 
-def _read_metadata(ckpt_dir: Path) -> tuple[LoRAConfig | None, str | None]:
+def _load(lora_dir: Path, ckpt_dir: Path) -> LoraCheckpoint:
+    ckpt = LoraCheckpoint(id=ckpt_dir.relative_to(lora_dir).as_posix(), path=ckpt_dir, config=None, base_model=None)
     config_file = ckpt_dir / CONFIG_FILE
     if not config_file.is_file():
-        return None, None
+        return ckpt
     try:
         info = json.loads(config_file.read_text(encoding="utf-8"))
-        cfg = info.get("lora_config")
-        return (LoRAConfig(**cfg) if cfg else None), info.get("base_model")
-    except (OSError, ValueError) as e:
+        engine = str(info.get("engine") or DEFAULT_ENGINE)
+        raw = info.get("lora_config") or None
+        config = LoRAConfig(**raw) if raw and engine == DEFAULT_ENGINE else None
+        return replace(ckpt, config=config, base_model=info.get("base_model"), engine=engine, raw_config=raw)
+    except (OSError, ValueError, TypeError) as e:
         logger.warning("Ignoring unreadable %s: %s", config_file, e)
-        return None, None
-
-
-def _load(lora_dir: Path, ckpt_dir: Path) -> LoraCheckpoint:
-    config, base_model = _read_metadata(ckpt_dir)
-    return LoraCheckpoint(
-        id=ckpt_dir.relative_to(lora_dir).as_posix(),
-        path=ckpt_dir,
-        config=config,
-        base_model=base_model,
-    )
+        return ckpt
 
 
 def scan(lora_dir: Path) -> list[LoraCheckpoint]:
