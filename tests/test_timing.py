@@ -35,7 +35,7 @@ def test_import_job_reports_its_timings(tmp_path, data_dir, service, training):
     from fastapi.testclient import TestClient
     from test_importer import wait_job, write_list
 
-    from voxcpm_studio.api import create_app
+    from voxcpm_studio.server import create_app
 
     clip = tmp_path / "a.wav"
     sf.write(clip, [0.0] * 16000, 16000)

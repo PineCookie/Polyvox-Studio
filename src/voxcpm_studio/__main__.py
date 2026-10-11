@@ -31,7 +31,7 @@ def main() -> None:
 
     import uvicorn
 
-    from .api import create_app
+    from .server import create_app
 
     # Ctrl+C waits at most this long for open responses: a paused <audio> player
     # (e.g. a run's samples) holds its download open, and uvicorn would wait for it

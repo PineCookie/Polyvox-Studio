@@ -8,9 +8,9 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 from test_importer import wait_job, write_list
 
-from voxcpm_studio.api import create_app
 from voxcpm_studio.prep import importer, separation
 from voxcpm_studio.prep.separation import Chain, SeparationService
+from voxcpm_studio.server import create_app
 
 
 def test_config_loader_reads_msst_tuples_and_nothing_else_unsafe(tmp_path):

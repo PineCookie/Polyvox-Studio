@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from test_importer import wait_job
 
 from voxcpm_studio import models
-from voxcpm_studio.api import create_app
+from voxcpm_studio.server import create_app
 
 
 def fake_download(spec, models_dir, endpoint=None, progress=None):

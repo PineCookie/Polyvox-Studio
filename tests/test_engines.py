@@ -6,10 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from voxcpm_studio import engines, lora_library, training
-from voxcpm_studio.api import create_app
 from voxcpm_studio.engines import Capabilities, Engine, Param, SynthesisResult
 from voxcpm_studio.engines.voxcpm.engine import VoxCPMEngine
 from voxcpm_studio.engines.voxcpm.inference import SynthesisRequest
+from voxcpm_studio.server import create_app
 from voxcpm_studio.training import TrainParams
 
 from conftest import make_dataset, make_lora, wait_idle

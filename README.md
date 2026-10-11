@@ -44,7 +44,10 @@ src/voxcpm_studio/
                    roformer/ from Music-Source-Separation-Training (MIT);
                    dots_tts/ from the dots.tts 0.3.1 wheel (Apache-2.0, changes listed
                    in its __init__.py)
-  api.py           FastAPI routes; serves web/dist when built
+  server/          the FastAPI app (app.py; serves web/dist when built), what the
+                   routes share (context.py: services, GPU rules), request / response
+                   bodies (schemas.py) and one module of routes per area: status,
+                   tts, loras, datasets, clips, training
 web/               Vite + React + TypeScript frontend
 tests/             run without a GPU (fake model loader and training worker)
 ```

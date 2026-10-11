@@ -6,9 +6,9 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from voxcpm_studio.api import create_app, free_gpu_for_training
 from voxcpm_studio.prep import asr
 from voxcpm_studio.prep.asr import AsrService
+from voxcpm_studio.server import create_app, free_gpu_for_training
 
 
 def test_transcribe_keeps_input_order_across_batches(asr_service, asr_loader):

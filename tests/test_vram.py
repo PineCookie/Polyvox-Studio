@@ -3,7 +3,7 @@ import torch
 from fastapi.testclient import TestClient
 
 from voxcpm_studio import vram
-from voxcpm_studio.api import create_app
+from voxcpm_studio.server import create_app
 
 
 def test_profiles_by_card_size():
