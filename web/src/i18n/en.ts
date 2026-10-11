@@ -135,7 +135,7 @@ export const en = {
   voice: 'Voice',
   import: 'Import',
   importing: 'Importing…',
-  importLoraTitle: 'Add a LoRA package (.zip) exported from Polyvox Studio',
+  importLoraTitle: 'Add a LoRA or voice package (.zip) exported from Polyvox Studio',
   gsvImportButton: 'GPT-SoVITS…',
   gsvImportButtonTitle: 'Add a voice trained in the GPT-SoVITS webui (v2Pro / v2ProPlus)',
   gsvImportTitle: 'Import a GPT-SoVITS voice',
@@ -185,6 +185,8 @@ export const en = {
   stepSuffix: (step: string) => ` · step ${step}`,
   exportIntro:
     'A zip with the weights, lora_config.json and a README on how to use it. Local paths, optimizer state, logs, transcripts and dataset audio are left out.',
+  exportVoiceIntro:
+    'A zip with both models in the GPT-SoVITS webui’s format (usable there too), the reference clip with its transcript, and a README. Local paths in the weights’ saved training settings, optimizer state, logs, other transcripts and dataset audio are left out.',
   name: 'Name',
   nameRule: 'letters, digits, . _ -',
   hubIdRule: 'a Hugging Face id',

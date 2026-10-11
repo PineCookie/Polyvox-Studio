@@ -1,14 +1,23 @@
-"""Shareable LoRA packages: export a checkpoint, import someone else's.
+"""Shareable packages: export a checkpoint, import someone else's.
 
-A package is a zip holding one folder::
+A package is a zip holding one folder. For a LoRA (VoxCPM, dots.tts)::
 
     <name>/lora_weights.safetensors   the weights, without metadata
     <name>/lora_config.json           {"base_model": "<HF id>", "lora_config": {...}}
                                       (+ "engine" for engines other than VoxCPM)
     <name>/README.md                  what it is and how to use it
 
-Nothing else from a run goes in: no optimizer state, local paths, logs,
-manifests (transcripts) or dataset audio.
+For a GPT-SoVITS voice (whole models; engines/gpt_sovits/voices.package_files)::
+
+    <name>/sovits_weights.pth         SoVITS, as the webui saves it
+    <name>/gpt_weights.ckpt           GPT (absent: the voice uses the base GPT)
+    <name>/reference.wav, reference.json   the default reference clip and its transcript
+    <name>/lora_config.json           {"engine": "gpt_sovits", "version": ..., "base_model": ...}
+    <name>/README.md
+
+Nothing else from a run goes in: no optimizer state, local paths (the
+weights' saved training configs are cleaned of them), logs, manifests
+(transcripts) or dataset audio besides the one reference clip.
 """
 
 from __future__ import annotations
@@ -22,9 +31,14 @@ from pathlib import Path, PurePosixPath
 
 from .engines import DEFAULT as DEFAULT_ENGINE
 from .engines.dots import lora as dots_lora
+from .engines.gpt_sovits import voices as gsv_voices
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
 
 README_FILE = "README.md"
+GSV_GPT_FILE = "gpt_weights.ckpt"
+# A GPT-SoVITS voice package's files besides the README (lora_config.json is rewritten on import).
+GSV_PACKAGE_FILES = ("sovits_weights.pth", GSV_GPT_FILE, "reference.wav", "reference.json")
+PACKAGE_FILES = (WEIGHTS_FILE, CONFIG_FILE, README_FILE, *GSV_PACKAGE_FILES)
 # The engines a package can be for, and the base model the export suggests.
 ENGINE_BASE_MODELS = {DEFAULT_ENGINE: "openbmb/VoxCPM2", dots_lora.ENGINE: "rednote-hilab/dots.tts-soar"}
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)  # zip's earliest date: entries carry no export time
@@ -154,6 +168,40 @@ Generating without a reference clip uses the voice the LoRA learned.
 """
 
 
+def _gsv_readme(name: str, version: str, has_gpt: bool, has_reference: bool, step: int | None) -> str:
+    gpt_row = f"`{GSV_GPT_FILE}`" if has_gpt else "none: the base GPT (`s1v3.ckpt`) speaks for it"
+    reference = (
+        "`reference.wav` is the voice's default reference clip; `reference.json` holds its transcript."
+        if has_reference
+        else "It comes without a reference clip: give one (3-10 s of the voice, with its transcript) when synthesizing."
+    )
+    return f"""# {name}
+
+A [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) {version} voice: both models fine-tuned
+in full from the official {version} base models ([lj1995/GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS)).
+
+| | |
+|---|---|
+| Version | {version} |
+| SoVITS weights | `sovits_weights.pth` |
+| GPT weights | {gpt_row} |
+| Training steps | {step if step is not None else "unknown"} |
+
+{reference} GPT-SoVITS always clones a reference clip: the closer it is to how the
+voice should sound, the better.
+
+## Use
+
+**Polyvox Studio:** Voice panel -> Import, then choose this zip. It appears as the
+GPT-SoVITS voice "{name}", with its reference.
+
+**GPT-SoVITS webui:** copy `sovits_weights.pth` into `SoVITS_weights_{version}/` and
+`{GSV_GPT_FILE if has_gpt else "s1v3.ckpt (from the pretrained models)"}` into `GPT_weights_{version}/` (rename them
+if you like), refresh the model lists and choose them; use the reference clip and
+transcript as the reference audio and text.
+"""
+
+
 def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool = True) -> Path:
     """Write a package for ``ckpt`` to a temporary zip file and return its path."""
     import torch
@@ -161,6 +209,11 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
 
     if not re.fullmatch(PACKAGE_NAME, name):
         raise ValueError("Package name may contain letters (any language), digits, '.', '_' and '-' only.")
+    if ckpt.engine == gsv_voices.ENGINE:  # whole models; base_model and half don't apply
+        files = gsv_voices.package_files(ckpt.path, name)
+        files[README_FILE] = _gsv_readme(name, json.loads(files[CONFIG_FILE])["version"], GSV_GPT_FILE in files,
+                                         gsv_voices.REFERENCE_WAV in files, checkpoint_step(ckpt)).encode()  # fmt: skip
+        return _write_zip(name, files)
     if not HUB_ID.fullmatch(base_model):
         example = ENGINE_BASE_MODELS.get(ckpt.engine, "openbmb/VoxCPM2")
         raise ValueError(f"Base model must be a Hugging Face id such as '{example}'.")
@@ -184,12 +237,24 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
         info = {"engine": ckpt.engine, "base_model": base_model, "lora_config": config}
         readme = _dots_readme(name, base_model, config, step, dtype)
 
-    fd, tmp = tempfile.mkstemp(prefix="voxcpm_lora_", suffix=".zip")
+    files = {
+        WEIGHTS_FILE: weights,
+        CONFIG_FILE: (json.dumps(info, indent=2) + "\n").encode(),
+        README_FILE: readme.encode(),
+    }
+    return _write_zip(name, files)
+
+
+STORED = {WEIGHTS_FILE, gsv_voices.SOVITS_FILE, gsv_voices.GPT_FILE}  # weights don't compress
+
+
+def _write_zip(name: str, files: dict[str, bytes]) -> Path:
+    fd, tmp = tempfile.mkstemp(prefix="polyvox_package_", suffix=".zip")
     os.close(fd)
     with zipfile.ZipFile(tmp, "w") as zf:
-        zf.writestr(_entry(f"{name}/{WEIGHTS_FILE}", zipfile.ZIP_STORED), weights)  # incompressible
-        zf.writestr(_entry(f"{name}/{CONFIG_FILE}", zipfile.ZIP_DEFLATED), json.dumps(info, indent=2) + "\n")
-        zf.writestr(_entry(f"{name}/{README_FILE}", zipfile.ZIP_DEFLATED), readme)
+        for file, data in files.items():
+            method = zipfile.ZIP_STORED if file in STORED else zipfile.ZIP_DEFLATED
+            zf.writestr(_entry(f"{name}/{file}", method), data)
     return Path(tmp)
 
 
@@ -267,10 +332,11 @@ def import_package(lora_dir: Path, package: Path, filename: str) -> tuple[str, s
             # Accept "<name>/<file>" or, from a re-zipped folder, a bare "<file>".
             if len(parts) > 2 or ".." in parts or info.filename.startswith(("/", "\\")):
                 raise ValueError(f"Unexpected entry in package: {info.filename}")
-            if parts[-1] in (WEIGHTS_FILE, CONFIG_FILE, README_FILE):
+            if parts[-1] in PACKAGE_FILES:
                 files[parts[-1]] = info
                 folders.add(parts[0] if len(parts) == 2 else PurePosixPath(filename.replace("\\", "/")).stem)
-        if WEIGHTS_FILE not in files or CONFIG_FILE not in files:
+        voice = gsv_voices.SOVITS_FILE in files  # a GPT-SoVITS voice
+        if not voice and (WEIGHTS_FILE not in files or CONFIG_FILE not in files):
             raise ValueError(f"A package needs {WEIGHTS_FILE} and {CONFIG_FILE}.")
         if len(folders) != 1:
             raise ValueError("A package holds exactly one LoRA.")
@@ -285,6 +351,9 @@ def import_package(lora_dir: Path, package: Path, filename: str) -> tuple[str, s
             raise FileExistsError(f"A LoRA named '{name}' already exists.")
 
         contents = {file: zf.read(info) for file, info in files.items()}
+    if voice:
+        voice_files = {f: d for f, d in contents.items() if f in GSV_PACKAGE_FILES}
+        return gsv_voices.import_package(lora_dir.resolve(), name, voice_files), gsv_voices.ENGINE
     _check_weights(contents[WEIGHTS_FILE])
     engine = _check_config(contents[CONFIG_FILE])
 

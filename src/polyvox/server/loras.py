@@ -45,7 +45,7 @@ def router(s: Studio) -> APIRouter:
         ]
 
     @api.get("/api/loras/export", responses={200: {"content": {"application/zip": {}}}})
-    def export_lora(id: str, name: str, base_model: str, half: bool = True) -> FileResponse:
+    def export_lora(id: str, name: str, base_model: str = "", half: bool = True) -> FileResponse:
         ckpt = found(lora_library.resolve, settings.lora_dir, id)
         path = checked(sharing.export_package, ckpt, name, base_model, half)
         return FileResponse(

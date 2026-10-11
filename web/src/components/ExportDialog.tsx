@@ -45,8 +45,10 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
     dialog.current?.showModal()
   }, [])
 
+  // A GPT-SoVITS voice: whole models in the webui's format, with its reference (no base model or precision to set).
+  const voice = lora.engine === 'gpt_sovits'
   const nameOk = NAME_PATTERN.test(name)
-  const baseOk = HUB_ID_PATTERN.test(baseModel)
+  const baseOk = voice || HUB_ID_PATTERN.test(baseModel)
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -78,7 +80,7 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
           </span>
         </header>
 
-        <p className="muted hint">{t.exportIntro}</p>
+        <p className="muted hint">{voice ? t.exportVoiceIntro : t.exportIntro}</p>
 
         <label className="field">
           <span>
@@ -86,19 +88,23 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
           </span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </label>
-        <label className="field">
-          <span>
-            {t.baseModel} {!baseOk && <span className="field-error">{t.hubIdRule}</span>}
-          </span>
-          <input
-            value={baseModel}
-            onChange={(e) => setBaseModel(e.target.value)}
-            placeholder={BASE_MODELS[lora.engine] ?? BASE_MODELS.voxcpm}
-          />
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={half} onChange={(e) => setHalf(e.target.checked)} /> {t.halfWeights}
-        </label>
+        {!voice && (
+          <>
+            <label className="field">
+              <span>
+                {t.baseModel} {!baseOk && <span className="field-error">{t.hubIdRule}</span>}
+              </span>
+              <input
+                value={baseModel}
+                onChange={(e) => setBaseModel(e.target.value)}
+                placeholder={BASE_MODELS[lora.engine] ?? BASE_MODELS.voxcpm}
+              />
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={half} onChange={(e) => setHalf(e.target.checked)} /> {t.halfWeights}
+            </label>
+          </>
+        )}
 
         <div className="actions">
           <button type="button" className="ghost" onClick={onClose}>

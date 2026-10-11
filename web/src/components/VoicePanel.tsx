@@ -70,7 +70,7 @@ function groupVoices(loras: Lora[], t: Messages): Voice[] {
 
 const GSV_ENGINE = 'gpt_sovits' // voices with a default reference clip
 // Engines whose checkpoints export as packages (sharing.ENGINE_BASE_MODELS).
-const EXPORTABLE = new Set([DEFAULT_ENGINE, 'dots_tts'])
+const EXPORTABLE = new Set([DEFAULT_ENGINE, 'dots_tts', GSV_ENGINE])
 
 const COLLAPSED_KEY = 'polyvox.voiceGroups' // engine ids whose group is folded
 

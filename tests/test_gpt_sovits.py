@@ -483,3 +483,65 @@ def test_training_can_start_from_v2pro(engine, data_dir, tmp_path):
     params = TrainParams(name="run_v", engine="gpt_sovits", dataset="speaker_a/train.jsonl", gsv_version="v2Pro")
     config = engine.training_config(params, tmp_path / "run_v", run_manifest, None)
     assert config["version"] == "v2Pro" and config["feature_cache"].endswith("gpt_sovits_v2Pro.pt")
+
+
+# --------------------------------------------------------------------------- packages
+
+
+def test_voice_packages_round_trip_without_local_details(lora_dir, tmp_path):
+    import zipfile
+
+    from polyvox import sharing
+    from polyvox.vendor.gpt_sovits.process_ckpt import get_sovits_version_from_path_fast, load_sovits_new, load_weights
+
+    folder = lora_dir / "voice_a"
+    folder.mkdir()
+    private = {"exp_dir": "X:/old_pc/logs/voice", "pretrained_s2G": "X:/old_pc/s2G.pth", "segment_size": 20480}
+    buf = io.BytesIO()
+    torch.save({"weight": {"w": torch.ones(2).half()}, "config": {"train": private, "data": {"exp_dir": "X:/d"},
+                                                                  "name": "speaker_a-v2pp"}, "info": "8epoch"}, buf)  # fmt: skip
+    (folder / voices.SOVITS_FILE).write_bytes(b"06" + buf.getvalue()[2:])
+    gpt_config = {"data": {"max_sec": 54}, "train": {"exp_name": "speaker_a", "half_weights_save_dir": "X:/w"},
+                  "output_dir": "X:/old_pc/logs_s1", "train_semantic_path": "X:/old_pc/6.tsv"}  # fmt: skip
+    torch.save({"weight": {"model.w": torch.ones(2).half()}, "config": gpt_config}, folder / voices.GPT_FILE)
+    voices.write_config(folder, "v2ProPlus")
+    voices.write_reference(folder, tone(tmp_path / "ref.wav", 5.0), "示例文本。", "speaker_a/train.jsonl: x.wav")
+    (ckpt,) = lora_library.scan(lora_dir)
+
+    package = sharing.export_package(ckpt, "shared_voice", "")
+    with zipfile.ZipFile(package) as zf:
+        names = sorted(zf.namelist())
+        everything = b"".join(zf.read(n) for n in names)
+    assert names == [f"shared_voice/{f}" for f in sorted([voices.SOVITS_FILE, voices.GPT_FILE, voices.REFERENCE_WAV,
+                                                          voices.REFERENCE_JSON, "lora_config.json", "README.md"])]  # fmt: skip
+    assert b"old_pc" not in everything and b"speaker_a" not in everything  # paths, names and the reference's source
+
+    other = tmp_path / "other_lora"
+    other.mkdir()
+    assert sharing.import_package(other, package, "shared_voice.zip") == ("shared_voice", "gpt_sovits")
+    (imported,) = lora_library.scan(other)
+    assert (imported.engine, imported.version) == ("gpt_sovits", "v2ProPlus")
+    assert get_sovits_version_from_path_fast(str(imported.path / voices.SOVITS_FILE))[1] == "v2ProPlus"
+    sovits = load_sovits_new(imported.path / voices.SOVITS_FILE)
+    assert sovits["config"]["train"] == {"segment_size": 20480} and sovits["config"]["name"] == "shared_voice"
+    assert torch.equal(sovits["weight"]["w"], torch.ones(2).half())
+    assert load_weights(imported.path / voices.GPT_FILE)["config"] == {"data": {"max_sec": 54}, "train": {}}
+    assert voices.read_reference(imported.path)[1] == "示例文本。"
+    with pytest.raises(FileExistsError):
+        sharing.import_package(other, package, "shared_voice.zip")
+
+
+def test_a_voice_package_may_lack_the_gpt_and_reference(lora_dir, tmp_path):
+    from polyvox import sharing
+
+    sovits, _ = webui_weights(tmp_path / "webui")
+    folder = lora_dir / "sovits_only"
+    folder.mkdir()
+    (folder / voices.SOVITS_FILE).write_bytes(sovits.read_bytes())
+    voices.write_config(folder, "v2ProPlus")
+    (ckpt,) = lora_library.scan(lora_dir)
+    package = sharing.export_package(ckpt, "sovits_only_pkg", "")
+    other = tmp_path / "other_lora"
+    other.mkdir()
+    sharing.import_package(other, package, "x.zip")
+    assert sorted(p.name for p in (other / "sovits_only_pkg").iterdir()) == ["lora_config.json", voices.SOVITS_FILE]

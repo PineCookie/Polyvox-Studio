@@ -46,7 +46,7 @@ src/polyvox/
   jobs.py          in-process background jobs with progress and cancel
   training.py      training runs: config, job control, metrics
   speaker.py       speaker similarity of samples (CAM++)
-  sharing.py       export / import of shareable LoRA packages
+  sharing.py       export / import of shareable LoRA and voice packages
   vendor/          train_voxcpm_finetune.py, unmodified from the pinned commit;
                    roformer/ from Music-Source-Separation-Training (MIT);
                    dots_tts/ from the dots.tts 0.3.1 wheel (Apache-2.0, changes listed
@@ -329,13 +329,18 @@ next to `data/`:
 Audio goes to `wavs/` as WAV with plain numbered names, copied or resampled; an
 optional clip length range leaves out clips outside it (GPT-SoVITS suggests 1-15 s).
 
-## Sharing LoRAs
+## Sharing LoRAs and voices
 
 Select a checkpoint in the Voice panel and choose **Export for sharing**. The zip
 holds only `lora_weights.safetensors` (bfloat16 by default: half the size, same
 output), `lora_config.json` with the base model as a Hugging Face id, and a
 README with usage for Polyvox Studio, the `voxcpm` Python API and its CLI. Local
 paths, optimizer state, logs, transcripts and dataset audio are left out.
+
+A GPT-SoVITS voice exports as both models in the GPT-SoVITS webui's format (also
+usable there; the README says where they go), its reference clip and that clip's
+transcript. Paths and names that the webui records in the weights' training
+settings are removed.
 
 **Import** in the Voice panel adds such a zip to the LoRA dir.
 

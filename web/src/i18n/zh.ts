@@ -129,7 +129,7 @@ export const zh: Messages = {
   voice: '音色',
   import: '导入',
   importing: '导入中…',
-  importLoraTitle: '添加从 Polyvox Studio 导出的 LoRA 包（.zip）',
+  importLoraTitle: '添加从 Polyvox Studio 导出的 LoRA 或音色包（.zip）',
   gsvImportButton: 'GPT-SoVITS…',
   gsvImportButtonTitle: '添加在 GPT-SoVITS 网页界面中训练的音色（v2Pro / v2ProPlus）',
   gsvImportTitle: '导入 GPT-SoVITS 音色',
@@ -178,6 +178,8 @@ export const zh: Messages = {
   exportTitle: '导出分享包',
   stepSuffix: (step) => ` · 第 ${step} 步`,
   exportIntro: '一个包含权重、lora_config.json 和使用说明的 zip。不包含本地路径、优化器状态、日志、文本和数据集音频。',
+  exportVoiceIntro:
+    '一个 zip：GPT-SoVITS webui 格式的两个模型（也可在 webui 中使用）、参考音频及其文本，以及使用说明。不包含权重中训练设置里的本地路径、优化器状态、日志、其他文本和数据集音频。',
   name: '名称',
   nameRule: '字母、数字、. _ -',
   hubIdRule: 'Hugging Face 模型 id',
