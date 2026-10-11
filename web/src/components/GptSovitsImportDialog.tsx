@@ -24,7 +24,7 @@ export function GptSovitsImportDialog({ onImported, onError, onClose }: Props) {
   const [sovits, setSovits] = useState('')
   const [gpt, setGpt] = useState('')
   const [name, setName] = useState<string | null>(null) // null: follows the SoVITS file name
-  const [source, setSource] = useState<'dataset' | 'clip'>('dataset')
+  const [source, setSource] = useState<'dataset' | 'clip' | 'later'>('dataset')
   const [datasets, setDatasets] = useState<string[]>([])
   const [dataset, setDataset] = useState('')
   const [clip, setClip] = useState('')
@@ -38,7 +38,7 @@ export function GptSovitsImportDialog({ onImported, onError, onClose }: Props) {
 
   const voiceName = name ?? nameFromPath(sovits)
   const nameOk = NAME_PATTERN.test(voiceName)
-  const referenceOk = source === 'dataset' ? !!dataset : !!clip.trim()
+  const referenceOk = source === 'later' || (source === 'dataset' ? !!dataset : !!clip.trim())
   const ready = nameOk && !!sovits.trim() && !!gpt.trim() && referenceOk
 
   async function submit(e: FormEvent) {
@@ -46,7 +46,12 @@ export function GptSovitsImportDialog({ onImported, onError, onClose }: Props) {
     if (!ready) return
     setBusy(true)
     try {
-      const reference = source === 'dataset' ? { dataset } : { reference: clip.trim(), reference_text: clipText.trim() }
+      const reference =
+        source === 'later'
+          ? {}
+          : source === 'dataset'
+            ? { dataset }
+            : { reference: clip.trim(), reference_text: clipText.trim() }
       const { id, engine } = await importGptSovits({ name: voiceName, sovits, gpt, ...reference })
       onImported(id, engine)
       onClose()
@@ -100,8 +105,14 @@ export function GptSovitsImportDialog({ onImported, onError, onClose }: Props) {
             <label>
               <input type="radio" checked={source === 'clip'} onChange={() => setSource('clip')} /> {t.gsvReferenceClip}
             </label>
+            <label>
+              <input type="radio" checked={source === 'later'} onChange={() => setSource('later')} />{' '}
+              {t.gsvReferenceLater}
+            </label>
           </div>
-          {source === 'dataset' ? (
+          {source === 'later' ? (
+            <span className="muted hint">{t.gsvReferenceLaterHint}</span>
+          ) : source === 'dataset' ? (
             <>
               <select value={dataset} onChange={(e) => setDataset(e.target.value)}>
                 <option value="">{t.chooseDatasetOption}</option>

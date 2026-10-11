@@ -189,6 +189,8 @@ def test_webui_weights_import_as_a_voice(lora_dir, tmp_path):
     assert (ckpt.path / voices.SOVITS_FILE).read_bytes() == sovits.read_bytes()  # still loadable by the webui
     with pytest.raises(FileExistsError):
         voices.import_webui(lora_dir, "声音_a", sovits, gpt, (clip, ""))
+    voices.import_webui(lora_dir, "no_reference", sovits, gpt, None)  # one is added later
+    assert voices.read_reference(lora_dir / "no_reference") is None
 
 
 def test_unsupported_or_unsafe_weights_are_not_imported(lora_dir, tmp_path):

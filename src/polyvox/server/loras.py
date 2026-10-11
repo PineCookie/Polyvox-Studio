@@ -83,7 +83,7 @@ def router(s: Studio) -> APIRouter:
         elif body.reference:
             reference, origin = (importer.clean_path(body.reference), body.reference_text), "file"
         else:
-            raise HTTPException(422, "Choose a dataset to pick the reference clip from, or give a clip.")
+            reference, origin = None, ""  # added later in the Voices panel
         try:
             id = voices.import_webui(
                 settings.lora_dir,

@@ -1173,6 +1173,41 @@ input[type='search']:focus {
   font-size: 0.88rem;
 }
 
+.voice-group {
+  display: grid;
+}
+
+.voice-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 4px 4px;
+  background: transparent;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.voice-group-head .chevron {
+  width: 1em;
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.voice-group-head .muted {
+  margin-left: auto;
+  font-weight: 400;
+}
+
+.voice-group + .voice-group {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
 .voice-row:not(:disabled):hover {
   background: var(--surface-2);
 }

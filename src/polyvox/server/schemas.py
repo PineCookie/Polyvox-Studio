@@ -41,7 +41,8 @@ class GptSovitsImportIn(BaseModel):
     name: str
     sovits: str  # SoVITS_weights_*/<voice>.pth
     gpt: str  # GPT_weights_*/<voice>.ckpt
-    # The default reference: picked from this dataset (manifest id), or this clip + transcript.
+    # The default reference: picked from this dataset (manifest id), or this clip + transcript;
+    # neither: none yet.
     dataset: str | None = None
     reference: str | None = None
     reference_text: str = ""

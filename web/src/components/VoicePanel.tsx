@@ -72,6 +72,24 @@ const GSV_ENGINE = 'gpt_sovits' // voices with a default reference clip
 // Engines whose checkpoints export as packages (sharing.ENGINE_BASE_MODELS).
 const EXPORTABLE = new Set([DEFAULT_ENGINE, 'dots_tts'])
 
+const COLLAPSED_KEY = 'polyvox.voiceGroups' // engine ids whose group is folded
+
+function readCollapsed(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeCollapsed(ids: Set<string>) {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...ids]))
+  } catch {
+    // not remembered (storage unavailable)
+  }
+}
+
 function shortModel(id: string): string {
   return id.split('/').at(-1) ?? id
 }
@@ -124,6 +142,85 @@ export function VoicePanel({
         : lora.rank !== null && lora.alpha !== null
           ? t.rankAlpha(lora.rank, lora.alpha)
           : t.defaultLayout
+
+  // Voices grouped by model, in the server's engine order (VoxCPM first); checkpoints of an
+  // engine this server doesn't know go last.
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed)
+  function toggleGroup(id: string) {
+    setCollapsed((c) => {
+      const next = new Set(c)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      writeCollapsed(next)
+      return next
+    })
+  }
+  const groups: { id: string; name: string; engine: Engine | null; voices: Voice[] }[] =
+    engines.length === 0
+      ? [{ id: 'all', name: '', engine: null, voices: shown }]
+      : [
+          ...engines.map((e) => ({
+            id: e.id,
+            name: e.name,
+            engine: e,
+            voices: shown.filter((v) => v.engine === e.id),
+          })),
+          { id: '?', name: t.otherModels, engine: null, voices: shown.filter(unknownEngine) },
+        ].filter((g) => (filter ? g.voices.length > 0 : g.engine || g.voices.length > 0))
+
+  function baseRow(engine: Engine) {
+    const active = selected.lora === null && selected.engine === engine.id
+    return (
+      <button
+        key={`base:${engine.id}`}
+        type="button"
+        role="radio"
+        aria-checked={active}
+        className={`voice-row ${active ? 'active' : ''}`}
+        onClick={() => onSelect({ engine: engine.id, lora: null })}
+        disabled={!!engine.unavailable}
+        title={engine.unavailable ? t.engineUnavailable(engine.name, engine.unavailable) : undefined}
+      >
+        <span className="voice-row-name">{t.baseModel}</span>
+        <span className="muted">{engine.id === GSV_ENGINE ? 'v2ProPlus' : ''}</span>
+      </button>
+    )
+  }
+
+  function voiceRow(voice: Voice) {
+    const active = voice === currentVoice
+    const best = voice.checkpoints[0]
+    const blocked = incompatible(voice) || unknownEngine(voice)
+    return (
+      <button
+        key={voice.name}
+        type="button"
+        role="radio"
+        aria-checked={active}
+        className={`voice-row ${active ? 'active' : ''}`}
+        onClick={() => select(best.lora)}
+        disabled={blocked}
+        title={incompatible(voice) ? t.trainedOn(voice.baseModelId!, modelId!) : best.lora.id}
+      >
+        <span className="voice-row-name">{voice.name}</span>
+        {incompatible(voice) ? (
+          <span className="tag subtle">{shortModel(voice.baseModelId!)}</span>
+        ) : (
+          <span className="muted">
+            {unknownEngine(voice) && <span className="tag subtle">{voice.engine}</span>}{' '}
+            {[
+              best.lora.rank !== null && t.rank(best.lora.rank),
+              best.lora.version,
+              best.step !== null && t.stepsCount(formatStep(best.step)),
+              best.lora.engine === GSV_ENGINE && best.lora.reference_text === null && t.noReference,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        )}
+      </button>
+    )
+  }
 
   async function importFile(file: File | undefined) {
     if (!file) return
@@ -228,59 +325,30 @@ export function VoicePanel({
       )}
 
       <div className="voice-list" role="radiogroup" aria-label={t.voice}>
-        {/* A base model per engine, in the server's order (VoxCPM first). */}
-        {!filter &&
-          engines.map((engine) => {
-            const active = selected.lora === null && selected.engine === engine.id
-            return (
-              <button
-                key={`base:${engine.id}`}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                className={`voice-row ${active ? 'active' : ''}`}
-                onClick={() => onSelect({ engine: engine.id, lora: null })}
-                disabled={!!engine.unavailable}
-                title={engine.unavailable ? t.engineUnavailable(engine.name, engine.unavailable) : undefined}
-              >
-                <span className="voice-row-name">{t.baseModel}</span>
-                <span className="muted">{engine.name}</span>
-              </button>
-            )
-          })}
-
-        {shown.map((voice) => {
-          const active = voice === currentVoice
-          const best = voice.checkpoints[0]
-          const blocked = incompatible(voice) || unknownEngine(voice)
-          const otherEngine = voice.engine !== DEFAULT_ENGINE
+        {groups.map((group) => {
+          // While filtering every group is open and shows only matches (no base rows).
+          const open = !!filter || !collapsed.has(group.id)
+          const activeHere = (v: Voice) => v === currentVoice
+          const baseActive = !!group.engine && selected.lora === null && selected.engine === group.engine.id
           return (
-            <button
-              key={voice.name}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              className={`voice-row ${active ? 'active' : ''}`}
-              onClick={() => select(best.lora)}
-              disabled={blocked}
-              title={incompatible(voice) ? t.trainedOn(voice.baseModelId!, modelId!) : best.lora.id}
-            >
-              <span className="voice-row-name">{voice.name}</span>
-              {incompatible(voice) ? (
-                <span className="tag subtle">{shortModel(voice.baseModelId!)}</span>
-              ) : (
-                <span className="muted">
-                  {otherEngine && <span className="tag subtle">{engineName(voice.engine)}</span>}{' '}
-                  {[
-                    best.lora.rank !== null && t.rank(best.lora.rank),
-                    best.lora.version,
-                    best.step !== null && t.stepsCount(formatStep(best.step)),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
+            <div key={group.id} className="voice-group">
+              {group.name && (
+                <button
+                  type="button"
+                  className="voice-group-head"
+                  aria-expanded={open}
+                  onClick={() => !filter && toggleGroup(group.id)}
+                >
+                  <span className="chevron" aria-hidden>
+                    {open ? '▾' : '▸'}
+                  </span>
+                  <span>{group.name}</span>
+                  <span className="muted">{group.voices.length}</span>
+                </button>
               )}
-            </button>
+              {group.engine && !filter && (open || baseActive) && baseRow(group.engine)}
+              {group.voices.filter((v) => open || activeHere(v)).map(voiceRow)}
+            </div>
           )
         })}
 

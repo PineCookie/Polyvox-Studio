@@ -104,11 +104,13 @@ def import_webui(
     name: str,
     sovits: Path,
     gpt: Path,
-    reference: tuple[Path, str],
+    reference: tuple[Path, str] | None,
     reference_origin: str = "",
 ) -> str:
     """A voice from weights the GPT-SoVITS webui trained (its SoVITS_weights_* /
-    GPT_weights_* files), into ``lora_dir/<name>/``; returns the voice id."""
+    GPT_weights_* files), into ``lora_dir/<name>/``; returns the voice id.
+    Without a reference it synthesizes only with a clip given each time, until
+    one is set (write_reference)."""
     from ...vendor.gpt_sovits.process_ckpt import get_sovits_version_from_path_fast, load_sovits_new, load_weights
 
     if not re.fullmatch(VOICE_NAME, name):
@@ -137,7 +139,8 @@ def import_webui(
         shutil.copyfile(sovits, staging / SOVITS_FILE)
         shutil.copyfile(gpt, staging / GPT_FILE)
         write_config(staging, version)
-        write_reference(staging, reference[0], reference[1], reference_origin)
+        if reference is not None:
+            write_reference(staging, reference[0], reference[1], reference_origin)
         staging.replace(target)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
