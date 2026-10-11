@@ -51,7 +51,9 @@ src/polyvox/
                    roformer/ from Music-Source-Separation-Training (MIT);
                    dots_tts/ from the dots.tts 0.3.1 wheel (Apache-2.0, changes listed
                    in its __init__.py); gpt_sovits/ from GPT-SoVITS (MIT): the v2Pro
-                   synthesis modules, SoVITS losses and the GPT's optimizer, Chinese + English text (changes in its __init__.py)
+                   synthesis and training modules, Chinese + English text (rebuilt by
+                   tools/vendor_gpt_sovits.py from a pinned upstream commit; changes listed
+                   in its __init__.py)
   server/          the FastAPI app (app.py; serves web/dist when built), what the
                    routes share (context.py: services, GPU rules), request / response
                    bodies (schemas.py) and one module of routes per area: status,
