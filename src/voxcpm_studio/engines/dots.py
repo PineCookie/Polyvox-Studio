@@ -32,20 +32,24 @@ PATCHES_PER_TOKEN = 1.6  # first guess of audio patches per text token; refined 
 MIN_PATCHES = 6
 LEARN_MIN_TOKENS = 10
 
-# model path -> DotsTtsRuntime
-RuntimeLoader = Callable[[str], object]
+# (model path, optimize) -> DotsTtsRuntime, not warmed up yet
+RuntimeLoader = Callable[[str, bool], object]
 
 
-def load_runtime(model: str):
+def load_runtime(model: str, optimize: bool):
+    """dots.tts's runtime; ``optimize``: torch.compile + CUDA graphs per decode
+    step (~4x faster here: 0.19 vs 0.8 s per second of audio). Its warm-up (the
+    compilation, minutes with a cold Inductor cache) is left to the caller, which
+    must snapshot the model before it (dots_lora.Merger)."""
     from ..vendor.dots_tts.runtime import DotsTtsRuntime
 
     dots_lora.quiet_logging()
-    return DotsTtsRuntime.from_pretrained(model, precision="bfloat16", optimize=False)
+    return DotsTtsRuntime.from_pretrained(model, precision="bfloat16", optimize=optimize, warmup_on_optimize=False)
 
 
 @dataclass
 class Progress:
-    phase: str = "idle"  # idle | loading | preparing | generating
+    phase: str = "idle"  # idle | loading | compiling | preparing | generating
     step: int = 0  # audio patches so far (6.25 per second of audio)
     expected: int | None = None
     attempt: int = 0
@@ -105,6 +109,7 @@ class DotsEngine(Engine):
             "device": self.device,
             "model": self.settings.model_path(self.model_setting),
             "loaded": self.loaded,
+            "optimize": self.optimize,
             "active_lora": self._lora[0] if self._lora else None,
         }
 
@@ -184,13 +189,25 @@ class DotsEngine(Engine):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
+    @property
+    def optimize(self) -> bool:
+        return self.device == "cuda" if self.settings.optimize is None else self.settings.optimize
+
     def _ensure_runtime(self):
         if self._runtime is None:
             model = self.settings.model_path(self.model_setting)
-            logger.info("Loading dots.tts from %s", model)
-            self._runtime = self._loader(model)
-            self._merger = dots_lora.Merger(self._runtime.model)
+            logger.info("Loading dots.tts from %s (optimize=%s)", model, self.optimize)
+            runtime = self._loader(model, self.optimize)
+            # Before the warm-up fuses the diffusion head; LoRAs then go into the
+            # fused copies in place, so the recorded CUDA graphs stay valid.
+            self._merger = dots_lora.Merger(runtime.model, keep_fusion=True)
             self._lora = None
+            if self.optimize:
+                self._progress.phase = "compiling"
+                t0 = time.time()
+                runtime.run_warmup()
+                logger.info("dots.tts compiled in %.0f s", time.time() - t0)
+            self._runtime = runtime
         return self._runtime
 
     def _apply_lora(self, ckpt: lora_library.LoraCheckpoint | None) -> None:

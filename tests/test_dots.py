@@ -48,7 +48,12 @@ class TinyDots(nn.Module):
         """What dit_inference.fuse_dit_for_inference does to the modules."""
         dit = self.core.velocity_field_predictor
         for block in dit.blocks:
-            block.attn = attention(("qkv_proj", "o_proj"))
+            old, fused = block.attn, nn.Module()
+            fused.qkv_proj = nn.Linear(DIM, 3 * DIM, bias=False)
+            with torch.no_grad():
+                fused.qkv_proj.weight.copy_(torch.cat([old.q_proj.weight, old.k_proj.weight, old.v_proj.weight]))
+            fused.o_proj = old.o_proj  # kept, as FusedQKVMultiHeadAttention does
+            block.attn = fused
             block.adaLN_modulation = nn.Identity()
         dit.output_layer.adaLN_modulation = nn.Identity()
         self.core.velocity_field_predictor = nn.Module()
@@ -111,6 +116,36 @@ def test_merger_switches_loras_and_undoes_inference_fusion():
     assert all(torch.equal(v, original[k]) for k, v in model.state_dict().items())
 
 
+def test_merger_keeping_fusion_writes_the_fused_copies_in_place():
+    model = TinyDots()
+    merger = dots_lora.Merger(model, keep_fusion=True)
+    dit = model.core.velocity_field_predictor
+    old_attn = dit.blocks[0].attn
+    model.fuse()  # warm-up
+    fused = dit.blocks[0].attn.qkv_proj.weight
+    pointer, before = fused.data_ptr(), fused.clone()
+
+    merger.apply(lora_for(merger))
+
+    assert dit.blocks[0].attn is not old_attn and model._fm_dit_solvers  # still fused
+    assert fused.data_ptr() == pointer  # the same tensor: recorded CUDA graphs stay valid
+    expected = torch.cat([old_attn.q_proj.weight, old_attn.k_proj.weight, old_attn.v_proj.weight])
+    assert torch.equal(fused, expected) and not torch.equal(fused, before)
+    merger.apply(None)
+    assert torch.equal(fused, before)
+
+
+def lora_for(merger: dots_lora.Merger, seed: int = 1) -> dict[str, torch.Tensor]:
+    """LoRA tensors for the merger's (unfused) layer names."""
+    gen = torch.Generator().manual_seed(seed)
+    tensors = {}
+    for name, module in merger._modules.items():
+        if name.endswith(("q_proj", "k_proj", "v_proj", "o_proj")) and "qkv" not in name:
+            tensors[f"{name}.lora_A"] = torch.randn(4, module.in_features, generator=gen)
+            tensors[f"{name}.lora_B"] = torch.randn(module.out_features, 4, generator=gen)
+    return tensors
+
+
 def test_merger_rejects_a_lora_that_does_not_fit():
     model = TinyDots()
     original = {k: v.clone() for k, v in model.state_dict().items()}
@@ -142,6 +177,9 @@ class FakeRuntime:
         self.calls: list[dict] = []
         type(self.model)._generate_latents_stream = lambda model, *a, **k: iter([torch.zeros(1)] * 5)
 
+    def run_warmup(self):
+        self.model.fuse()  # as the optimized runtime's warm-up generations do
+
     def generate(self, **kwargs):
         self.calls.append({**kwargs, "q": self.model.get_submodule(DOTS_LAYER).weight.clone()})
         patches = list(self.model._generate_latents_stream())
@@ -167,7 +205,7 @@ def runtime():
 @pytest.fixture
 def engine(settings, runtime, monkeypatch):
     monkeypatch.setattr(DotsEngine, "unavailable", lambda self: None)
-    return DotsEngine(settings, loader=lambda model: runtime)
+    return DotsEngine(settings, loader=lambda model, optimize: runtime)
 
 
 def test_dots_synthesis_options_seed_and_progress(engine, runtime):

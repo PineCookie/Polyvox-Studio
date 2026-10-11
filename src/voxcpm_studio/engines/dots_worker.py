@@ -15,6 +15,12 @@ text -> speech template, losses averaged over the accumulated batch, gradient
 clipping) with LoRA (dots_lora) instead of full fine-tuning: frozen weights in
 bfloat16 under bfloat16 autocast, the audio VAE and speaker encoder in float32.
 Steps count optimizer updates, 1..num_iters.
+
+Two shortcuts, same results: the frozen audio VAE and speaker encoder run once
+per clip before training (``encode``: the latent distribution, sampled afresh
+each step as before, and the x-vector, a few random 10 s crops of longer clips),
+not at every step (a third of the step time); and the language model's
+vocabulary logits are not computed, as the basic template puts no loss on them.
 """
 
 from __future__ import annotations
@@ -35,6 +41,8 @@ from torch.utils.data import Dataset
 POLL_S = 1.0
 SAMPLES = 2  # validation clips whose texts are synthesized at each validation
 SAMPLE_SEED = 42
+XVEC_CROPS = 3  # x-vectors kept per clip longer than the speaker encoder's 10 s window
+NAMES = {"fm_loss": "loss/diff", "eos_loss": "loss/stop"}  # the losses trained and logged
 
 
 def log(message: str) -> None:
@@ -129,39 +137,105 @@ class Clips(Dataset):
         return self.pipeline.process_sample({"fid": str(i), "text": r["text"], "audio": r["audio"]})
 
 
+def encode(model, pipeline, records: list[dict], workers: int, stop: threading.Event, what: str) -> list[dict]:
+    """Each clip's tokens, audio-VAE latent distribution and x-vector(s), on the CPU.
+
+    Audio is read and resampled in DataLoader workers; they end with the pass
+    (persistent workers outlive the process and hold the studio's stdout pipe)."""
+    import torch
+    from torch.utils.data import DataLoader
+
+    dev = next(model.core.parameters()).device
+    loader = DataLoader(Clips(records, pipeline), batch_size=None, num_workers=workers, persistent_workers=False)
+    window = round(model.xvector_extractor.sample_rate * model.xvector_extractor.max_audio_seconds)
+    out = []
+    t0 = time.time()
+    model.vocoder.eval()
+    model.xvector_extractor.eval()
+    with torch.no_grad():
+        for i, s in enumerate(loader):
+            if stop.is_set():
+                break
+            wav = s["sample"].to(dev)[None]  # [1, 1, samples], padded to whole audio tokens
+            n = int(s["sample_length"])
+            fbank, fbank_length = s["fbank"][None].to(dev), torch.tensor([s["fbank_length"]], device=dev)
+            xvecs = [
+                model.xvector_extractor(
+                    wav, audio_lengths=torch.tensor([n], device=dev), fbank=fbank, fbank_lengths=fbank_length
+                )[0].cpu()
+                for _ in range(XVEC_CROPS if n > window else 1)  # each call crops at random
+            ]
+            out.append(
+                {
+                    "input_ids": torch.tensor(s["input_ids"]),
+                    "labels": torch.tensor(s["labels"]),
+                    "loss_mask": torch.tensor(s["loss_mask"], dtype=torch.float32),
+                    "latents": model.vocoder.extract_latents(wav)[0].cpu(),  # [2 x latent dim, frames]
+                    "xvectors": xvecs,
+                }
+            )
+            if (i + 1) % 200 == 0:
+                log(f"Encoding {what}: {i + 1} / {len(records)} clips")
+    log(f"Encoded {len(out)} {what} clips in {time.time() - t0:.0f} s.")
+    return out
+
+
+def collate(model, items: list[dict], pad_id: int) -> dict:
+    """A training batch of encoded clips, on the model's device, as DotsTtsCore.forward reads it."""
+    import torch
+    from torch.nn.utils.rnn import pad_sequence
+
+    dev = next(model.core.parameters()).device
+    items = sorted(items, key=lambda c: -c["latents"].shape[-1])
+    batch = model.prepare_training_batch(
+        {
+            "input_ids": pad_sequence([c["input_ids"] for c in items], batch_first=True, padding_value=pad_id),
+            "labels": pad_sequence([c["labels"] for c in items], batch_first=True, padding_value=pad_id),
+            "loss_mask": pad_sequence([c["loss_mask"] for c in items], batch_first=True),
+            "input_ids_lengths": torch.tensor([len(c["input_ids"]) for c in items]),
+        }
+    )
+    out = {k: v.to(dev, non_blocking=True) for k, v in batch.items() if torch.is_tensor(v)}
+    out["loss_masks"] = {k: v.to(dev) for k, v in batch["loss_masks"].items()}
+    latents = pad_sequence([c["latents"].T for c in items], batch_first=True).transpose(1, 2).to(dev)
+    out["latents"] = latents
+    out["latent_lengths"] = torch.tensor([c["latents"].shape[-1] for c in items], device=dev)
+    out["latents_sampled"] = model.core.io_helper.sample_from_latent(latents)  # a new draw each step
+    out["xvector"] = torch.stack([random.choice(c["xvectors"]) for c in items]).to(dev)
+    return out
+
+
 class Batches:
-    """Shuffled batches of preprocessed clips (dots.tts's own sample pipeline and
-    collator); one pass = one epoch."""
+    """Shuffled batches of encoded clips; one pass = one epoch."""
 
-    def __init__(self, records, pipeline, collator, batch_size: int, workers: int, seed: int):
-        import torch
-        from torch.utils.data import DataLoader
+    def __init__(self, clips: list[dict], batch_size: int, seed: int):
+        self.clips, self.batch_size = clips, batch_size
+        self.per_epoch = max(1, len(clips) // batch_size)
+        self._rng = random.Random(seed)
+        self._order: list[int] = []
 
-        self.loader = DataLoader(
-            Clips(records, pipeline), batch_size=batch_size, shuffle=True, drop_last=len(records) >= batch_size,
-            num_workers=workers, persistent_workers=workers > 0, collate_fn=collator,
-            generator=torch.Generator().manual_seed(seed),
-        )  # fmt: skip
-        self.per_epoch = len(self.loader)
-        self._it = None  # started on the first batch
+    def next(self) -> list[dict]:
+        if len(self._order) < self.batch_size:
+            self._order = list(range(len(self.clips)))
+            self._rng.shuffle(self._order)
+        picked, self._order = self._order[: self.batch_size], self._order[self.batch_size :]
+        return [self.clips[i] for i in picked]
 
-    def next(self):
-        if self._it is None:
-            self._it = iter(self.loader)
-        try:
-            return next(self._it)
-        except StopIteration:
-            self._it = iter(self.loader)
-            return next(self._it)
 
-    def close(self) -> None:
-        """End the loader's worker processes now: left running, they hold the
-        stdout pipe open after this process exits, and the studio would wait
-        for its end (the run shows "stopping")."""
-        shutdown = getattr(self._it, "_shutdown_workers", None)
-        if shutdown is not None:
-            shutdown()
-        self._it = None
+def loss_terms(model, batch: dict) -> dict:
+    """The trained losses of a collated batch, without vocabulary logits."""
+    llm = model.core.llm
+    forward = llm.forward
+    llm.forward = lambda *args, **kwargs: forward(*args, **{**kwargs, "logits_to_keep": 1})
+    try:
+        out = model.core(batch)
+    finally:
+        del llm.forward  # the class's forward again (inference needs every position)
+    masks = batch["loss_masks"]
+    return {
+        "fm_loss": model._compute_fm_loss_term(out.pred, out.target, masks["fm_loss"]),
+        "eos_loss": model._compute_eos_loss_term(out.eos_out, masks["eos_loss"]),
+    }
 
 
 def main() -> None:
@@ -180,7 +254,6 @@ def main() -> None:
 
     from voxcpm_studio import audio_io, manifests, vram
     from voxcpm_studio.engines import dots_lora
-    from voxcpm_studio.vendor.dots_tts.data.collator import PadCollator
     from voxcpm_studio.vendor.dots_tts.data.pipelines.tts_pipeline import BasicTtsPipeline
     from voxcpm_studio.vendor.dots_tts.models.dots_tts.model import DotsTtsModel
     from voxcpm_studio.vendor.dots_tts.runtime import DotsTtsRuntime
@@ -221,9 +294,13 @@ def main() -> None:
         audio_samples_per_llm_token=model.hop_size * model.config.patch_size,
     )
     pipeline = BasicTtsPipeline(model.tokenizer, data_cfg)
-    collator = PadCollator(model.tokenizer)
+    pad_id = model.tokenizer.pad_token_id
+    pad_id = pad_id if pad_id is not None else (model.tokenizer.eos_token_id or 0)
     batch_size, accum = int(config["batch_size"]), int(config["grad_accum_steps"])
-    batches = Batches(train_records, pipeline, collator, batch_size, int(config.get("num_workers") or 0), seed=0)
+    workers = int(config.get("num_workers") or 0)
+    train_clips = encode(model, pipeline, train_records, workers, stop, "training")
+    val_clips = encode(model, pipeline, val_records, 0, stop, "validation") if val_records else []
+    batches = Batches(train_clips, batch_size, seed=0)
     epoch_steps = max(1.0, batches.per_epoch / accum)
 
     groups = [
@@ -287,17 +364,10 @@ def main() -> None:
         sf.write(tmp, audio, rate, format="WAV")
         tmp.replace(path)
 
-    def loss_terms(batch: dict, norms: dict[str, float] | None = None):
+    def batch_loss(batch: dict, norms: dict[str, float] | None = None):
         """(gradient loss, {name: (sum, count)}) of one collated batch."""
-        prepared = model.prepare_training_batch(batch)
-        b = {k: (v.to(dev, non_blocking=True) if torch.is_tensor(v) else v) for k, v in prepared.items()}
-        b["loss_masks"] = {k: v.to(dev) for k, v in prepared["loss_masks"].items()}
-        processed = model.prepare_training_inputs(b)  # audio VAE and x-vectors, float32, no gradient
-        processed["input_span_mask"], processed["output_span_mask"] = b["input_span_mask"], b["output_span_mask"]
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            terms = model._compute_loss_terms(
-                model.core(processed), labels=processed["labels"], loss_masks=b["loss_masks"]
-            )
+            terms = loss_terms(model, batch)
         sums, loss = {}, 0.0
         for k, t in terms.items():
             s = (t.loss.float() * t.mask.float()).sum()
@@ -306,10 +376,8 @@ def main() -> None:
                 loss = loss + s / max(norms[k], 1.0)
         return loss, sums
 
-    NAMES = {"fm_loss": "loss/diff", "eos_loss": "loss/stop"}
-
     def validate(at: int) -> None:
-        if not val_records:
+        if not val_clips:
             return
         model.eval()
         if schedule_free:
@@ -317,10 +385,9 @@ def main() -> None:
         try:
             totals: dict[str, list[float]] = {}
             with torch.no_grad():
-                for i in range(0, len(val_records), batch_size):
-                    clips = [pipeline.process_sample({"fid": str(j), "text": r["text"], "audio": r["audio"]})
-                             for j, r in enumerate(val_records[i : i + batch_size])]  # fmt: skip
-                    for k, (s, n) in loss_terms(collator(clips))[1].items():
+                for i in range(0, len(val_clips), batch_size):
+                    batch = collate(model, val_clips[i : i + batch_size], pad_id)
+                    for k, (s, n) in batch_loss(batch)[1].items():
                         acc = totals.setdefault(k, [0.0, 0.0])
                         acc[0] += s
                         acc[1] += n
@@ -375,13 +442,13 @@ def main() -> None:
         t_log = time.time()
         window: dict[str, list[float]] = {}
         while step < num_iters and not stop.is_set():
-            micro = [batches.next() for _ in range(accum)]
+            micro = [collate(model, batches.next(), pad_id) for _ in range(accum)]
             norms: dict[str, float] = {}  # loss weights over the whole accumulated batch
             for batch in micro:
-                for k, m in model.prepare_training_batch(batch)["loss_masks"].items():
-                    norms[k] = norms.get(k, 0.0) + float(m.sum())
+                for k in NAMES:
+                    norms[k] = norms.get(k, 0.0) + float(batch["loss_masks"][k].sum())
             for batch in micro:
-                loss, sums = loss_terms(batch, norms)
+                loss, sums = batch_loss(batch, norms)
                 loss.backward()
                 for k, (s, n) in sums.items():
                     acc = window.setdefault(k, [0.0, 0.0])
@@ -411,10 +478,7 @@ def main() -> None:
                 save(step)
         return step
 
-    try:
-        step = train(step)
-    finally:
-        batches.close()
+    step = train(step)
     if step >= num_iters:
         validate(step)
     if step > 0:

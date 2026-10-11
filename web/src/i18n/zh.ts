@@ -96,7 +96,7 @@ export const zh: Messages = {
   generate: '生成',
   generating: '生成中…',
   progressLoading: '正在加载模型',
-  progressCompiling: '正在编译（加载后首次生成，约 30 秒）',
+  progressCompiling: '正在编译（加载后：VoxCPM 约 30 秒，dots.tts 约 1 分钟，首次运行需几分钟）',
   progressGenerating: '正在生成',
   progressRetry: (attempt) => `（第 ${attempt} 次尝试：上次生成过长）`,
   progressPreparing: '准备中',

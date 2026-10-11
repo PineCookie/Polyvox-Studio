@@ -119,17 +119,41 @@ class Unfuse:
 class Merger:
     """Puts one LoRA at a time into a model's weights, keeping the originals of
     the layers it changed so the next LoRA (or none) starts from them. Create it
-    before the model's first generation (see Unfuse)."""
+    before the model's first generation (see Unfuse).
 
-    def __init__(self, model: nn.Module):
+    ``keep_fusion=False`` (training samples) undoes the inference fusion first.
+    ``keep_fusion=True`` (synthesis) leaves it and also writes the fused q/k/v
+    copies, in place: the optimized runtime's CUDA graphs keep the addresses of
+    the tensors they were recorded with, so every tensor must stay the same one.
+    """
+
+    def __init__(self, model: nn.Module, keep_fusion: bool = False):
         self.model = model
+        self.keep_fusion = keep_fusion
         self.unfuse = Unfuse(model)
         self._modules = dict(model.named_modules())
         self._originals: dict[str, torch.Tensor] = {}
 
     @torch.no_grad()
+    def _sync_fused(self) -> None:
+        """Copy the DiT blocks' q/k/v weights into their fused qkv_proj (if fused);
+        o_proj stays the same module in the fused attention."""
+        for block, attn, _ in self.unfuse.blocks:
+            fused = getattr(block.attn, "qkv_proj", None)
+            if block.attn is not attn and fused is not None:
+                fused.weight.copy_(torch.cat([attn.q_proj.weight, attn.k_proj.weight, attn.v_proj.weight]))
+
+    @torch.no_grad()
     def apply(self, tensors: dict[str, torch.Tensor] | None, scale: float = 1.0) -> None:
-        self.unfuse()
+        try:
+            self._apply(tensors, scale)
+        finally:
+            if self.keep_fusion:
+                self._sync_fused()
+
+    def _apply(self, tensors: dict[str, torch.Tensor] | None, scale: float) -> None:
+        if not self.keep_fusion:
+            self.unfuse()
         for name, weight in self._originals.items():
             self._modules[name].weight.copy_(weight)
         if not tensors:
@@ -141,7 +165,7 @@ class Merger:
             layer = self._modules.get(name)
             a, b = tensors[f"{name}.lora_A"], tensors[f"{name}.lora_B"]
             if not isinstance(layer, nn.Linear) or a.shape[1] != layer.in_features or b.shape[0] != layer.out_features:
-                self.apply(None)
+                self._apply(None, 1.0)
                 raise ValueError(f"LoRA layer {name} does not fit this dots.tts model.")
         for name in names:
             weight = self._modules[name].weight
