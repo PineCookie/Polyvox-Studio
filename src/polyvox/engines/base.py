@@ -53,6 +53,8 @@ class Capabilities:
     # voice's own (a checkpoint's reference.wav); none = refused.
     reference_required: bool = False
     training: bool = True  # New run offers it
+    # Training updates every weight (no LoRA rank, no optimizer choice).
+    full_finetune: bool = False
 
 
 @dataclass

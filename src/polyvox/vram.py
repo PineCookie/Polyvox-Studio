@@ -11,7 +11,8 @@ Measured peaks (VoxCPM2, Qwen3-ASR 1.7B; CUDA context ~0.5 GB extra): ASR model
 while generating, ~10.5 GB with the reference denoiser on the GPU; separation
 3.9 GB (2 chunks); aligner 3.1 GB (160 s); training batch 1 / 2 / 4: ~7 / 8.2 /
 10.9 GB. dots.tts training (clips up to ~17 s): batch 4 13.5 GB; with gradient
-checkpointing 4 / 8: 6.9 / 7.7 GB, ~1.9x / 1.3x the time per clip.
+checkpointing 4 / 8: 6.9 / 7.7 GB, ~1.9x / 1.3x the time per clip. GPT-SoVITS SoVITS
+training incl. its front ends: batch 4 / 6 / 8: 6.6 / 7.2 / 8.3 GB.
 """
 
 from __future__ import annotations
@@ -40,15 +41,40 @@ class Profile:
     # without gradient checkpointing (larger ones checkpoint: engines.dots.worker)
     dots_train_batch: int = 1
     dots_plain_batch: int = 0
+    # GPT-SoVITS SoVITS training batch (no accumulation: a GAN, as upstream trains it)
+    gsv_train_batch: int = 1
 
     def public(self) -> dict:
-        return {**asdict(self), "train_batches": {"voxcpm": self.train_batch, "dots_tts": self.dots_train_batch}}
+        train_batches = {
+            "voxcpm": self.train_batch,
+            "dots_tts": self.dots_train_batch,
+            "gpt_sovits": self.gsv_train_batch,
+        }
+        return {**asdict(self), "train_batches": train_batches}
 
 
 PROFILES = (  # (at least this many GB, profile), largest first
-    (15.0, Profile("16 GB or more", 400, 160, 2, False, False, False, 4, dots_train_batch=4, dots_plain_batch=4)),
-    (11.0, Profile("12 GB", 200, 160, 2, True, False, False, 2, dots_train_batch=8, dots_plain_batch=2)),
-    (7.0, Profile("8 GB", 60, 80, 1, True, True, True, 1, True, dots_train_batch=4)),
+    (
+        15.0,
+        Profile(
+            "16 GB or more",
+            400,
+            160,
+            2,
+            False,
+            False,
+            False,
+            4,
+            dots_train_batch=4,
+            dots_plain_batch=4,
+            gsv_train_batch=8,
+        ),
+    ),
+    (
+        11.0,
+        Profile("12 GB", 200, 160, 2, True, False, False, 2, dots_train_batch=8, dots_plain_batch=2, gsv_train_batch=8),
+    ),
+    (7.0, Profile("8 GB", 60, 80, 1, True, True, True, 1, True, dots_train_batch=4, gsv_train_batch=4)),
     (
         0.0,
         Profile(

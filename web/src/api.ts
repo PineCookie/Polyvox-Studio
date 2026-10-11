@@ -50,6 +50,7 @@ export interface Engine {
     lora_hot_swap: boolean
     reference_required: boolean // always clones a clip: the request's or the voice's own
     training: boolean // New run offers it
+    full_finetune: boolean // trains every weight: no LoRA rank or optimizer choice
   }
   params: EngineParam[] // synthesis settings
   model_setting: string // its base model in the Models list

@@ -4,7 +4,7 @@ import type { DatasetReport, Engine, GpuProfile, TrainParams } from '../api'
 import { datasetName, formatStep } from '../format'
 import { useT } from '../i18n'
 import { DatasetReview } from './DatasetReview'
-import { DEFAULT_EPOCHS, DEFAULT_PARAMS, epochsOf, forGpu, scheduleFor } from '../trainParams'
+import { DEFAULT_EPOCHS, DEFAULT_PARAMS, FULL_FINETUNE, epochsOf, forEngine, forGpu, scheduleFor } from '../trainParams'
 import type { Params, Schedule } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { SubTabs } from './SubTabs'
@@ -32,10 +32,12 @@ const SCHEDULE_KEYS: (keyof Schedule)[] = [
   'log_interval',
 ]
 
-function suggestName(dataset: string, engine: string, rank: number, taken: string[]): string {
-  // e.g. voice_r32 (VoxCPM, as before engines), voice_dots_r32
-  const model = engine === DEFAULT_ENGINE ? '' : `_${engine.split('_')[0]}`
-  const base = `${datasetName(dataset).split('/').at(-1)}${model}_r${rank}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
+function suggestName(dataset: string, engine: string, rank: number | null, taken: string[]): string {
+  // e.g. voice_r32 (VoxCPM, as before engines), voice_dots_r32, voice_gsv (full fine-tuning: no rank)
+  const tag = engine === 'gpt_sovits' ? 'gsv' : engine.split('_')[0]
+  const model = engine === DEFAULT_ENGINE ? '' : `_${tag}`
+  const suffix = rank === null ? '' : `_r${rank}`
+  const base = `${datasetName(dataset).split('/').at(-1)}${model}${suffix}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
   let name = base
   for (let i = 2; taken.includes(name); i++) name = `${base}_${i}`
   return name
@@ -75,21 +77,34 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
   }, [])
 
   const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(base.val_holdout, report.valid - 1)) : 0
+  const isFull = (id: string) => !!engines.find((e) => e.id === id)?.capabilities.full_finetune
+  const full = isFull(base.engine)
   const params: Params = {
     ...base,
-    ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base) : {}),
+    ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base, full) : {}),
     ...overrides,
   }
-  const name = customName ?? (dataset ? suggestName(dataset, params.engine, params.lora_rank, runNames) : '')
+  const name =
+    customName ?? (dataset ? suggestName(dataset, params.engine, full ? null : params.lora_rank, runNames) : '')
   const engineName = engines.find((e) => e.id === params.engine)?.name ?? params.engine
-  const set = <K extends keyof Params>(key: K, value: Params[K]) =>
-    SCHEDULE_KEYS.includes(key as keyof Schedule)
-      ? setOverrides((o) => ({ ...o, [key]: value }))
-      : setBase((p) => {
-          const next = { ...p, [key]: value }
-          // Each model has its own batch that fits the GPU.
-          return key === 'engine' && gpu ? forGpu(next, gpu) : next
-        })
+  const set = <K extends keyof Params>(key: K, value: Params[K]) => {
+    if (SCHEDULE_KEYS.includes(key as keyof Schedule)) {
+      setOverrides((o) => ({ ...o, [key]: value }))
+      return
+    }
+    if (key === 'engine') {
+      // Each model has its own batch that fits the GPU, optimizer settings and epochs.
+      const nextFull = isFull(value as string)
+      if (nextFull !== full) setEpochTarget(nextFull ? FULL_FINETUNE.epochs : DEFAULT_EPOCHS)
+      setOverrides({})
+      setBase((p) => {
+        const next = forEngine({ ...p, engine: value as string }, nextFull)
+        return gpu ? forGpu(next, gpu, nextFull) : next
+      })
+      return
+    }
+    setBase((p) => ({ ...p, [key]: value }))
+  }
 
   const nameError = !name ? null : !NAME_PATTERN.test(name) ? t.nameChars : runNames.includes(name) ? t.runExists : null
   const numbersValid =
@@ -188,7 +203,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
               <span className="muted">{t.stepsTimesClips(formatStep(params.num_iters), perStep)}</span>
               <span className="muted">
                 {engines.length > 1 && `${engineName} · `}
-                {t.rankAlpha(params.lora_rank, params.lora_alpha)}
+                {full ? t.fullFinetune : t.rankAlpha(params.lora_rank, params.lora_alpha)}
               </span>
             </>
           )}
@@ -229,6 +244,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
           <ParamsFields
             params={params}
             engines={engines}
+            fullFinetune={full}
             onChange={set}
             validation={validation}
             header={
@@ -256,7 +272,19 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
               },
             }}
             hint={
-              trainClips > 0 ? (
+              trainClips > 0 && full ? (
+                <p className="muted hint">
+                  {t.fullScheduleHint(
+                    formatStep(params.num_iters),
+                    params.batch_size,
+                    gpu?.total_gb ? String(gpu.total_gb) : '',
+                    trainClips.toLocaleString(),
+                    epochs !== null && Math.abs(epochs - epochTarget) > 0.05 ? epochs.toFixed(1) : '',
+                    formatStep(params.valid_interval),
+                    formatStep(params.save_interval),
+                  )}
+                </p>
+              ) : trainClips > 0 ? (
                 <p className="muted hint">
                   {t.scheduleHint(
                     formatStep(params.num_iters),

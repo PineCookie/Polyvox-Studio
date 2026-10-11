@@ -20,13 +20,25 @@ interface Props {
   epochs?: { value: number; onChange: (value: number) => void }
   // The models a run can train (the choice shows when there is more than one).
   engines?: Engine[]
+  // The engine trains every weight: no LoRA, optimizer or accumulation settings.
+  fullFinetune?: boolean
 }
 
 /** Training parameters, editable for a new run and read-only for an existing one. */
-export function ParamsFields({ params, onChange, header, hint, validation, epochs, engines = [] }: Props) {
+export function ParamsFields({
+  params,
+  onChange,
+  header,
+  hint,
+  validation,
+  epochs,
+  engines = [],
+  fullFinetune = false,
+}: Props) {
   const t = useT()
   const readOnly = !onChange
   const voxcpm = params.engine === DEFAULT_ENGINE // token budget and projections are VoxCPM's
+  const lora = !fullFinetune
   const showEngine = engines.length > 1 || !voxcpm
   const engineOptions = engines.some((e) => e.id === params.engine)
     ? engines
@@ -89,30 +101,33 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
         ) : (
           numberField('num_iters', { min: 1, step: 100 })
         )}
-        {numberField('lora_rank', { min: 1, max: 512 })}
-        {numberField('lora_alpha', { min: 0.1, step: 'any' })}
-        <label className="field">
-          <span>{t.params.optimizer}</span>
-          <select
-            value={params.optimizer}
-            onChange={(e) => {
-              const optimizer = e.target.value as Optimizer
-              onChange?.('optimizer', optimizer)
-              onChange?.('learning_rate', OPTIMIZER_LR[optimizer])
-            }}
-          >
-            {OPTIMIZERS.map((o) => (
-              <option key={o} value={o}>
-                {t.optimizers[o]}
-              </option>
-            ))}
-          </select>
-        </label>
+        {lora && numberField('lora_rank', { min: 1, max: 512 })}
+        {lora && numberField('lora_alpha', { min: 0.1, step: 'any' })}
+        {lora && (
+          <label className="field">
+            <span>{t.params.optimizer}</span>
+            <select
+              value={params.optimizer}
+              onChange={(e) => {
+                const optimizer = e.target.value as Optimizer
+                onChange?.('optimizer', optimizer)
+                onChange?.('learning_rate', OPTIMIZER_LR[optimizer])
+              }}
+            >
+              {OPTIMIZERS.map((o) => (
+                <option key={o} value={o}>
+                  {t.optimizers[o]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {numberField(
           'learning_rate',
           { min: 0, step: 'any' },
-          params.optimizer !== 'adamw' ? t.params.lr_multiplier : undefined,
+          lora && params.optimizer !== 'adamw' ? t.params.lr_multiplier : undefined,
         )}
+        {!lora && numberField('batch_size', { min: 1 })}
       </div>
       {hint}
       {validation}
@@ -121,24 +136,27 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
         <summary>{t.advanced}</summary>
         <div className="form-grid">
           {epochs && numberField('num_iters', { min: 1 })}
-          {numberField('batch_size', { min: 1 })}
-          {numberField('grad_accum_steps', { min: 1 })}
-          {params.optimizer === 'adamw' || params.optimizer === 'prodigy'
-            ? numberField('warmup_steps', { min: 0 })
-            : numberField('prodigy_steps', { min: 0 })}
+          {lora && numberField('batch_size', { min: 1 })}
+          {lora && numberField('grad_accum_steps', { min: 1 })}
+          {lora &&
+            (params.optimizer === 'adamw' || params.optimizer === 'prodigy'
+              ? numberField('warmup_steps', { min: 0 })
+              : numberField('prodigy_steps', { min: 0 }))}
           {voxcpm && numberField('max_batch_tokens', { min: 0, step: 1024 })}
-          {numberField('weight_decay', { min: 0, step: 'any' })}
-          {numberField('max_grad_norm', { min: 0, step: 'any' })}
-          {numberField('lora_dropout', { min: 0, max: 0.99, step: 'any' })}
+          {lora && numberField('weight_decay', { min: 0, step: 'any' })}
+          {lora && numberField('max_grad_norm', { min: 0, step: 'any' })}
+          {lora && numberField('lora_dropout', { min: 0, max: 0.99, step: 'any' })}
           {numberField('save_interval', { min: 1 })}
           {numberField('valid_interval', { min: 1 })}
           {numberField('log_interval', { min: 1 })}
-          {numberField('num_workers', { min: 0, max: 16 })}
-          <div className="toggles">
-            {flag('enable_lm')}
-            {flag('enable_dit')}
-            {voxcpm && flag('enable_proj')}
-          </div>
+          {lora && numberField('num_workers', { min: 0, max: 16 })}
+          {lora && (
+            <div className="toggles">
+              {flag('enable_lm')}
+              {flag('enable_dit')}
+              {voxcpm && flag('enable_proj')}
+            </div>
+          )}
         </div>
       </details>
     </fieldset>

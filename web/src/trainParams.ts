@@ -44,27 +44,42 @@ export const OPTIMIZER_LR: Record<Optimizer, number> = { adamw: 1e-4, prodigy: 1
 
 export const EFFECTIVE_BATCH = 16
 
+// Full fine-tuning (GPT-SoVITS, as its webui trains voices): AdamW at the
+// upstream rate, the batch as is (a GAN: no accumulation), the webui's default
+// epochs; checkpoints are whole models (~170 MB), so fewer of them.
+export const FULL_FINETUNE = { epochs: 8, learning_rate: 1e-4, checkpoint_epochs: 4, sample_epochs: 1 }
+
 /** The batch that fits the GPU (its profile's micro-batch for the params' engine),
- * accumulated to the same effective batch: smaller cards train slower, not differently. */
-export function forGpu(params: Params, gpu: GpuProfile): Params {
+ * accumulated to the same effective batch: smaller cards train slower, not differently.
+ * `full`: a full fine-tuning engine, whose batch is not accumulated. */
+export function forGpu(params: Params, gpu: GpuProfile, full = false): Params {
   const batch = Math.max(1, Math.min(gpu.train_batches?.[params.engine] ?? gpu.train_batch, EFFECTIVE_BATCH))
-  return { ...params, batch_size: batch, grad_accum_steps: Math.max(1, Math.round(EFFECTIVE_BATCH / batch)) }
+  const accum = full ? 1 : Math.max(1, Math.round(EFFECTIVE_BATCH / batch))
+  return { ...params, batch_size: batch, grad_accum_steps: accum }
+}
+
+/** The optimizer settings that go with an engine (`full`: full fine-tuning). */
+export function forEngine(params: Params, full: boolean): Params {
+  return full
+    ? { ...params, optimizer: 'adamw', learning_rate: FULL_FINETUNE.learning_rate, grad_accum_steps: 1 }
+    : { ...params, optimizer: DEFAULT_PARAMS.optimizer, learning_rate: DEFAULT_PARAMS.learning_rate }
 }
 
 export type Schedule = Pick<Params, 'num_iters' | 'warmup_steps' | 'save_interval' | 'valid_interval' | 'log_interval'>
 
 /** Steps for `epochs` passes over `clips` at the params' effective batch, and the
  * warmup, checkpoint / validation and log intervals that go with them. */
-export function scheduleFor(epochs: number, clips: number, params: Params): Schedule {
+export function scheduleFor(epochs: number, clips: number, params: Params, full = false): Schedule {
   const perStep = Math.max(1, params.batch_size * params.grad_accum_steps)
-  const stepsPerEpoch = Math.max(1, clips / perStep)
+  // The GPT-SoVITS worker's epochs are whole batches (its last one filled up).
+  const stepsPerEpoch = Math.max(1, full ? Math.ceil(clips / perStep) : clips / perStep)
   const steps = Math.max(1, Math.ceil(epochs * stepsPerEpoch))
   const interval = Math.max(1, Math.round(stepsPerEpoch / CHECKPOINTS_PER_EPOCH))
   return {
     num_iters: steps,
     warmup_steps: Math.max(1, Math.round(steps * WARMUP_SHARE)),
-    save_interval: interval,
-    valid_interval: interval,
+    save_interval: full ? Math.max(1, Math.round(stepsPerEpoch * FULL_FINETUNE.checkpoint_epochs)) : interval,
+    valid_interval: full ? Math.max(1, Math.round(stepsPerEpoch * FULL_FINETUNE.sample_epochs)) : interval,
     log_interval: Math.max(1, Math.min(10, Math.round(stepsPerEpoch / 10))),
   }
 }

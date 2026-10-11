@@ -503,8 +503,26 @@ export const en = {
   runSections: 'Run sections',
   subTabs: { progress: 'Progress', dataset: 'Dataset', parameters: 'Parameters' },
   loss: 'Loss',
-  diffusionLoss: 'Diffusion loss',
-  stopLoss: 'Stop loss',
+  // Losses by the key a worker logs them under; others show their key.
+  lossTitles: {
+    'loss/diff': 'Diffusion loss',
+    'loss/stop': 'Stop loss',
+    'loss/mel': 'Mel loss (SoVITS)',
+    'loss/kl': 'KL loss (SoVITS)',
+    'loss/fm': 'Feature matching loss (SoVITS)',
+    'loss/gen': 'Generator loss (SoVITS)',
+    'loss/disc': 'Discriminator loss (SoVITS)',
+  } as Record<string, string>,
+  lossShort: {
+    'loss/diff': 'Diffusion',
+    'loss/stop': 'Stop',
+    'loss/mel': 'Mel',
+    'loss/kl': 'KL',
+    'loss/fm': 'Feature matching',
+    'loss/gen': 'Generator',
+    'loss/disc': 'Discriminator',
+  } as Record<string, string>,
+  moreLosses: 'More losses',
   runDatasetHint: 'The clips this run trains on (validation clips not included).',
   validation: 'Validation',
   valClips: (n: number) => `${n} clips, for validation loss and audio samples`,
@@ -512,10 +530,7 @@ export const en = {
   tableLatest: (n: number) => `Table (latest ${n} logged steps)`,
   columns: {
     step: 'Step',
-    diffusion: 'Diffusion',
-    stop: 'Stop',
-    valDiffusion: 'Val diffusion',
-    valStop: 'Val stop',
+    val: (loss: string) => `Val ${loss.toLowerCase()}`,
     lr: 'LR',
     epoch: 'Epoch',
   },
@@ -586,6 +601,7 @@ export const en = {
   epochsValue: (e: string) => `${e} epochs`,
   stepsTimesClips: (steps: string, per: number) => `${steps} steps × ${per} clips`,
   rankAlpha: (r: number, alpha: number) => `rank ${r} · alpha ${alpha}`,
+  fullFinetune: 'full fine-tuning',
   progressDisabled: 'Loss and samples appear once training starts',
   datasetLabel: 'Dataset',
   noDatasetsYet: 'No datasets yet. Prepare one from raw recordings or lists in the Prepare tab.',
@@ -603,6 +619,16 @@ export const en = {
     warmup: string,
   ) =>
     `= ${steps} steps of ${per} clips (${batch} × ${accum} accumulated${gpu ? `, the batch that fits this ${gpu} GB GPU` : ''}) over ${clips} training clips${approx ? ` (≈ ${approx} epochs)` : ''}; checkpoint and validation every ${every} steps, warmup ${warmup}. For one speaker, 3–6 epochs usually sound most like them; compare the checkpoints by listening.`,
+  fullScheduleHint: (
+    steps: string,
+    batch: number,
+    gpu: string,
+    clips: string,
+    approx: string,
+    samplesEvery: string,
+    saveEvery: string,
+  ) =>
+    `= ${steps} steps of ${batch} clips${gpu ? ` (the batch that fits this ${gpu} GB GPU)` : ''} over ${clips} training clips${approx ? ` (≈ ${approx} epochs)` : ''}; samples every ${samplesEvery} steps, a checkpoint every ${saveEvery}. GPT-SoVITS trains whole models, as its webui does (default 8 epochs there). This trains SoVITS (the voice's timbre); its checkpoints speak with the base GPT until the GPT stage is added.`,
   stepsFollow: 'Steps follow from the epochs once a dataset is chosen.',
 
   // Parameters

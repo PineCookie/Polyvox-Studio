@@ -476,8 +476,25 @@ export const zh: Messages = {
   runSections: '任务分区',
   subTabs: { progress: '进度', dataset: '数据集', parameters: '参数' },
   loss: '损失',
-  diffusionLoss: '扩散损失',
-  stopLoss: '停止损失',
+  lossTitles: {
+    'loss/diff': '扩散损失',
+    'loss/stop': '停止损失',
+    'loss/mel': 'Mel 损失（SoVITS）',
+    'loss/kl': 'KL 损失（SoVITS）',
+    'loss/fm': '特征匹配损失（SoVITS）',
+    'loss/gen': '生成器损失（SoVITS）',
+    'loss/disc': '判别器损失（SoVITS）',
+  },
+  lossShort: {
+    'loss/diff': '扩散',
+    'loss/stop': '停止',
+    'loss/mel': 'Mel',
+    'loss/kl': 'KL',
+    'loss/fm': '特征匹配',
+    'loss/gen': '生成器',
+    'loss/disc': '判别器',
+  },
+  moreLosses: '更多损失',
   runDatasetHint: '这次训练使用的片段（不含验证片段）。',
   validation: '验证',
   valClips: (n) => `${n} 条，用于验证损失和试听样本`,
@@ -485,10 +502,7 @@ export const zh: Messages = {
   tableLatest: (n) => `表格（最近 ${n} 个记录步）`,
   columns: {
     step: '步',
-    diffusion: '扩散',
-    stop: '停止',
-    valDiffusion: '验证扩散',
-    valStop: '验证停止',
+    val: (loss) => `验证${loss}`,
     lr: '学习率',
     epoch: '轮次',
   },
@@ -558,6 +572,7 @@ export const zh: Messages = {
   epochsValue: (e) => `${e} 轮`,
   stepsTimesClips: (steps, per) => `${steps} 步 × 每步 ${per} 条`,
   rankAlpha: (r, alpha) => `秩 ${r} · alpha ${alpha}`,
+  fullFinetune: '全量微调',
   progressDisabled: '开始训练后才会显示损失和样本',
   datasetLabel: '数据集',
   noDatasetsYet: '还没有数据集。请在「数据集」页从原始录音或标注列表准备一个。',
@@ -565,6 +580,8 @@ export const zh: Messages = {
   chooseDatasetFirst: '请先选择数据集',
   scheduleHint: (steps, per, batch, accum, gpu, clips, approx, every, warmup) =>
     `= ${steps} 步，每步 ${per} 条（${batch} × ${accum} 梯度累积${gpu ? `，按这块 ${gpu} GB 显卡选择的批大小` : ''}），共 ${clips} 条训练片段${approx ? `（约 ${approx} 轮）` : ''}；每 ${every} 步保存检查点并验证，预热 ${warmup} 步。单个说话人通常训练 3–6 轮最像本人；请试听比较各个检查点。`,
+  fullScheduleHint: (steps, batch, gpu, clips, approx, samplesEvery, saveEvery) =>
+    `= ${steps} 步，每步 ${batch} 条${gpu ? `（按这块 ${gpu} GB 显卡选择的批大小）` : ''}，共 ${clips} 条训练片段${approx ? `（约 ${approx} 轮）` : ''}；每 ${samplesEvery} 步生成样本，每 ${saveEvery} 步保存检查点。GPT-SoVITS 与其 webui 一样训练完整模型（webui 默认 8 轮）。这里训练的是 SoVITS（声音的音色）；在加入 GPT 阶段之前，它的检查点使用基础 GPT 说话。`,
   stepsFollow: '选择数据集后，步数会根据轮数自动计算。',
 
   // 参数

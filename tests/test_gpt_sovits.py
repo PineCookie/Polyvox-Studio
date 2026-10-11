@@ -1,5 +1,7 @@
 import io
 import json
+import threading
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -228,3 +230,135 @@ def test_voice_api_import_reference_and_list(settings, service, training, engine
     assert r.status_code == 200 and r.json()["reference_text"] == "新的参考。"
     assert client.post("/api/loras/reference", data={"id": "voice_b"}).status_code == 422
     assert client.post("/api/loras/import-gpt-sovits", json={"name": "x", "sovits": "a", "gpt": "b"}).status_code == 422
+
+
+# --------------------------------------------------------------------------- training
+
+
+def test_training_config_is_full_finetuning_with_the_datasets_best_reference(engine, data_dir, tmp_path):
+    from polyvox.training import TrainParams
+
+    dataset(data_dir, [("good", 6.0, "很好。", {"score": 0.9, "flags": []}), ("ok", 5.0, "还行。", None)])
+    params = TrainParams(name="run_a", engine="gpt_sovits", dataset="speaker_a/train.jsonl", num_iters=50, batch_size=8)
+    config = engine.training_config(params, tmp_path / "run_a", tmp_path / "train.jsonl", None)
+
+    assert (config["num_iters"], config["batch_size"], config["version"]) == (50, 8, "v2ProPlus")
+    assert "lora" not in config and "optimizer" not in config  # every weight trains, as upstream
+    assert Path(config["reference"]["audio"]).name == "good.wav" and config["reference"]["text"] == "很好。"
+    assert GptSovitsEngine.capabilities.training and GptSovitsEngine.capabilities.full_finetune
+
+
+def test_length_batches_are_whole_epochs_of_similar_lengths():
+    from polyvox.engines.gpt_sovits.worker import LengthBatches
+
+    frames = [100, 1500, 120, 1600, 110, 1550, 130, 90, 1700]
+    batches = LengthBatches(frames, batch_size=4)
+    epoch = batches.epoch(0)
+
+    assert batches.per_epoch == 3 and len(epoch) == 3 and all(len(b) == 4 for b in epoch)
+    assert set().union(*epoch) == set(range(len(frames)))  # every clip each epoch
+    assert epoch == batches.epoch(0) and epoch != batches.epoch(1)  # a resumed run gets the same batches
+    # Short and long clips apart, as upstream's buckets keep them: at most one batch straddles the gap.
+    mixed = [b for b in epoch if min(frames[i] for i in b) < 300 < max(frames[i] for i in b)]
+    assert len(mixed) <= 1
+    assert [len(b) for b in LengthBatches([100, 120], batch_size=4).epoch(0)] == [4]
+
+
+def test_trained_sovits_weights_are_saved_as_the_webui_saves_them(lora_dir, tmp_path):
+    from polyvox.engines.gpt_sovits.worker import save_sovits
+    from polyvox.vendor.gpt_sovits.process_ckpt import get_sovits_version_from_path_fast, load_sovits_new
+
+    path = tmp_path / voices.SOVITS_FILE
+    weights = {"dec.w": torch.ones(3), "enc_q.w": torch.ones(2)}
+    save_sovits(path, weights, {"data": {"sampling_rate": 32000}, "model": {}}, "8epoch_100iteration", "v2ProPlus")
+
+    assert get_sovits_version_from_path_fast(str(path)) == ["v2", "v2ProPlus", False]
+    saved = load_sovits_new(path)  # weights only: nothing pickled but tensors and containers
+    assert list(saved["weight"]) == ["dec.w"] and saved["weight"]["dec.w"].dtype == torch.float16
+    assert saved["config"]["data"]["sampling_rate"] == 32000
+    _, gpt = webui_weights(tmp_path / "webui")
+    voices.import_webui(lora_dir, "trained", path, gpt, None)  # the same checks a webui voice passes
+
+
+def test_a_checkpoint_without_gpt_weights_speaks_with_the_base_gpt(engine, pipeline, lora_dir, tmp_path):
+    folder = make_voice(lora_dir, tmp=tmp_path)
+    (folder / voices.GPT_FILE).unlink()
+    engine.synthesize(SynthesisRequest(text="你好", lora_id="voice_a"))
+    assert pipeline.voices == [(str(folder / voices.SOVITS_FILE), "s1v3.ckpt")]
+
+
+class FakeFrontEnds:
+    """synth.Pipeline's front ends for features.clip_features: records what HuBERT hears."""
+
+    device, dtype = "cpu", torch.float32
+
+    def __init__(self):
+        self.heard = []
+        pipeline = self
+
+        class Hubert(torch.nn.Module):
+            def model(self, x):
+                pipeline.heard.append(x)
+                return {"last_hidden_state": torch.zeros(1, x.shape[-1] // 320, 768)}
+
+        class Sv:
+            def compute_embedding3(self, wav):
+                return torch.ones(1, 20480)
+
+        self.hubert, self.sv = Hubert(), Sv()
+
+    def phones_and_bert(self, text, language="zh", lead_in=True):
+        assert not lead_in  # training audio has no lead-in pause
+        return [5, 6, 7], torch.zeros(1024, 3)
+
+
+class FakeBase:
+    class sovits:
+        @staticmethod
+        def extract_latent(ssl):
+            return torch.zeros(1, 1, ssl.shape[-1] // 2, dtype=torch.long)
+
+
+def test_clip_features_follow_upstreams_levels_and_skip_unusable_clips(tmp_path):
+    from polyvox.engines.gpt_sovits import features
+
+    front = FakeFrontEnds()
+    clip = tone(tmp_path / "a.wav", 2.0, rate=16_000)  # peak 0.3
+    out = features.clip_features(front, FakeBase, str(clip), "示例。")
+
+    assert len(out["wav"]) == 64_000 and out["wav"].dtype == torch.int16  # 32 kHz
+    # Half normalized to a 0.95 peak, half as recorded: 0.475 + 0.15
+    assert abs(int(out["wav"].abs().max()) / 32768 - 0.625) < 0.01
+    assert abs(float(front.heard[0].abs().max()) - 0.625 * features.HUBERT_SCALE) < 10
+    assert out["phones"].tolist() == [5, 6, 7] and out["bert"].shape == (1024, 3) and out["sv"].shape == (20480,)
+    assert out["semantic"].shape[0] == out["ssl"].shape[-1] // 2
+
+    sf.write(tmp_path / "silent.wav", np.zeros(16_000, dtype=np.float32), 16_000)
+    stop = threading.Event()
+    records = [{"audio": str(clip), "text": "一。"}, {"audio": str(tmp_path / "silent.wav"), "text": "二。"}]
+    records.append({"audio": str(tmp_path / "missing.wav"), "text": "三。"})
+    clips, skipped = features.extract(front, FakeBase, records, stop)
+    assert [c["index"] for c in clips] == [0] and skipped == {"silent": 1, "unreadable": 1}
+
+
+def test_features_are_cached_per_manifest(tmp_path):
+    from polyvox.engines.gpt_sovits import features
+
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text('{"audio": "a.wav", "text": "一"}\n', encoding="utf-8")
+    cache = tmp_path / "cache" / "features.pt"
+    made = []
+
+    def make():
+        made.append(1)
+        return [{"index": 0, "wav": torch.zeros(4, dtype=torch.int16)}], {"silent": 2}
+
+    key = features.cache_key(manifest, tmp_path, "v2ProPlus")
+    assert features.cached(cache, key, lambda: None) == ([], {})  # stopped: nothing saved
+    assert not cache.exists()
+    first = features.cached(cache, key, make)
+    again = features.cached(cache, key, make)
+    assert len(made) == 1 and again[1] == {"silent": 2} and again[0][0]["index"] == first[0][0]["index"]
+    manifest.write_text('{"audio": "a.wav", "text": "改"}\n', encoding="utf-8")  # edited: extracted again
+    features.cached(cache, features.cache_key(manifest, tmp_path, "v2ProPlus"), make)
+    assert len(made) == 2

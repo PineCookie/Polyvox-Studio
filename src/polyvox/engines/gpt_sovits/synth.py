@@ -138,9 +138,11 @@ class Pipeline:
         )
 
     # ------------------------------------------------------------ text
-    def phones_and_bert(self, text: str, language: str = "zh") -> tuple[list[int], torch.Tensor]:
+    def phones_and_bert(self, text: str, language: str = "zh", lead_in: bool = True) -> tuple[list[int], torch.Tensor]:
         """Phoneme ids and per-phoneme RoBERTa features (zeros for English) of
-        Chinese / English text, as the webui's mixed Chinese-English mode."""
+        Chinese / English text, as the webui's mixed Chinese-English mode.
+        ``lead_in``: very short texts get a "." in front, as upstream synthesizes
+        them (not for training, where the audio has no such pause)."""
         from ...vendor.gpt_sovits.text import cleaned_text_to_sequence
         from ...vendor.gpt_sovits.text.cleaner import clean_text
         from ...vendor.gpt_sovits.text.LangSegmenter import LangSegmenter
@@ -156,7 +158,7 @@ class Pipeline:
             else:
                 features.append(torch.zeros((BERT_DIM, len(phones)), device=self.device))
             phones_all += phones
-        if len(phones_all) < 6 and not text.startswith("."):
+        if lead_in and len(phones_all) < 6 and not text.startswith("."):
             return self.phones_and_bert("." + text, language)  # as upstream: very short texts get a lead-in
         return phones_all, torch.cat(features, 1).to(self.dtype)
 

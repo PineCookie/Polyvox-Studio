@@ -5,7 +5,8 @@ reference clip (GPT-SoVITS always clones from a clip; Synthesize uses this one
 unless another is given):
 
     sovits_weights.pth   SoVITS weights, saved as the webui saves them
-    gpt_weights.ckpt     GPT weights
+    gpt_weights.ckpt     GPT weights (none: the base GPT, e.g. a training
+                         checkpoint from before the GPT stage)
     lora_config.json     {"engine": "gpt_sovits", "version": "v2ProPlus", "base_model": ...}
     reference.wav        the default reference clip (3-10 s)
     reference.json       {"text": its transcript, "source": where it came from}
@@ -94,8 +95,9 @@ def pick_reference(manifest: Path, root: Path | None = None, seed: int = 0) -> t
     return Path(entry["audio"]), entry["text"]
 
 
-def write_config(voice_dir: Path, version: str, base_model: str = BASE_REPO) -> None:
-    info = {"engine": ENGINE, "version": version, "base_model": base_model}
+def write_config(voice_dir: Path, version: str, base_model: str = BASE_REPO, **extra) -> None:
+    """``extra``: e.g. a training checkpoint's stage and epoch."""
+    info = {"engine": ENGINE, "version": version, "base_model": base_model, **extra}
     (voice_dir / CONFIG_FILE).write_text(json.dumps(info, indent=1), encoding="utf-8")
 
 

@@ -1,4 +1,4 @@
-"""GPT-SoVITS (RVC-Boss/GPT-SoVITS, MIT, see LICENSE) at commit 1b47ca07ef43a284e0b8bd7f29d3e1e3ff76082a:
+"""GPT-SoVITS (RVC-Boss/GPT-SoVITS, MIT, see LICENSE) at commit 1b47ca0:
 the modules v2Pro / v2ProPlus synthesis needs (GPT text-to-semantic model,
 SoVITS v2Pro, HuBERT and speaker-embedding front ends, Chinese and English
 text processing), vendored because upstream is a webui rather than a package.
@@ -8,7 +8,8 @@ Changes from upstream:
 - bare top-level imports (AR, module, text, ...) made absolute under
   ``polyvox.vendor.gpt_sovits``; the eres2net modules import each other relatively;
 - left out: webui, gradio, i18n, tools/, v3 / v4 / v5 parts (f5_tts DiT,
-  BigVGAN, models_v5, Accel), training scripts, Japanese / Korean / Cantonese text;
+  BigVGAN, models_v5, Accel), training scripts and data loaders (the studio's
+  worker trains with module/losses.py), Japanese / Korean / Cantonese text;
 - text/LangSegmenter: Chinese / English split by script instead of split_lang +
   fast_langdetect (which download a 125 MB detector model);
 - text/chinese2.py: jieba instead of jieba_fast (no Python 3.13 wheel; same

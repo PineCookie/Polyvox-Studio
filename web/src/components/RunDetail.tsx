@@ -26,6 +26,21 @@ interface Props {
 
 const checkpointId = (run: string, step: number) => `${run}/checkpoints/step_${String(step).padStart(7, '0')}`
 
+// The losses a run's worker logs, in order (the first two charted up front);
+// before its first step, the ones its engine will log.
+const FIRST_LOSSES: Record<string, string[]> = { gpt_sovits: ['loss/mel', 'loss/kl'] }
+const DEFAULT_LOSSES = ['loss/diff', 'loss/stop']
+
+function lossKeys(run: Run): string[] {
+  const keys: string[] = []
+  for (const point of run.train) {
+    for (const key of Object.keys(point)) {
+      if (key.startsWith('loss/') && key !== 'loss/total' && !keys.includes(key)) keys.push(key)
+    }
+  }
+  return keys.length ? keys : (FIRST_LOSSES[run.engine] ?? DEFAULT_LOSSES)
+}
+
 type Tab = 'progress' | 'dataset' | 'parameters'
 
 export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckpoint }: Props) {
@@ -37,6 +52,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
   const eta = live && run.seconds_per_step ? (run.num_iters - step) * run.seconds_per_step : null
   const otherJob = activeRun !== null && activeRun !== run.name
   const similarity = useSimilarity(run)
+  const losses = useMemo(() => lossKeys(run), [run])
 
   return (
     <>
@@ -117,13 +133,22 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
             <header className="panel-head">
               <h2>{t.loss}</h2>
             </header>
-            <LossChart title={t.diffusionLoss} metric="loss/diff" train={run.train} val={run.val} />
-            <LossChart title={t.stopLoss} metric="loss/stop" train={run.train} val={run.val} />
+            {losses.slice(0, 2).map((key) => (
+              <LossChart key={key} title={t.lossTitles[key] ?? key} metric={key} train={run.train} val={run.val} />
+            ))}
+            {losses.length > 2 && (
+              <details className="advanced">
+                <summary>{t.moreLosses}</summary>
+                {losses.slice(2).map((key) => (
+                  <LossChart key={key} title={t.lossTitles[key] ?? key} metric={key} train={run.train} val={run.val} />
+                ))}
+              </details>
+            )}
             <details className="advanced">
               <summary>{t.lrTitle}</summary>
               <LrChart train={run.train} />
             </details>
-            <MetricsTable run={run} />
+            <MetricsTable run={run} losses={losses.slice(0, 2)} />
           </section>
           {run.samples.length > 0 && <SimilarityPanel run={run} similarity={similarity} />}
           <Samples run={run} loras={loras} scores={similarity.data?.scores} onTryCheckpoint={onTryCheckpoint} />
@@ -142,6 +167,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
         <section className="panel">
           <ParamsFields
             params={paramsFromConfig({ engine: run.engine, ...run.config })}
+            fullFinetune={run.lora_rank === null}
             validation={
               <div className="field">
                 <span>{t.validation}</span>
@@ -226,7 +252,7 @@ function SimilarityPanel({ run, similarity }: { run: Run; similarity: Similarity
   )
 }
 
-function MetricsTable({ run }: { run: Run }) {
+function MetricsTable({ run, losses }: { run: Run; losses: string[] }) {
   const t = useT()
   const rows = useMemo(() => {
     const val = new Map(run.val.map((p) => [p.step, p]))
@@ -236,6 +262,7 @@ function MetricsTable({ run }: { run: Run }) {
       .map((p) => ({ train: p, val: val.get(p.step) }))
   }, [run.train, run.val])
   if (rows.length === 0) return null
+  const hasVal = run.val.length > 0
   return (
     <details className="advanced">
       <summary>{t.tableLatest(rows.length)}</summary>
@@ -244,10 +271,10 @@ function MetricsTable({ run }: { run: Run }) {
           <thead>
             <tr>
               <th>{t.columns.step}</th>
-              <th>{t.columns.diffusion}</th>
-              <th>{t.columns.stop}</th>
-              <th>{t.columns.valDiffusion}</th>
-              <th>{t.columns.valStop}</th>
+              {losses.map((key) => (
+                <th key={key}>{t.lossShort[key] ?? key}</th>
+              ))}
+              {hasVal && losses.map((key) => <th key={`val-${key}`}>{t.columns.val(t.lossShort[key] ?? key)}</th>)}
               <th>{t.columns.lr}</th>
               <th>{t.columns.epoch}</th>
             </tr>
@@ -256,10 +283,10 @@ function MetricsTable({ run }: { run: Run }) {
             {rows.map(({ train, val }) => (
               <tr key={train.step}>
                 <td>{formatStep(train.step)}</td>
-                <td>{formatValue(train['loss/diff'])}</td>
-                <td>{formatValue(train['loss/stop'])}</td>
-                <td>{val ? formatValue(val['loss/diff']) : ''}</td>
-                <td>{val ? formatValue(val['loss/stop']) : ''}</td>
+                {losses.map((key) => (
+                  <td key={key}>{formatValue(train[key])}</td>
+                ))}
+                {hasVal && losses.map((key) => <td key={`val-${key}`}>{val ? formatValue(val[key]) : ''}</td>)}
                 <td>{formatValue(train.lr)}</td>
                 <td>{train.epoch?.toFixed(2)}</td>
               </tr>

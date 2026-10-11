@@ -30,7 +30,8 @@ src/polyvox/
                    worker.py (training subprocess)
     gpt_sovits/    engine.py (GPT-SoVITS v2Pro / v2ProPlus, 32 kHz); synth.py (the
                    synthesis pipeline); voices.py (voice folders with a default
-                   reference clip, import of weights the GPT-SoVITS webui trained)
+                   reference clip, import of weights the GPT-SoVITS webui trained);
+                   features.py + worker.py (training: full fine-tuning, SoVITS stage)
   data/            manifests.py (training manifests: discovery, path fixes,
                    inspection); audio_io.py (audio without a system FFmpeg)
   prep/            dataset preparation:
@@ -50,7 +51,7 @@ src/polyvox/
                    roformer/ from Music-Source-Separation-Training (MIT);
                    dots_tts/ from the dots.tts 0.3.1 wheel (Apache-2.0, changes listed
                    in its __init__.py); gpt_sovits/ from GPT-SoVITS (MIT): the v2Pro
-                   synthesis modules, Chinese + English text (changes in its __init__.py)
+                   synthesis modules and SoVITS losses, Chinese + English text (changes in its __init__.py)
   server/          the FastAPI app (app.py; serves web/dist when built), what the
                    routes share (context.py: services, GPU rules), request / response
                    bodies (schemas.py) and one module of routes per area: status,
