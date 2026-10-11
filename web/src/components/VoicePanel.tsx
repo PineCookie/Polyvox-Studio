@@ -157,11 +157,9 @@ export function VoicePanel({
           <>
             <div className="voice-current-head">
               <span className="voice-name">{currentVoice.name}</span>
-              {current.engine === DEFAULT_ENGINE && (
-                <button type="button" className="ghost small" onClick={() => setExporting(current)}>
-                  {t.export}
-                </button>
-              )}
+              <button type="button" className="ghost small" onClick={() => setExporting(current)}>
+                {t.export}
+              </button>
             </div>
             {options.length > 1 && (
               <select

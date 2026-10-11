@@ -9,6 +9,7 @@ from safetensors.torch import load, save_file
 
 from voxcpm_studio import lora_library, sharing
 from voxcpm_studio.api import create_app
+from voxcpm_studio.engines import dots_lora
 
 from conftest import make_lora
 
@@ -97,7 +98,7 @@ def test_import_round_trip(lora_dir, tmp_path):
     package = sharing.export_package(make_checkpoint(lora_dir, r=16), "shared_voice", "openbmb/VoxCPM2")
     other = tmp_path / "other_lora"
 
-    assert sharing.import_package(other, package, "whatever.zip") == "shared_voice"
+    assert sharing.import_package(other, package, "whatever.zip") == ("shared_voice", "voxcpm")
 
     (ckpt,) = lora_library.scan(other)
     assert ckpt.id == "shared_voice" and ckpt.config.r == 16 and ckpt.base_model == "openbmb/VoxCPM2"
@@ -110,7 +111,7 @@ def test_import_accepts_files_without_a_folder(lora_dir, tmp_path):
     package = tmp_path / "upload.zip"
     package.write_bytes(make_zip({k.split("/")[1]: v for k, v in files.items()}))
 
-    assert sharing.import_package(tmp_path / "lora2", package, "My_Voice.zip") == "My_Voice"
+    assert sharing.import_package(tmp_path / "lora2", package, "My_Voice.zip")[0] == "My_Voice"
 
 
 @pytest.mark.parametrize(
@@ -131,6 +132,71 @@ def test_import_rejects_bad_packages(tmp_path, entries, message):
     assert not (tmp_path / "lora").exists()
 
 
+def make_dots_checkpoint(lora_dir, rel="dots_voice/checkpoints/step_0000300"):
+    ckpt = lora_dir / rel
+    ckpt.mkdir(parents=True)
+    save_file(
+        {
+            "core.llm.model.layers.0.self_attn.q_proj.lora_A": torch.randn(16, 64),
+            "core.llm.model.layers.0.self_attn.q_proj.lora_B": torch.zeros(64, 16),
+        },
+        ckpt / "lora_weights.safetensors",
+    )
+    dots_lora.write_config(
+        ckpt, {"r": 16, "alpha": 16.0, "dropout": 0.0, "enable_lm": True, "enable_dit": False}, LOCAL_DOTS
+    )
+    (ckpt / "training_state.pt").write_bytes(b"optimizer state")
+    return lora_library.resolve(lora_dir, rel)
+
+
+LOCAL_DOTS = r"C:\Users\someone\models\rednote-hilab__dots.tts-soar"
+
+
+def test_dots_export_and_round_trip(lora_dir, tmp_path):
+    ckpt = make_dots_checkpoint(lora_dir)
+    assert sharing.hub_id(ckpt.base_model) == "rednote-hilab/dots.tts-soar"
+
+    package = sharing.export_package(ckpt, "dots_voice", "rednote-hilab/dots.tts-soar")
+    files = read_zip(package)
+
+    assert sorted(files) == [
+        "dots_voice/README.md",
+        "dots_voice/lora_config.json",
+        "dots_voice/lora_weights.safetensors",
+    ]
+    info = json.loads(files["dots_voice/lora_config.json"])
+    assert info == {
+        "engine": "dots_tts",
+        "base_model": "rednote-hilab/dots.tts-soar",
+        "lora_config": {"r": 16, "alpha": 16.0, "dropout": 0.0, "enable_lm": True, "enable_dit": False},
+    }
+    readme = files["dots_voice/README.md"].decode()
+    assert "dots.tts" in readme and "| Training steps | 300 |" in readme and "language model" in readme
+    assert "diffusion head" not in readme.split("## Use")[0]
+    for data in files.values():
+        assert b"someone" not in data and str(lora_dir).encode() not in data
+
+    other = tmp_path / "other_lora"
+    assert sharing.import_package(other, package, "x.zip") == ("dots_voice", "dots_tts")
+    (imported,) = lora_library.scan(other)
+    assert (imported.engine, imported.rank, imported.alpha, imported.config) == ("dots_tts", 16, 16.0, None)
+
+
+def test_import_rejects_unknown_engines_and_bad_dots_configs(lora_dir, tmp_path):
+    files = read_zip(sharing.export_package(make_dots_checkpoint(lora_dir), "d", "rednote-hilab/dots.tts-soar"))
+    weights = files["d/lora_weights.safetensors"]
+    for info, message in (
+        ({"engine": "nope", "lora_config": {"r": 8, "alpha": 8}}, "unknown engine"),
+        ({"engine": "dots_tts", "lora_config": {"alpha": 8}}, "rank"),
+    ):
+        package = tmp_path / "p.zip"
+        package.write_bytes(
+            make_zip({"d/lora_weights.safetensors": weights, "d/lora_config.json": json.dumps(info).encode()})
+        )
+        with pytest.raises(ValueError, match=message):
+            sharing.import_package(tmp_path / "lora", package, "p.zip")
+
+
 def test_export_and_import_endpoints(service, training, lora_dir):
     make_checkpoint(lora_dir)
     client = TestClient(create_app(service.settings, service, training))
@@ -146,7 +212,7 @@ def test_export_and_import_endpoints(service, training, lora_dir):
     assert 'filename="voice_r32.zip"' in resp.headers["content-disposition"]
 
     upload = {"package": ("voice_r32.zip", resp.content, "application/zip")}
-    assert client.post("/api/loras/import", files=upload).json() == {"id": "voice_r32"}
+    assert client.post("/api/loras/import", files=upload).json() == {"id": "voice_r32", "engine": "voxcpm"}
     assert client.post("/api/loras/import", files=upload).status_code == 409
     bad = {"package": ("x.zip", b"not a zip", "application/zip")}
     assert client.post("/api/loras/import", files=bad).status_code == 422

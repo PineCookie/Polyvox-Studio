@@ -173,10 +173,11 @@ export async function exportLora(id: string, name: string, baseModel: string, ha
   return (await request(`/api/loras/export?${q}`)).blob()
 }
 
-export async function importLora(file: File): Promise<string> {
+/** Unpack a shared package into the LoRA folder: its id and engine. */
+export async function importLora(file: File): Promise<{ id: string; engine: string }> {
   const form = new FormData()
   form.set('package', file)
-  return (await (await request('/api/loras/import', { method: 'POST', body: form })).json()).id
+  return (await request('/api/loras/import', { method: 'POST', body: form })).json()
 }
 
 export async function unloadModel(): Promise<Status> {

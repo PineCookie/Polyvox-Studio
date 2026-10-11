@@ -454,8 +454,6 @@ def create_app(
     @app.get("/api/loras/export", responses={200: {"content": {"application/zip": {}}}})
     def export_lora(id: str, name: str, base_model: str, half: bool = True) -> FileResponse:
         ckpt = _found(lora_library.resolve, settings.lora_dir, id)
-        if ckpt.engine != "voxcpm":
-            raise HTTPException(422, "Only VoxCPM LoRAs can be exported as packages so far.")
         path = _checked(sharing.export_package, ckpt, name, base_model, half)
         return FileResponse(
             path, media_type="application/zip", filename=f"{name}.zip", background=BackgroundTask(path.unlink)
@@ -465,7 +463,8 @@ def create_app(
     def import_lora(package: Annotated[UploadFile, File()]) -> dict:
         path = _save_upload(package)
         try:
-            return {"id": sharing.import_package(settings.lora_dir, path, package.filename or "lora.zip")}
+            id, engine = sharing.import_package(settings.lora_dir, path, package.filename or "lora.zip")
+            return {"id": id, "engine": engine}
         except FileExistsError as e:
             raise HTTPException(409, str(e)) from e
         except (ValueError, OSError) as e:

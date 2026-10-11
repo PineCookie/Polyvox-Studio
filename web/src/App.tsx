@@ -123,9 +123,9 @@ export default function App() {
 
   async function importPackage(file: File) {
     try {
-      const id = await importLora(file)
+      const { id, engine } = await importLora(file)
       refreshLoras()
-      setVoice({ engine: DEFAULT_ENGINE, lora: id }) // packages are VoxCPM LoRAs
+      setVoice({ engine, lora: id })
     } catch (e) {
       setError((e as Error).message)
     }

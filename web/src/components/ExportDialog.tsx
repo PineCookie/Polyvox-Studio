@@ -15,6 +15,8 @@ interface Props {
 
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 const HUB_ID_PATTERN = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/
+// The usual base model per engine (sharing.ENGINE_BASE_MODELS).
+const BASE_MODELS: Record<string, string> = { voxcpm: 'openbmb/VoxCPM2', dots_tts: 'rednote-hilab/dots.tts-soar' }
 
 // "speaker_r64/checkpoints/step_0004000" -> "speaker_r64_step4000"; the run name for its final weights.
 function defaultName(lora: Lora, final: boolean): string {
@@ -88,7 +90,11 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
           <span>
             {t.baseModel} {!baseOk && <span className="field-error">{t.hubIdRule}</span>}
           </span>
-          <input value={baseModel} onChange={(e) => setBaseModel(e.target.value)} placeholder="openbmb/VoxCPM2" />
+          <input
+            value={baseModel}
+            onChange={(e) => setBaseModel(e.target.value)}
+            placeholder={BASE_MODELS[lora.engine] ?? BASE_MODELS.voxcpm}
+          />
         </label>
         <label className="check">
           <input type="checkbox" checked={half} onChange={(e) => setHalf(e.target.checked)} /> {t.halfWeights}

@@ -4,6 +4,7 @@ A package is a zip holding one folder::
 
     <name>/lora_weights.safetensors   the weights, without metadata
     <name>/lora_config.json           {"base_model": "<HF id>", "lora_config": {...}}
+                                      (+ "engine" for engines other than VoxCPM)
     <name>/README.md                  what it is and how to use it
 
 Nothing else from a run goes in: no optimizer state, local paths, logs,
@@ -19,9 +20,13 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from .engines import DEFAULT as DEFAULT_ENGINE
+from .engines import dots_lora
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
 
 README_FILE = "README.md"
+# The engines a package can be for, and the base model the export suggests.
+ENGINE_BASE_MODELS = {DEFAULT_ENGINE: "openbmb/VoxCPM2", dots_lora.ENGINE: "rednote-hilab/dots.tts-soar"}
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)  # zip's earliest date: entries carry no export time
 PACKAGE_NAME = r"^[^\W_][\w.-]{0,79}$"  # Unicode letters allowed, like run names
 HUB_ID = re.compile(r"[A-Za-z0-9][\w.-]*/[\w.-]+")
@@ -98,6 +103,57 @@ voxcpm design --hf-model-id {base_model} --lora-path {name} {cli_flags} --text "
 """
 
 
+def _dots_readme(name: str, base_model: str, config: dict, step: int | None, dtype: str) -> str:
+    layers = ", ".join(
+        label for key, label in (("enable_lm", "language model"), ("enable_dit", "diffusion head")) if config.get(key)
+    )
+    alpha = config["alpha"]
+    alpha = int(alpha) if float(alpha).is_integer() else alpha
+    return f"""# {name}
+
+A LoRA for [dots.tts](https://github.com/studio-dots-ai/dots.tts), trained on top of
+[{base_model}](https://huggingface.co/{base_model}). It only works with that base model.
+
+| | |
+|---|---|
+| Base model | `{base_model}` |
+| Rank / alpha | {config["r"]} / {alpha} |
+| Layers | attention q/k/v/o of the {layers} |
+| Training steps | {step if step is not None else "unknown"} |
+| Weights | {dtype} |
+
+## Use
+
+**VoxCPM Studio:** Voice panel -> Import, then choose this zip (or unzip it into
+the `lora` folder). It appears as the voice "{name}" (dots.tts).
+
+**Python** (`pip install dots.tts`): dots.tts has no LoRA loading of its own, so
+merge the weights into the model before the first generation. Each layer
+`<name>` has `<name>.lora_A` (rank x in) and `<name>.lora_B` (out x rank); the
+change to its weight is `alpha / rank * B @ A`.
+
+```python
+import torch
+from safetensors.torch import load_file
+from dots_tts.runtime import DotsTtsRuntime
+
+runtime = DotsTtsRuntime.from_pretrained("{base_model}", precision="bfloat16")
+lora = load_file("{name}/lora_weights.safetensors")
+modules = dict(runtime.model.named_modules())
+with torch.no_grad():
+    for key in [k for k in lora if k.endswith(".lora_A")]:
+        layer = key.removesuffix(".lora_A")
+        weight = modules[layer].weight
+        delta = lora[layer + ".lora_B"].float() @ lora[key].float() * ({alpha} / {config["r"]})
+        weight.copy_((weight.float() + delta.to(weight.device)).to(weight.dtype))
+
+audio = runtime.generate(text="Hello!", language="en")["audio"]
+```
+
+Generating without a reference clip uses the voice the LoRA learned.
+"""
+
+
 def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool = True) -> Path:
     """Write a package for ``ckpt`` to a temporary zip file and return its path."""
     import torch
@@ -106,7 +162,10 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
     if not re.fullmatch(PACKAGE_NAME, name):
         raise ValueError("Package name may contain letters (any language), digits, '.', '_' and '-' only.")
     if not HUB_ID.fullmatch(base_model):
-        raise ValueError("Base model must be a Hugging Face id such as 'openbmb/VoxCPM2'.")
+        example = ENGINE_BASE_MODELS.get(ckpt.engine, "openbmb/VoxCPM2")
+        raise ValueError(f"Base model must be a Hugging Face id such as '{example}'.")
+    if ckpt.engine not in ENGINE_BASE_MODELS:
+        raise ValueError(f"LoRAs for '{ckpt.engine}' can't be exported.")
 
     tensors = load_file(str(ckpt.path / WEIGHTS_FILE))
     if half:
@@ -115,9 +174,15 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
         tensors = {k: v.to(torch.bfloat16) if v.is_floating_point() else v for k, v in tensors.items()}
     weights = save(tensors)  # no metadata: tensor names and shapes only
 
-    config = (ckpt.config or default_lora_config()).model_dump()
-    info = {"base_model": base_model, "lora_config": config}
-    readme = _readme(name, base_model, config, checkpoint_step(ckpt), "bfloat16" if half else "float32")
+    step, dtype = checkpoint_step(ckpt), "bfloat16" if half else "float32"
+    if ckpt.engine == DEFAULT_ENGINE:
+        config = (ckpt.config or default_lora_config()).model_dump()
+        info = {"base_model": base_model, "lora_config": config}
+        readme = _readme(name, base_model, config, step, dtype)
+    else:
+        config = _engine_config(ckpt.engine, ckpt.raw_config)
+        info = {"engine": ckpt.engine, "base_model": base_model, "lora_config": config}
+        readme = _dots_readme(name, base_model, config, step, dtype)
 
     fd, tmp = tempfile.mkstemp(prefix="voxcpm_lora_", suffix=".zip")
     os.close(fd)
@@ -149,18 +214,41 @@ def _check_weights(data: bytes) -> None:
         raise ValueError(f"{WEIGHTS_FILE} does not contain LoRA weights.")
 
 
-def _check_config(data: bytes) -> None:
+def _engine_config(engine: str, raw: dict | None) -> dict:
+    """A dots.tts lora_config with the fields its loader reads, checked."""
+    raw = raw or {}
+    r, alpha = raw.get("r"), raw.get("alpha")
+    if not isinstance(r, int) or r < 1 or not isinstance(alpha, int | float) or alpha <= 0:
+        raise ValueError(f"{CONFIG_FILE} needs a rank 'r' and an 'alpha'.")
+    return {
+        "r": r,
+        "alpha": float(alpha),
+        "dropout": float(raw.get("dropout") or 0.0),
+        "enable_lm": bool(raw.get("enable_lm", True)),
+        "enable_dit": bool(raw.get("enable_dit", True)),
+    }
+
+
+def _check_config(data: bytes) -> str:
+    """Validate a package's lora_config.json; returns its engine."""
     from voxcpm.model.voxcpm import LoRAConfig
 
     try:
         info = json.loads(data)
-        LoRAConfig(**info["lora_config"])
+        engine = str(info.get("engine") or DEFAULT_ENGINE)
+        if engine not in ENGINE_BASE_MODELS:
+            raise ValueError(f"unknown engine '{engine}'")
+        if engine == DEFAULT_ENGINE:
+            LoRAConfig(**info["lora_config"])
+        else:
+            _engine_config(engine, info["lora_config"])
+        return engine
     except Exception as e:
         raise ValueError(f"{CONFIG_FILE} is invalid: {e}") from e
 
 
-def import_package(lora_dir: Path, package: Path, filename: str) -> str:
-    """Unpack a package into ``lora_dir/<name>/``; returns the new LoRA id.
+def import_package(lora_dir: Path, package: Path, filename: str) -> tuple[str, str]:
+    """Unpack a package into ``lora_dir/<name>/``; returns the new LoRA id and its engine.
 
     ``filename`` is the uploaded file's name; it names the LoRA when the zip
     holds the files without a folder.
@@ -198,9 +286,9 @@ def import_package(lora_dir: Path, package: Path, filename: str) -> str:
 
         contents = {file: zf.read(info) for file, info in files.items()}
     _check_weights(contents[WEIGHTS_FILE])
-    _check_config(contents[CONFIG_FILE])
+    engine = _check_config(contents[CONFIG_FILE])
 
     target.mkdir(parents=True)
     for file, data in contents.items():
         (target / file).write_bytes(data)
-    return name
+    return name, engine
