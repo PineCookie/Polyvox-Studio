@@ -11,6 +11,7 @@ to four sentences, joined with short pauses.
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 REF_MIN_S, REF_MAX_S = 3.0, 10.0  # upstream refuses references outside this range
 PAUSE_S = 0.3  # between chunks, and after the reference's semantic prompt
@@ -89,8 +92,9 @@ class Pipeline:
 
         self.base_dir, self.device = Path(base_dir), device
         self.half = device.startswith("cuda")
-        # GPT decoding as a CUDA graph (decode.py); off: upstream's loop.
-        self.fast_decode = device.startswith("cuda")
+        # GPT decoding as a CUDA graph (decode.py), its layers fused by torch.compile;
+        # off: upstream's loop.
+        self.fast_decode = self.compile_decode = device.startswith("cuda")
         self.dtype = torch.float16 if self.half else torch.float32
         bert_dir = str(self.base_dir / "chinese-roberta-wwm-ext-large")
         chinese2.configure(str(g2pw_dir), bert_dir)
@@ -250,7 +254,7 @@ class Pipeline:
             decoder = self._decoder(voice)
             with torch.no_grad():
                 if decoder is not None and decoder.fits(ids_t, ref.prompt):
-                    tokens, n = decoder.generate(ids_t, ref.prompt, features[None], **sampling)
+                    tokens, n = self._generate(voice, decoder, ids_t, ref.prompt, features[None], sampling)
                 else:
                     tokens, n = voice.gpt.infer_panel(
                         ids_t,
@@ -279,8 +283,24 @@ class Pipeline:
         if voice.decoder is None:
             from .decode import Decoder
 
-            voice.decoder = Decoder(voice.gpt)
+            voice.decoder = Decoder(voice.gpt, compiled=self.compile_decode)
         return voice.decoder
+
+    def _generate(self, voice: Voice, decoder, *args):
+        """decoder.generate; if fusing its step fails (torch.compile: no working
+        Triton, say), the rest of the process decodes unfused."""
+        *inputs, sampling = args
+        try:
+            return decoder.generate(*inputs, **sampling)
+        except Exception as e:
+            if not self.compile_decode or isinstance(e, torch.OutOfMemoryError):
+                raise
+            logger.warning("GPT-SoVITS: fusing the decoding step failed (%s); decoding unfused", e)
+            from .decode import Decoder
+
+            self.compile_decode = False
+            voice.decoder = Decoder(voice.gpt)
+            return voice.decoder.generate(*inputs, **sampling)
 
 
 @contextlib.contextmanager

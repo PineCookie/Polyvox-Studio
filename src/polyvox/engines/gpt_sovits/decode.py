@@ -7,7 +7,9 @@ its cache with torch.cat) and syncs with the GPU on every token: at ~4 ms per
 token that is mostly launch overhead, and the GPT is most of synthesis time.
 Here the prompt goes through upstream's own process_prompt, then every step
 (embedding, layers, logits and sampling) replays one captured graph; the host
-only reads back whether to stop. Off CUDA the same step runs eagerly.
+only reads back whether to stop. Off CUDA the same step runs eagerly. Each
+layer's math after its cache write (attention, projections, norms, MLP) can be
+fused by torch.compile (`compiled`): one compiled function serves all layers.
 
 Sampling as upstream's logits_to_probs: the repetition penalty on every token
 so far (prompt included), top-p, temperature, top-k, then exponential-race
@@ -24,13 +26,43 @@ MAX_STEPS = 1500  # upstream's decoding loop
 MIN_STEPS = 11  # the end of speech is masked before this step (at least 10 tokens, ~0.4 s)
 
 
+def layer_rest(x, q, k_cache, v_cache, bias, out_w, out_b, n1w, n1b, w1, b1, w2, b2, n2w, n2b,
+               heads: int, dim: int, eps1: float, eps2: float):  # fmt: skip
+    """One layer after its query / key / value projection and cache write:
+    attention as plain matrix products (for a one-token query PyTorch's fused
+    attention kernels, built for long queries, took ~100 us a layer), scores
+    and softmax in float32; then upstream's output projection, norms and MLP."""
+    length = k_cache.shape[1]
+    qh = q.view(1, 1, heads, -1).transpose(1, 2)
+    kh = k_cache.view(1, length, heads, -1).transpose(1, 2)
+    vh = v_cache.view(1, length, heads, -1).transpose(1, 2)
+    scores = torch.matmul(qh, kh.transpose(-2, -1)).float() * (dim // heads) ** -0.5 + bias
+    attn = torch.matmul(torch.softmax(scores, dim=-1).to(vh.dtype), vh)
+    x = x + F.linear(attn.transpose(1, 2).reshape(1, 1, -1), out_w, out_b)
+    x = F.layer_norm(x, [dim], n1w, n1b, eps1)
+    x = x + F.linear(F.relu(F.linear(x, w1, b1)), w2, b2)
+    return F.layer_norm(x, [dim], n2w, n2b, eps2)
+
+
+_compiled_layer_rest = None
+
+
+def compiled_layer_rest():
+    """layer_rest fused by torch.compile (once per process; compiled on first call)."""
+    global _compiled_layer_rest
+    if _compiled_layer_rest is None:
+        _compiled_layer_rest = torch.compile(layer_rest, dynamic=False, fullgraph=True)
+    return _compiled_layer_rest
+
+
 class Decoder:
     """Decoding for one loaded GPT (Text2SemanticDecoder, eval mode). It uses
     the model's own weight tensors, so weights loaded into the model in place
     (load_state_dict) take effect without a new graph."""
 
-    def __init__(self, gpt, max_len: int = 2048, graphs: bool | None = None):
+    def __init__(self, gpt, max_len: int = 2048, graphs: bool | None = None, compiled: bool = False):
         self.gpt = gpt
+        self._layer_rest = compiled_layer_rest() if compiled else layer_rest
         weight = gpt.ar_predict_layer.weight
         self.device, self.dtype = weight.device, weight.dtype
         self.graphs = self.device.type == "cuda" if graphs is None else graphs
@@ -114,26 +146,16 @@ class Decoder:
         pos = gpt.ar_audio_position
         # index_select, not pe[:, audio_pos]: a 0-d index tensor becomes a Python int (a sync)
         x = emb * pos.x_scale + pos.alpha * pos.pe.index_select(1, self.audio_pos.view(1)).to(emb.dtype)
-        # Attention as plain matrix products: for a one-token query, PyTorch's
-        # fused attention kernels (built for long queries) took ~100 us a layer,
-        # three quarters of a step. Scores and softmax in float32.
         bias = torch.where(self.positions <= self.cache_pos, 0.0, -float("inf")).view(1, 1, 1, -1)
-        scale = (self.dim // heads) ** -0.5
         index = self.cache_pos.view(1)
         for i, (qkv_w, qkv_b, out_w, out_b, norm1, mlp, norm2) in enumerate(self.layers):
             q, k, v = F.linear(x, qkv_w, qkv_b).chunk(3, dim=-1)
             self.k[i].index_copy_(1, index, k)
             self.v[i].index_copy_(1, index, v)
-            qh = q.view(1, 1, heads, -1).transpose(1, 2)
-            kh = self.k[i].view(1, self.max_len, heads, -1).transpose(1, 2)
-            vh = self.v[i].view(1, self.max_len, heads, -1).transpose(1, 2)
-            scores = torch.matmul(qh, kh.transpose(-2, -1)).float() * scale + bias
-            attn = torch.matmul(torch.softmax(scores, dim=-1).to(vh.dtype), vh)
-            x = x + F.linear(attn.transpose(1, 2).reshape(1, 1, -1), out_w, out_b)
-            x = F.layer_norm(x, [self.dim], *norm1[:2], norm1[2])
-            w1, b1, w2, b2 = mlp
-            x = x + F.linear(F.relu(F.linear(x, w1, b1)), w2, b2)
-            x = F.layer_norm(x, [self.dim], *norm2[:2], norm2[2])
+            x = self._layer_rest(
+                x, q, self.k[i], self.v[i], bias, out_w, out_b, *norm1[:2], *mlp, *norm2[:2], heads, self.dim,
+                norm1[2], norm2[2],
+            )  # fmt: skip
         logits = gpt.ar_predict_layer(x[:, -1])
         token, stop = self._sample(logits, top_k, use_top_p)
         self._advance(token, stop)
