@@ -19,7 +19,9 @@ src/voxcpm_studio/
   config.py        settings from VOXCPM_STUDIO_* env vars
   models.py        the models used, and downloading them (Hugging Face / mirror)
   engines/         TTS engines behind one interface (base.py): synthesis settings,
-                   capabilities, training config; voxcpm.py wraps the modules below
+                   capabilities, training config; voxcpm.py wraps the modules below;
+                   dots.py (dots.tts, 48 kHz) with its LoRA (dots_lora.py) and
+                   training worker (dots_worker.py)
   lora_library.py  checkpoint discovery and metadata (each records its engine)
   inference.py     VoxCPM model cache, LoRA hot-swap, synthesis
   manifests.py     training manifests: discovery, path fixes, inspection
@@ -34,7 +36,9 @@ src/voxcpm_studio/
   train_worker.py  VoxCPM's training subprocess around the vendored script
   sharing.py       export / import of shareable LoRA packages
   vendor/          train_voxcpm_finetune.py, unmodified from the pinned commit;
-                   roformer/ from Music-Source-Separation-Training (MIT)
+                   roformer/ from Music-Source-Separation-Training (MIT);
+                   dots_tts/ from the dots.tts 0.3.1 wheel (Apache-2.0, changes listed
+                   in its __init__.py)
   api.py           FastAPI routes; serves web/dist when built
 web/               Vite + React + TypeScript frontend
 tests/             run without a GPU (fake model loader and training worker)

@@ -1184,6 +1184,19 @@ wheels = [
 ]
 
 [[package]]
+name = "loguru"
+version = "0.7.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "win32-setctime", marker = "sys_platform == 'win32' or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/29/0348de65b8cc732daa3e33e67806420b2ae89bdce2b04af740289c5c6c8c/loguru-0.7.3-py3-none-any.whl", hash = "sha256:31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df004162264b28220c", size = 61595, upload-time = "2024-12-06T11:20:54.538Z" },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2983,6 +2996,24 @@ wheels = [
 ]
 
 [[package]]
+name = "torchdiffeq"
+version = "0.2.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "scipy" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'group-13-voxcpm-studio-cpu') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm') or (extra != 'group-13-voxcpm-studio-cpu' and extra != 'group-13-voxcpm-studio-cu126' and extra != 'group-13-voxcpm-studio-cu130' and extra != 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'group-13-voxcpm-studio-cpu') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'group-13-voxcpm-studio-cu126' or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'group-13-voxcpm-studio-cu130' or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cpu' and extra != 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
+    { name = "torch", version = "2.14.1+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "(extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra != 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm') or (extra != 'group-13-voxcpm-studio-cpu' and extra != 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/87/ec/a40aa124660f0ee65e6760cb53df6a82ad91a1a3ef1da5e747f1336644dd/torchdiffeq-0.2.5.tar.gz", hash = "sha256:b50d3760d13fd138dcceac651f4b80396f44fefcebd037a033fecfeaa9cc12e7", size = 31197, upload-time = "2024-11-21T20:20:11.552Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/35/537f64f2d0b3cfebaae0f903b4e3a3b239abcc99d0f73cb15b9cee9b8212/torchdiffeq-0.2.5-py3-none-any.whl", hash = "sha256:aa1db4bed13bd04952f28a53cdf4336d1ab60417c1d9698d7a239fec1cf2bcf8", size = 32902, upload-time = "2024-11-21T20:20:09.938Z" },
+]
+
+[[package]]
 name = "tqdm"
 version = "4.70.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3209,6 +3240,7 @@ dependencies = [
     { name = "av" },
     { name = "beartype" },
     { name = "fastapi" },
+    { name = "loguru" },
     { name = "prodigy-plus-schedule-free" },
     { name = "prodigyopt" },
     { name = "pyloudnorm" },
@@ -3217,6 +3249,7 @@ dependencies = [
     { name = "rotary-embedding-torch" },
     { name = "silero-vad" },
     { name = "soundfile" },
+    { name = "torchdiffeq" },
     { name = "triton-windows", marker = "sys_platform == 'win32' or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu126') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cpu' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-cu130') or (extra == 'group-13-voxcpm-studio-cu126' and extra == 'group-13-voxcpm-studio-rocm') or (extra == 'group-13-voxcpm-studio-cu130' and extra == 'group-13-voxcpm-studio-rocm')" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "voxcpm" },
@@ -3253,6 +3286,7 @@ requires-dist = [
     { name = "av", specifier = ">=19" },
     { name = "beartype", specifier = ">=0.22.9" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "loguru", specifier = ">=0.7.3" },
     { name = "prodigy-plus-schedule-free", specifier = ">=2.0.1" },
     { name = "prodigyopt", specifier = ">=1.1.2" },
     { name = "pyloudnorm", specifier = ">=0.2.0" },
@@ -3261,6 +3295,7 @@ requires-dist = [
     { name = "rotary-embedding-torch", specifier = ">=0.9.1" },
     { name = "silero-vad", specifier = ">=6.2.3" },
     { name = "soundfile" },
+    { name = "torchdiffeq", specifier = ">=0.2.5" },
     { name = "triton-windows", marker = "sys_platform == 'win32'", specifier = "~=3.8.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "voxcpm", git = "https://github.com/OpenBMB/VoxCPM?rev=cce58a5b59303c9bd63d12f23afe6a49a4a80c59" },
@@ -3355,6 +3390,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c2/55/34dc13dc05796b6fd283bfcf73f143d47fefa5b4f3144fa6060004c5c347/wetext-0.1.8.tar.gz", hash = "sha256:007d05beecd20b9ca77b1849e71edc16b5efffbefc24de899f94170aa712ef59", size = 4884592, upload-time = "2026-09-09T10:12:37.796Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/43/fe/ca7ccae2673b64ba7d63612e68b31963e3842dd77fb6aa632270d123d685/wetext-0.1.8-py3-none-any.whl", hash = "sha256:b2083e7f38ac38fcbecdf7aec6ac6f0e3d1a11b763facfa4daabc12138215454", size = 5071604, upload-time = "2026-09-09T10:12:36.322Z" },
+]
+
+[[package]]
+name = "win32-setctime"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b3/8f/705086c9d734d3b663af0e9bb3d4de6578d08f46b1b101c2442fd9aecaa2/win32_setctime-1.2.0.tar.gz", hash = "sha256:ae1fdf948f5640aae05c511ade119313fb6a30d7eabe25fef9764dca5873c4c0", size = 4867, upload-time = "2024-12-07T15:28:28.314Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/07/c6fe3ad3e685340704d314d765b7912993bcb8dc198f0e7a89382d37974b/win32_setctime-1.2.0-py3-none-any.whl", hash = "sha256:95d644c4e708aba81dc3704a116d8cbc974d70b3bdb8be1d150e36be6e9d1390", size = 4083, upload-time = "2024-12-07T15:28:26.465Z" },
 ]
 
 [[package]]

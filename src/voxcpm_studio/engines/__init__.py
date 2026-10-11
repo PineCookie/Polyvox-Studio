@@ -16,9 +16,10 @@ __all__ = ["DEFAULT", "Capabilities", "Engine", "Param", "SynthesisRequest", "Sy
 
 
 def classes() -> dict[str, type[Engine]]:
+    from .dots import DotsEngine
     from .voxcpm import VoxCPMEngine
 
-    return {VoxCPMEngine.id: VoxCPMEngine}
+    return {VoxCPMEngine.id: VoxCPMEngine, DotsEngine.id: DotsEngine}
 
 
 def create(settings: Settings, **instances: Engine) -> dict[str, Engine]:

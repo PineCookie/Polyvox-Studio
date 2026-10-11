@@ -3,12 +3,12 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Large, user-specific data
-models/
-lora/
-data/
-exports/
-output/
+# Large, user-specific data (top level only: vendored packages have models/ and data/)
+/models/
+/lora/
+/data/
+/exports/
+/output/
 
 # Local agent notes (machine-specific)
 CLAUDE.md

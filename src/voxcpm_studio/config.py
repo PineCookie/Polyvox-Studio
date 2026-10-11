@@ -23,6 +23,8 @@ def _parse_bool(value: str) -> bool:
 class Settings:
     # Local model directory or Hugging Face repo id.
     model: str = "openbmb/VoxCPM2"
+    # dots.tts (engines/dots.py): local dir or Hugging Face id.
+    dots_model: str = "rednote-hilab/dots.tts-soar"
     lora_dir: Path = Path("lora")
     # Where JSONL training manifests are found.
     data_dir: Path = Path("data")
@@ -79,6 +81,7 @@ class Settings:
         train_gpu = _env("TRAIN_GPU", "").strip()
         return cls(
             model=_env("MODEL", cls.model),
+            dots_model=_env("DOTS_MODEL", cls.dots_model),
             lora_dir=Path(_env("LORA_DIR", str(cls.lora_dir))),
             data_dir=Path(_env("DATA_DIR", str(cls.data_dir))),
             device=_env("DEVICE", cls.device),
