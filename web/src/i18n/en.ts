@@ -39,8 +39,8 @@ export const en = {
   connecting: 'Connecting…',
   modelLoaded: 'Model loaded',
   modelIdle: 'Model idle',
-  gpuTitle: (name: string, batch: number, exclusive: boolean, note: string) =>
-    `Settings for a ${name} GPU: training batch ${batch}${
+  gpuTitle: (name: string, exclusive: boolean, note: string) =>
+    `Settings for a ${name} GPU (training batches in New run)${
       exclusive ? '; synthesis and dataset preparation take turns on the GPU' : ''
     }${note ? `. ${note}` : ''}`,
   tritonOn: 'Triton on',

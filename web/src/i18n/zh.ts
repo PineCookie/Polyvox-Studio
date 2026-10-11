@@ -40,8 +40,8 @@ export const zh: Messages = {
   connecting: '连接中…',
   modelLoaded: '模型已加载',
   modelIdle: '模型未加载',
-  gpuTitle: (name, batch, exclusive, note) =>
-    `按 ${name} 显卡配置：训练批大小 ${batch}${exclusive ? '；合成与数据处理轮流使用显卡' : ''}${note ? `。${note}` : ''}`,
+  gpuTitle: (name, exclusive, note) =>
+    `按 ${name} 显卡配置（训练批大小见新建训练）${exclusive ? '；合成与数据处理轮流使用显卡' : ''}${note ? `。${note}` : ''}`,
   tritonOn: 'Triton 已开启',
   tritonOff: 'Triton 已关闭',
   asrLoaded: '语音识别已加载',

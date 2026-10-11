@@ -20,10 +20,7 @@ export function StatusBar({ status, onUnload }: Props) {
         {status.device}
       </span>
       {status.gpu?.total_gb && (
-        <span
-          className="muted"
-          title={t.gpuTitle(status.gpu.name, status.gpu.train_batch, status.gpu.exclusive, status.gpu.note)}
-        >
+        <span className="muted" title={t.gpuTitle(status.gpu.name, status.gpu.exclusive, status.gpu.note)}>
           {status.gpu.total_gb} GB
         </span>
       )}

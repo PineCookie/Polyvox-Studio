@@ -63,7 +63,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       (s) => {
         if (!s.gpu) return
         setGpu(s.gpu)
-        setBase((p) => forGpu(p, s.gpu.train_batch))
+        setBase((p) => forGpu(p, s.gpu))
       },
       () => {},
     )
@@ -81,7 +81,11 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
   const set = <K extends keyof Params>(key: K, value: Params[K]) =>
     SCHEDULE_KEYS.includes(key as keyof Schedule)
       ? setOverrides((o) => ({ ...o, [key]: value }))
-      : setBase((p) => ({ ...p, [key]: value }))
+      : setBase((p) => {
+          const next = { ...p, [key]: value }
+          // Each model has its own batch that fits the GPU.
+          return key === 'engine' && gpu ? forGpu(next, gpu) : next
+        })
 
   const nameError = !name ? null : !NAME_PATTERN.test(name) ? t.nameChars : runNames.includes(name) ? t.runExists : null
   const numbersValid =

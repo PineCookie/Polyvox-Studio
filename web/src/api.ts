@@ -123,7 +123,8 @@ export interface GpuProfile {
   name: string // "16 GB or more", "12 GB", "8 GB", "under 8 GB", "CPU"
   exclusive: boolean // TTS and the preparation models take turns on the GPU
   denoise_on_cpu: boolean
-  train_batch: number // training micro-batch that fits; accumulation makes up the rest
+  train_batch: number // VoxCPM's training micro-batch that fits; accumulation makes up the rest
+  train_batches: Record<string, number> // the same per engine id
   note: string // what doesn't fit, if anything
 }
 

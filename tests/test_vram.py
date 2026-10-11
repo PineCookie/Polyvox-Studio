@@ -69,4 +69,20 @@ def test_status_reports_the_profile_and_services_use_it(monkeypatch, service, tr
     client = TestClient(create_app(service.settings, service, training))
     gpu = client.get("/api/status").json()["gpu"]
     assert (gpu["total_gb"], gpu["name"], gpu["train_batch"]) == (8.0, "8 GB", 1)
+    assert gpu["train_batches"] == {"voxcpm": 1, "dots_tts": 4}
     assert service.denoise_on_cpu
+
+
+def test_dots_checkpoints_batches_too_large_for_the_card(monkeypatch):
+    from voxcpm_studio.engines.dots_worker import use_checkpointing
+
+    monkeypatch.delenv("VOXCPM_STUDIO_TRAIN_CHECKPOINT", raising=False)
+    big, mid, small = vram.profile_for(16), vram.profile_for(12), vram.profile_for(8)
+    assert not use_checkpointing(big.dots_train_batch, big)
+    assert use_checkpointing(8, big)  # a larger batch set by hand
+    assert use_checkpointing(mid.dots_train_batch, mid) and use_checkpointing(small.dots_train_batch, small)
+    assert not use_checkpointing(16, vram.CPU)
+    monkeypatch.setenv("VOXCPM_STUDIO_TRAIN_CHECKPOINT", "0")
+    assert not use_checkpointing(8, small)
+    monkeypatch.setenv("VOXCPM_STUDIO_TRAIN_CHECKPOINT", "1")
+    assert use_checkpointing(1, big)

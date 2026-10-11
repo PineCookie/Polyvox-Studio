@@ -29,6 +29,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 import sys
 import threading
@@ -261,6 +262,35 @@ class Batches:
         return [self.clips[i] for i in picked]
 
 
+def checkpoint_layers(model) -> None:
+    """Recompute layer activations in the backward pass instead of keeping them:
+    the language model's decoder layers (transformers' own switch) and the
+    diffusion head's blocks (whose activations are most of training's memory).
+    Inference (no gradients) runs the blocks as before."""
+    import torch
+    from torch.utils.checkpoint import checkpoint
+
+    model.core.llm.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    for block in model.core.velocity_field_predictor.blocks:
+
+        def forward(*args, _forward=block.forward, **kwargs):
+            if not torch.is_grad_enabled():
+                return _forward(*args, **kwargs)
+            return checkpoint(_forward, *args, use_reentrant=False, **kwargs)
+
+        block.forward = forward
+
+
+def use_checkpointing(batch_size: int, profile) -> bool:
+    """Checkpoint layers when the micro-batch is larger than what trains without it
+    on this GPU (vram.Profile.dots_plain_batch); VOXCPM_STUDIO_TRAIN_CHECKPOINT
+    1 / 0 forces it on / off."""
+    forced = os.environ.get("VOXCPM_STUDIO_TRAIN_CHECKPOINT")
+    if forced in ("0", "1"):
+        return forced == "1"
+    return batch_size > profile.dots_plain_batch
+
+
 def loss_terms(model, batch: dict) -> dict:
     """The trained losses of a collated batch, without vocabulary logits."""
     llm = model.core.llm
@@ -323,7 +353,11 @@ def main() -> None:
     merger = dots_lora.Merger(model)  # before any generation fuses the diffusion head
     loras = dots_lora.attach(model, rank, alpha, float(lora_cfg.get("dropout") or 0.0), networks)
     runtime = DotsTtsRuntime(model, Path(config["pretrained_path"]), precision="bfloat16", optimize=False)
-    log(f"dots.tts loaded in {time.time() - t0:.0f} s; LoRA r{rank} on {len(loras)} layers ({', '.join(networks)}).")
+    checkpointing = use_checkpointing(int(config["batch_size"]), vram.detect("cuda")[1])
+    if checkpointing:
+        checkpoint_layers(model)
+    log(f"dots.tts loaded in {time.time() - t0:.0f} s; LoRA r{rank} on {len(loras)} layers ({', '.join(networks)})"
+        f"{'; gradient checkpointing' if checkpointing else ''}.")  # fmt: skip
 
     train_records = [dict(e) for e in manifests.read_manifest(Path(config["train_manifest"]))[0]]
     val_path = Path(config["val_manifest"]) if config.get("val_manifest") else None
@@ -537,6 +571,7 @@ def main() -> None:
         validate(step)
     if step > 0:
         save(step)
+    log(f"Peak GPU memory {torch.cuda.max_memory_reserved() / 2**30:.1f} GB.")
     log("Stopped." if stop.is_set() and step < num_iters else "Training complete.")
 
 

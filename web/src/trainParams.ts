@@ -1,5 +1,5 @@
 // Training parameters of a run: defaults, and reading them back from a run's config.
-import { DEFAULT_ENGINE, OPTIMIZERS, type Optimizer, type TrainParams } from './api'
+import { DEFAULT_ENGINE, OPTIMIZERS, type GpuProfile, type Optimizer, type TrainParams } from './api'
 
 export type Params = Omit<TrainParams, 'name' | 'dataset'>
 
@@ -44,10 +44,10 @@ export const OPTIMIZER_LR: Record<Optimizer, number> = { adamw: 1e-4, prodigy: 1
 
 export const EFFECTIVE_BATCH = 16
 
-/** The batch that fits the GPU (its profile's micro-batch), accumulated to the same
- * effective batch: smaller cards train slower, not differently. */
-export function forGpu(params: Params, trainBatch: number): Params {
-  const batch = Math.max(1, Math.min(trainBatch, EFFECTIVE_BATCH))
+/** The batch that fits the GPU (its profile's micro-batch for the params' engine),
+ * accumulated to the same effective batch: smaller cards train slower, not differently. */
+export function forGpu(params: Params, gpu: GpuProfile): Params {
+  const batch = Math.max(1, Math.min(gpu.train_batches?.[params.engine] ?? gpu.train_batch, EFFECTIVE_BATCH))
   return { ...params, batch_size: batch, grad_accum_steps: Math.max(1, Math.round(EFFECTIVE_BATCH / batch)) }
 }
 
