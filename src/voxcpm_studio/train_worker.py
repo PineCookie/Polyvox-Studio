@@ -41,6 +41,7 @@ SCRIPT = Path(__file__).with_name("vendor") / "train_voxcpm_finetune.py"
 SAMPLE_TAG = re.compile(r"val_sample_(\d+)/(generated|reference)_audio")
 POLL_S = 1.0
 MODEL_INPUT_RATE = 16_000  # VoxCPM2's audio encoder: what training and cloning hear
+SAMPLE_GUIDANCE = 1.6  # validation samples, as the Synthesize tab's default (not the script's 2.0)
 
 
 def sample_path(samples_dir: Path, tag: str, step: int) -> Path | None:
@@ -63,7 +64,8 @@ def save_samples_to(samples_dir: Path, val_manifest: Path | None = None) -> None
     (samples played several dB louder than synthesis, noise and all) and logs
     the reference at the encoder's 16 kHz. Samples are saved as the model made
     them; a reference as the original validation clip, plus the 16 kHz mono
-    copy the model hears (``model_input_path``)."""
+    copy the model hears (``model_input_path``). Samples are generated with
+    guidance SAMPLE_GUIDANCE, as synthesis is by default."""
     import numpy as np
     import soundfile as sf
     from tensorboardX import SummaryWriter
@@ -76,6 +78,8 @@ def save_samples_to(samples_dir: Path, val_manifest: Path | None = None) -> None
     for cls in (v2.VoxCPM2Model, v1.VoxCPMModel):
 
         def generate(self, *args, _generate=cls.generate, **kwargs):
+            if "cfg_value" in kwargs:  # the script's 2.0; samples should sound like synthesis
+                kwargs["cfg_value"] = SAMPLE_GUIDANCE
             audio = _generate(self, *args, **kwargs)
             raw[:] = [audio.detach().float().cpu().numpy().reshape(-1)] if hasattr(audio, "detach") else []
             return audio

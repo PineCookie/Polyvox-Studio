@@ -43,11 +43,13 @@ def test_samples_keep_the_models_level_and_references_are_the_original_clips(tmp
     val = tmp_path / "val.jsonl"
     val.write_text(json.dumps({"audio": str(clip), "text": "示例"}) + "\n", encoding="utf-8")
     model_output = torch.full((1, 48_000), 0.05)
-    monkeypatch.setattr(v2.VoxCPM2Model, "generate", lambda self, *a, **k: model_output)
+    calls = []
+    monkeypatch.setattr(v2.VoxCPM2Model, "generate", lambda self, *a, **k: calls.append(k) or model_output)
 
     samples = tmp_path / "samples"
     train_worker.save_samples_to(samples, val)
-    v2.VoxCPM2Model.generate(object(), target_text="示例")  # as the script's validation does
+    v2.VoxCPM2Model.generate(object(), target_text="示例", cfg_value=2.0)  # as the script's validation does
+    assert calls[-1]["cfg_value"] == train_worker.SAMPLE_GUIDANCE
     writer = SummaryWriter(str(tmp_path / "tb"))
     boosted = np.full(48_000, 0.9, dtype=np.float32)  # the script's peak normalization
     writer.add_audio("val_sample_0/generated_audio", boosted, global_step=5, sample_rate=48_000)
