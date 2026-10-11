@@ -285,6 +285,23 @@ singing. It also works on separated vocals; very short sing-song exclamations
 can be flagged too. It is off by default (it slows checks down, and most
 datasets have no songs).
 
+### Exporting for other TTS tools
+
+**Export for other TTS** on a dataset's page writes its training clips (dropped
+ones left out) in another tool's layout, by default to `exports/<dataset>_<format>`
+next to `data/`:
+
+| Format | Files |
+|---|---|
+| GPT-SoVITS | `<speaker>.list`: `path\|speaker\|language\|text`, language `zh` / `ja` / `en` / `ko` from each text's script (or one forced for all) |
+| LJSpeech | `metadata.csv`: `id\|text\|text` |
+| CSV (F5-TTS) | `metadata.csv` with an `audio_file\|text` header |
+| Kaldi | `wav.scp`, `text`, `utt2spk`, `spk2utt` |
+| Folder | `wavs/<id>.wav` with `wavs/<id>.lab` |
+
+Audio goes to `wavs/` as WAV with plain numbered names, copied or resampled; an
+optional clip length range leaves out clips outside it (GPT-SoVITS suggests 1-15 s).
+
 ## Sharing LoRAs
 
 Select a checkpoint in the Voice panel and choose **Export for sharing**. The zip
