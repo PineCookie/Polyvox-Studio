@@ -426,6 +426,9 @@ export const zh: Messages = {
     epoch: '轮次',
   },
   samples: '样本',
+  modelHears: '模型听到的',
+  modelHearsTitle:
+    '参考音频的 16 kHz 单声道版本：VoxCPM2 训练和克隆时实际听到的声音。输出为 48 kHz，8 kHz 以上的频段是模型推测的，而不是从你的片段中学到的。',
   lrTitle: '学习率',
   lrSingle: '学习率',
   lrDashed: 'd × lr',

@@ -225,6 +225,7 @@ export interface RunDetail extends RunSummary {
   seconds_per_step: number | null
   samples: { step: number; index: number; file: string }[]
   references: string[]
+  model_inputs: string[] // reference_<i>_16k.wav: the references as the model hears them
   sample_texts: string[]
   val_clips: number
   log: string[]

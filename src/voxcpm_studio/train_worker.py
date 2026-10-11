@@ -14,7 +14,8 @@ On top of the script this adds:
   query the inherited std handles at startup, and that query blocks forever
   behind a pending synchronous read on the same pipe.
 - Validation samples. Audio the script logs to TensorBoard is also written as
-  WAV files that the UI can play.
+  WAV files that the UI can play: samples at the model's own level, references
+  as the original clips (``save_samples_to``).
 - Frozen base weights in bfloat16 for LoRA runs (``frozen_weights_in_bf16``).
 - ``torchaudio.load`` / ``save`` through audio_io, as in the server
   (torchcodec, which they would use, is not installed).
@@ -39,6 +40,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("vendor") / "train_voxcpm_finetune.py"
 SAMPLE_TAG = re.compile(r"val_sample_(\d+)/(generated|reference)_audio")
 POLL_S = 1.0
+MODEL_INPUT_RATE = 16_000  # VoxCPM2's audio encoder: what training and cloning hear
 
 
 def sample_path(samples_dir: Path, tag: str, step: int) -> Path | None:
@@ -50,23 +52,66 @@ def sample_path(samples_dir: Path, tag: str, step: int) -> Path | None:
     return samples_dir / name
 
 
-def save_samples_to(samples_dir: Path) -> None:
+def model_input_path(reference: Path) -> Path:
+    """Where a reference clip's copy at the model's input rate goes."""
+    return reference.with_name(f"{reference.stem}_16k.wav")
+
+
+def save_samples_to(samples_dir: Path, val_manifest: Path | None = None) -> None:
+    """Also write the audio the script logs to TensorBoard as WAV files, but not
+    as the script logs it: it peak-normalizes every clip to 0.9 of full scale
+    (samples played several dB louder than synthesis, noise and all) and logs
+    the reference at the encoder's 16 kHz. Samples are saved as the model made
+    them; a reference as the original validation clip, plus the 16 kHz mono
+    copy the model hears (``model_input_path``)."""
     import numpy as np
     import soundfile as sf
     from tensorboardX import SummaryWriter
+    from voxcpm.model import voxcpm as v1
+    from voxcpm.model import voxcpm2 as v2
+
+    from voxcpm_studio import audio_io, manifests
+
+    raw: list[np.ndarray] = []  # the model's last generated audio
+    for cls in (v2.VoxCPM2Model, v1.VoxCPMModel):
+
+        def generate(self, *args, _generate=cls.generate, **kwargs):
+            audio = _generate(self, *args, **kwargs)
+            raw[:] = [audio.detach().float().cpu().numpy().reshape(-1)] if hasattr(audio, "detach") else []
+            return audio
+
+        cls.generate = generate
+
+    val_clips: list[str] = []
+    if val_manifest is not None and val_manifest.is_file():
+        val_clips = [e["audio"] for e in manifests.read_manifest(val_manifest)[0]]
+
+    def write(path: Path, audio: np.ndarray, rate: int) -> None:
+        tmp = path.with_suffix(".tmp")
+        sf.write(tmp, audio, rate, format="WAV")
+        tmp.replace(path)  # the UI never sees a partial file
 
     add_audio = SummaryWriter.add_audio
 
     def add_audio_and_save(self, tag, snd_tensor, global_step=None, sample_rate=44100, *args, **kwargs):
         add_audio(self, tag, snd_tensor, global_step, sample_rate, *args, **kwargs)
         path = sample_path(samples_dir, tag, int(global_step or 0))
-        if path is None:
+        m = SAMPLE_TAG.fullmatch(tag)
+        if path is None or m is None:
             return
+        index, kind = m.groups()
         try:
             samples_dir.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            sf.write(tmp, np.asarray(snd_tensor, dtype=np.float32).reshape(-1), int(sample_rate), format="WAV")
-            tmp.replace(path)  # the UI never sees a partial file
+            if kind == "generated":
+                audio = raw.pop() if raw else np.asarray(snd_tensor, dtype=np.float32).reshape(-1)
+                write(path, audio, int(sample_rate))
+            elif int(index) < len(val_clips) and not path.exists():  # logged at every validation
+                audio, rate = audio_io.read(val_clips[int(index)])
+                write(path, audio.T, rate)
+                heard = audio_io.resample(audio.mean(axis=0, keepdims=True), rate, MODEL_INPUT_RATE)[0]
+                write(model_input_path(path), heard, MODEL_INPUT_RATE)
+            elif not val_clips:  # no manifest to read: what the script logged
+                write(path, np.asarray(snd_tensor, dtype=np.float32).reshape(-1), int(sample_rate))
         except Exception as e:
             print(f"[studio] Failed to save sample {path.name}: {e}", file=sys.stderr, flush=True)
 
@@ -301,6 +346,14 @@ def optimizer_from_config(config_path: Path) -> tuple[str, int]:
     return str(config.get("optimizer") or "adamw"), int(config.get("prodigy_steps") or 0)
 
 
+def val_manifest_from_config(config_path: Path) -> Path | None:
+    """The run's validation manifest (studio runs write absolute paths), if any."""
+    import yaml
+
+    value = (yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}).get("val_manifest")
+    return Path(value) if value and Path(value).is_absolute() else None
+
+
 def process_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import _winapi
@@ -340,7 +393,7 @@ def main() -> None:
     parser.add_argument("--parent-pid", type=int)
     args = parser.parse_args()
 
-    save_samples_to(args.samples_dir)
+    save_samples_to(args.samples_dir, val_manifest_from_config(args.config_path))
     frozen_weights_in_bf16()
     from voxcpm_studio import audio_io, vram
 

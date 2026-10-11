@@ -357,6 +357,18 @@ function Samples({
             </>
           )}
 
+          {(run.model_inputs ?? []).length > 0 && (
+            <>
+              <span className="sample-step muted" title={t.modelHearsTitle}>
+                {t.modelHears}
+              </span>
+              {Array.from({ length: columns }, (_, i) => {
+                const file = `reference_${i}_16k.wav`
+                return cell(run.model_inputs.includes(file) ? file : undefined, i)
+              })}
+            </>
+          )}
+
           {byStep.map(([step, files]) => {
             const id = checkpointId(run.name, step)
             return (

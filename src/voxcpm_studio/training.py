@@ -46,6 +46,7 @@ STOP_FILE = "stop.request"  # created to ask the worker to save and exit
 RUN_NAME = r"^[^\W_][\w.-]{0,79}$"  # Unicode letters too: voice names are often Chinese
 SAMPLE_FILE = re.compile(r"step_(\d{7})_(\d+)\.wav")
 REFERENCE_FILE = re.compile(r"reference_(\d+)\.wav")
+MODEL_INPUT_FILE = re.compile(r"reference_(\d+)_16k\.wav")  # a reference as the model hears it
 METRIC_LINE = re.compile(r"\[(train|val)\] step (\d+): (.*)")
 LORA_TARGETS = ["q_proj", "v_proj", "k_proj", "o_proj"]
 STOP_TIMEOUT_S = 120.0  # saving a checkpoint takes seconds; kill after this
@@ -121,6 +122,7 @@ class RunDetail(RunSummary):
     seconds_per_step: float | None
     samples: list[Sample]
     references: list[str]
+    model_inputs: list[str] = []  # reference_<i>_16k.wav: the references as the model hears them
     sample_texts: list[str]
     val_clips: int  # clips in the validation manifest (0: none)
     log: list[str]
@@ -463,7 +465,7 @@ class TrainingManager:
         metrics = parse_metrics(run_dir / "checkpoints" / "train.log")
         summary = self._summary(run_dir, config, metrics["train"])
 
-        samples, references = [], []
+        samples, references, model_inputs = [], [], []
         samples_dir = run_dir / "samples"
         if samples_dir.is_dir():
             for f in sorted(samples_dir.iterdir()):
@@ -471,6 +473,8 @@ class TrainingManager:
                     samples.append(Sample(step=int(m.group(1)), index=int(m.group(2)), file=f.name))
                 elif REFERENCE_FILE.fullmatch(f.name):
                     references.append(f.name)
+                elif MODEL_INPUT_FILE.fullmatch(f.name):
+                    model_inputs.append(f.name)
 
         return RunDetail(
             **summary.model_dump(),
@@ -480,6 +484,7 @@ class TrainingManager:
             seconds_per_step=seconds_per_step(metrics["train"]),
             samples=samples,
             references=references,
+            model_inputs=model_inputs,
             sample_texts=_first_texts(str(config.get("val_manifest") or "")),
             val_clips=_count_lines(str(config.get("val_manifest") or "")),
             log=tail_lines(run_dir / CONSOLE_FILE),
@@ -500,7 +505,8 @@ class TrainingManager:
 
     def sample_file(self, name: str, file: str) -> Path:
         path = self._run_dir(name) / "samples" / file
-        if not (SAMPLE_FILE.fullmatch(file) or REFERENCE_FILE.fullmatch(file)) or not path.is_file():
+        known = SAMPLE_FILE.fullmatch(file) or REFERENCE_FILE.fullmatch(file) or MODEL_INPUT_FILE.fullmatch(file)
+        if not known or not path.is_file():
             raise KeyError(f"Unknown sample: {file}")
         return path
 

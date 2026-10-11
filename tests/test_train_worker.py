@@ -29,6 +29,39 @@ def restore_patches(monkeypatch):
         monkeypatch.setattr(owner, attr, getattr(owner, attr))
 
 
+def test_samples_keep_the_models_level_and_references_are_the_original_clips(tmp_path, restore_patches, monkeypatch):
+    import json
+
+    import numpy as np
+    import soundfile as sf
+    from tensorboardX import SummaryWriter
+
+    monkeypatch.setattr(SummaryWriter, "add_audio", SummaryWriter.add_audio)
+    t = np.arange(44_100) / 44_100
+    clip = tmp_path / "clip.wav"
+    sf.write(clip, np.stack([0.2 * np.sin(2 * np.pi * 220 * t)] * 2, axis=1), 44_100)  # stereo, 44.1 kHz
+    val = tmp_path / "val.jsonl"
+    val.write_text(json.dumps({"audio": str(clip), "text": "示例"}) + "\n", encoding="utf-8")
+    model_output = torch.full((1, 48_000), 0.05)
+    monkeypatch.setattr(v2.VoxCPM2Model, "generate", lambda self, *a, **k: model_output)
+
+    samples = tmp_path / "samples"
+    train_worker.save_samples_to(samples, val)
+    v2.VoxCPM2Model.generate(object(), target_text="示例")  # as the script's validation does
+    writer = SummaryWriter(str(tmp_path / "tb"))
+    boosted = np.full(48_000, 0.9, dtype=np.float32)  # the script's peak normalization
+    writer.add_audio("val_sample_0/generated_audio", boosted, global_step=5, sample_rate=48_000)
+    writer.add_audio("val_sample_0/reference_audio", boosted[:16_000], global_step=5, sample_rate=16_000)
+    writer.close()
+
+    generated, rate = sf.read(samples / "step_0000005_0.wav")
+    assert rate == 48_000 and np.abs(generated).max() == pytest.approx(0.05, abs=1e-3)
+    reference, rate = sf.read(samples / "reference_0.wav", always_2d=True)
+    assert rate == 44_100 and reference.shape == (44_100, 2) and np.abs(reference).max() == pytest.approx(0.2, abs=1e-3)
+    heard, rate = sf.read(samples / "reference_0_16k.wav", always_2d=True)
+    assert rate == 16_000 and heard.shape[1] == 1 and abs(len(heard) - 16_000) <= 1
+
+
 class Toy(torch.nn.Module):
     def __init__(self):
         super().__init__()

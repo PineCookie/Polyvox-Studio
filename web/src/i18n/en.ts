@@ -451,6 +451,9 @@ export const en = {
     epoch: 'Epoch',
   },
   samples: 'Samples',
+  modelHears: 'Model hears',
+  modelHearsTitle:
+    'The reference at 16 kHz mono: what VoxCPM2 trains on and clones from. Its output is 48 kHz; the band above 8 kHz is predicted, not learned from your clips.',
   lrTitle: 'Learning rate',
   lrSingle: 'Learning rate',
   lrDashed: 'd × lr',
