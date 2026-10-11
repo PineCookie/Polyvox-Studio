@@ -173,6 +173,27 @@ def test_the_default_reference_is_the_best_checked_clip(data_dir):
     assert (path.name, text) == ("good.wav", "很好。")
 
 
+def test_the_default_reference_prefers_fluent_sentences_over_the_best_score(data_dir):
+    manifest = dataset(
+        data_dir,
+        [
+            ("hesitant", 6.0, "嗯，呃，今天我们一起去看看那边的情况。", {"score": 0.99, "flags": []}),
+            ("short", 6.0, "好的嗯。", {"score": 0.98, "flags": []}),
+            ("stutter", 6.0, "其实其实我们今天就先说到这里吧。", {"score": 0.97, "flags": []}),
+            ("fluent", 6.0, "我们今天就先说到这里，下次再见吧。", {"score": 0.8, "flags": []}),
+        ],
+    )
+    assert voices.pick_reference(manifest)[0].name == "fluent.wav"
+
+
+def test_text_quality():
+    assert voices.text_quality("我们今天就先说到这里，下次再见吧。") == (True, True)
+    assert voices.text_quality("原来是这样啊，那我们明天再说吧。") == (True, True)  # 啊 as a particle is fine
+    assert voices.text_quality("哈哈，原来是这样，那我们明天再说吧。")[0] is False  # a filler-only clause
+    assert voices.text_quality("谢谢大家，慢慢看看就会明白的了。") == (True, True)  # doubled characters are words
+    assert voices.text_quality("视线高起来了嗯。") == (False, False)
+
+
 def test_unchecked_datasets_give_the_clip_nearest_six_seconds(data_dir):
     manifest = dataset(data_dir, [("a", 9.0, "甲。", None), ("b", 5.5, "乙。", None), ("c", 12.0, "丙。", None)])
     assert voices.pick_reference(manifest)[0].name == "b.wav"

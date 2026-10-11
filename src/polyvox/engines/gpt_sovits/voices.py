@@ -65,10 +65,31 @@ def write_reference(voice_dir: Path, source: Path, text: str, origin: str = "") 
     (voice_dir / REFERENCE_JSON).write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+HESITATIONS = "嗯呃唔额"  # never words or sentence particles (unlike 啊 / 哦 in 这样啊)
+MIN_CONTENT_CHARS = 10  # enough words for the GPT to continue from
+_CLAUSES = re.compile(r"[，。！？、；：,.!?;:…~—\s]+")
+# A stutter: 2-4 characters said twice in a row (也是也是); single ones (谢谢, 看看) are words.
+_REPEAT = re.compile(r"(\w{2,4})\1")
+
+
+def text_quality(text: str) -> tuple[bool, bool]:
+    """(free of hesitations, enough content) of a transcript: a reference with
+    嗯 / 呃, filler-only clauses (哈哈，) or stutters tends to make the voice
+    start its sentences with them, and a few words give the GPT little to go on."""
+    from ...prep.fillers import FILLER_CHARS
+
+    clauses = [c for c in _CLAUSES.split(text) if c]
+    filler_only = [c for c in clauses if all(ch in FILLER_CHARS for ch in c)]
+    hesitant = bool(filler_only) or any(ch in HESITATIONS for ch in text) or bool(_REPEAT.search(text))
+    content = sum(ch not in HESITATIONS for c in clauses if c not in filler_only for ch in c)
+    return not hesitant, content >= MIN_CONTENT_CHARS
+
+
 def pick_reference(manifest: Path, root: Path | None = None, seed: int = 0) -> tuple[Path, str]:
-    """A good default reference from a dataset: among clips of 4-10 s not dropped,
-    the best-checked one without flags (align.json); unchecked datasets give the
-    clip nearest 6 s. Raises ValueError when no clip fits."""
+    """A good default reference from a dataset, among clips of 4-10 s not
+    dropped: preferably without hesitations and with enough words
+    (text_quality), then checked without flags (align.json) with the best
+    score, then nearest 6 s. Raises ValueError when no clip fits."""
     entries, _ = manifests.training_entries(manifest, root)
     manifest_dir = manifest.resolve().parent
     checks = manifests.read_sidecar(manifest_dir / manifests.ALIGN_FILE).get("clips", {})
@@ -86,11 +107,11 @@ def pick_reference(manifest: Path, root: Path | None = None, seed: int = 0) -> t
         if check and check.get("flags"):
             continue
         score = check.get("score") if check else None
-        candidates.append((score is not None, score or 0.0, -abs(seconds - 6.0), entry))
+        candidates.append((*text_quality(entry["text"]), score is not None, score or 0.0, -abs(seconds - 6.0), entry))
     if not candidates:
         raise ValueError(f"No clip of {PICK_RANGE_S[0]:g}-{PICK_RANGE_S[1]:g} s without flags in this dataset.")
-    best = max(c[:3] for c in candidates)
-    tied = [c[3] for c in candidates if c[:3] == best]
+    best = max(c[:-1] for c in candidates)
+    tied = [c[-1] for c in candidates if c[:-1] == best]
     entry = random.Random(seed).choice(tied)
     return Path(entry["audio"]), entry["text"]
 
