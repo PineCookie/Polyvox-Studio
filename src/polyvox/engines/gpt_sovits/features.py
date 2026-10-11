@@ -96,57 +96,99 @@ def clip_features(pipeline, base_voice, audio_path: str, text: str) -> dict:
     }
 
 
-def extract(pipeline, base_voice, records: list[dict], stop: threading.Event) -> tuple[list[dict], dict[str, int]]:
-    """Features of every clip that can be trained on (each with its manifest
-    ``index`` and ``text``), and how many were skipped for which reason."""
-    clips, skipped = [], Counter()
+def clip_key(record: dict) -> str:
+    """What a clip's features depend on besides the models: its audio file and text."""
+    path = Path(record["audio"])
+    try:
+        stat = path.stat()
+        stamp = f"{stat.st_size}:{stat.st_mtime_ns}"
+    except OSError:
+        stamp = "missing"
+    return hashlib.sha1(f"{path.resolve()}|{stamp}|{record['text']}".encode()).hexdigest()
+
+
+def cache_meta(base_dir: Path, version: str) -> dict:
+    return {"version": CACHE_VERSION, "models": str(base_dir), "model_version": version}
+
+
+def extract(
+    pipeline,
+    base_voice,
+    records: list[dict],
+    stop: threading.Event,
+    cache_file: Path | None = None,
+    meta: dict | None = None,
+) -> tuple[list[dict], dict[str, int]] | None:
+    """Features of every clip that can be trained on, in ``records`` order (each
+    with its manifest ``index`` and ``text``), and how many were skipped for
+    which reason. Clips already in ``cache_file`` (written for ``meta``) are read
+    from it; the new ones (and the skipped, with their reason) are added. A stop
+    returns None, keeping what was done in the cache."""
+    import torch
+
+    cache = load_cache(cache_file, meta) if cache_file else {}
+    keys = [clip_key(r) for r in records]
+    todo = [i for i, k in enumerate(keys) if k not in cache]
+    if len(todo) < len(records):
+        log(f"Features of {len(records) - len(todo)} clips from {cache_file.name}.")
     t0 = time.time()
-    for i, r in enumerate(records):
+    for n, i in enumerate(todo):
         if stop.is_set():
             break
+        r = records[i]
         try:
-            clips.append({"index": i, "text": r["text"], **clip_features(pipeline, base_voice, r["audio"], r["text"])})
+            cache[keys[i]] = {"audio": str(r["audio"]), **clip_features(pipeline, base_voice, r["audio"], r["text"])}
         except Skipped as e:
-            skipped[str(e)] += 1
-        except Exception as e:  # an unreadable clip or text the front end can't handle
-            skipped["unreadable"] += 1
+            cache[keys[i]] = {"audio": str(r["audio"]), "skipped": str(e)}
+        except Exception as e:  # an unreadable clip or text the front end can't handle (not cached: may be fixed)
             log(f"Skipping {Path(r['audio']).name}: {e}")
-        if (i + 1) % 200 == 0:
-            log(f"Features: {i + 1} / {len(records)} clips")
-    log(f"Features of {len(clips)} clips in {time.time() - t0:.0f} s.")
+        if (n + 1) % 200 == 0:
+            log(f"Features: {n + 1} / {len(todo)} clips")
+    if todo:
+        log(f"Features of {len(todo)} clips in {time.time() - t0:.0f} s.")
+        if cache_file:
+            save_cache(cache_file, meta, cache, records, keys)
+    if stop.is_set():
+        return None
+    clips, skipped = [], Counter()
+    for i, (r, k) in enumerate(zip(records, keys, strict=True)):
+        entry = cache.get(k)
+        if entry is None:
+            skipped["unreadable"] += 1
+        elif "skipped" in entry:
+            skipped[entry["skipped"]] += 1
+        else:
+            clips.append({"index": i, "text": r["text"], **{n: v for n, v in entry.items() if torch.is_tensor(v)}})
     return clips, dict(skipped)
 
 
-def cache_key(manifest: Path, base_dir: Path, version: str) -> dict:
-    """What the features depend on: the manifest's bytes, the base models and this code."""
-    return {
-        "version": CACHE_VERSION,
-        "manifest": hashlib.sha1(manifest.read_bytes()).hexdigest(),
-        "models": str(base_dir),
-        "model_version": version,
-    }
-
-
-def cached(cache_file: Path, key: dict, make) -> tuple[list[dict], dict[str, int]]:
-    """``make()``'s (clips, skipped), from ``cache_file`` when it was written for
-    ``key``; a complete fresh result (``make`` returns None when stopped) is
-    saved there, so a resumed run skips this stage."""
+def load_cache(cache_file: Path, meta: dict | None) -> dict:
     import torch
 
-    if cache_file.is_file():
-        try:
-            saved = torch.load(cache_file, map_location="cpu", weights_only=True)
-            if saved.get("key") == key:
-                log(f"Features from {cache_file.name} ({len(saved['clips'])} clips).")
-                return saved["clips"], saved["skipped"]
-        except Exception as e:  # unreadable or from another version: extract again
-            log(f"Ignoring {cache_file.name}: {e}")
-    result = make()
-    if result is None:
-        return [], {}
-    clips, skipped = result
+    if not cache_file.is_file():
+        return {}
+    try:
+        saved = torch.load(cache_file, map_location="cpu", weights_only=True)
+        if saved.get("meta") == meta:
+            return saved["clips"]
+        log(f"{cache_file.name} is for other models or an older version; computing features again.")
+    except Exception as e:  # unreadable: computed again
+        log(f"Ignoring {cache_file.name}: {e}")
+    return {}
+
+
+def save_cache(cache_file: Path, meta: dict | None, cache: dict, records: list[dict], keys: list[str]) -> None:
+    """Write the cache, leaving out clips whose file is gone and older versions
+    of this run's clips (other runs' clips, e.g. their validation ones, stay)."""
+    import torch
+
+    current = {str(r["audio"]): k for r, k in zip(records, keys, strict=True)}
+    kept = {
+        k: v
+        for k, v in cache.items()
+        if current.get(v["audio"], k) == k and (v["audio"] in current or Path(v["audio"]).is_file())
+    }
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache_file.with_suffix(".tmp")
-    torch.save({"key": key, "clips": clips, "skipped": skipped}, tmp)
+    torch.save({"meta": meta, "clips": kept}, tmp)
     tmp.replace(cache_file)
-    return clips, skipped

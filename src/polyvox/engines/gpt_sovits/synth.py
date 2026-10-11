@@ -45,6 +45,7 @@ class Voice:
     gpt: torch.nn.Module
     hps: object  # the SoVITS config (filter length, hop, sampling rate ...)
     max_sec: float
+    decoder: object = None  # decode.Decoder for the GPT, made on first use (CUDA)
 
     @property
     def sample_rate(self) -> int:
@@ -88,6 +89,8 @@ class Pipeline:
 
         self.base_dir, self.device = Path(base_dir), device
         self.half = device.startswith("cuda")
+        # GPT decoding as a CUDA graph (decode.py); off: upstream's loop.
+        self.fast_decode = device.startswith("cuda")
         self.dtype = torch.float16 if self.half else torch.float32
         bert_dir = str(self.base_dir / "chinese-roberta-wwm-ext-large")
         chinese2.configure(str(g2pw_dir), bert_dir)
@@ -237,18 +240,25 @@ class Pipeline:
             else:
                 ids, features = phones, bert
             ids_t = torch.LongTensor(ids).to(self.device)[None]
+            sampling = {
+                "top_k": options.top_k,
+                "top_p": options.top_p,
+                "temperature": options.temperature,
+                "early_stop_num": int(SEMANTIC_HZ * voice.max_sec),
+                "repetition_penalty": options.repetition_penalty,
+            }
+            decoder = self._decoder(voice)
             with torch.no_grad():
-                tokens, n = voice.gpt.infer_panel(
-                    ids_t,
-                    torch.tensor([ids_t.shape[-1]], device=self.device),
-                    ref.prompt,
-                    features[None],
-                    top_k=options.top_k,
-                    top_p=options.top_p,
-                    temperature=options.temperature,
-                    early_stop_num=int(SEMANTIC_HZ * voice.max_sec),
-                    repetition_penalty=options.repetition_penalty,
-                )
+                if decoder is not None and decoder.fits(ids_t, ref.prompt):
+                    tokens, n = decoder.generate(ids_t, ref.prompt, features[None], **sampling)
+                else:
+                    tokens, n = voice.gpt.infer_panel(
+                        ids_t,
+                        torch.tensor([ids_t.shape[-1]], device=self.device),
+                        ref.prompt,
+                        features[None],
+                        **sampling,
+                    )
                 semantic = tokens[:, -n:][None]
                 audio = voice.sovits.decode(
                     semantic,
@@ -262,6 +272,15 @@ class Pipeline:
                 audio = audio / peak
             out += [audio.cpu().numpy(), pause]
         return np.concatenate(out[:-1])
+
+    def _decoder(self, voice: Voice):
+        if not self.fast_decode:
+            return None
+        if voice.decoder is None:
+            from .decode import Decoder
+
+            voice.decoder = Decoder(voice.gpt)
+        return voice.decoder
 
 
 @contextlib.contextmanager

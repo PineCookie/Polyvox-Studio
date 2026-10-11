@@ -248,6 +248,7 @@ def test_training_config_is_full_finetuning_in_two_stages(engine, data_dir, tmp_
     assert config["num_iters"] == 8 * 3 + 15
     assert (config["sovits_epochs"], config["gpt_epochs"], config["gpt_batch_size"]) == (8, 15, 8)
     assert "lora" not in config and "optimizer" not in config  # every weight trains, as upstream
+    assert Path(config["feature_cache"]).parent == data_dir / "speaker_a" / ".cache"  # shared by the dataset's runs
     assert Path(config["reference"]["audio"]).name == "good.wav" and config["reference"]["text"] == "很好。"
     assert GptSovitsEngine.capabilities.training and GptSovitsEngine.capabilities.full_finetune
     with pytest.raises(ValueError, match="epochs"):
@@ -386,24 +387,54 @@ def test_clip_features_follow_upstreams_levels_and_skip_unusable_clips(tmp_path)
     assert [c["index"] for c in clips] == [0] and skipped == {"silent": 1, "unreadable": 1}
 
 
-def test_features_are_cached_per_manifest(tmp_path):
+def test_clip_features_are_cached_per_clip_for_every_run_of_a_dataset(tmp_path):
     from polyvox.engines.gpt_sovits import features
 
-    manifest = tmp_path / "train.jsonl"
-    manifest.write_text('{"audio": "a.wav", "text": "一"}\n', encoding="utf-8")
-    cache = tmp_path / "cache" / "features.pt"
-    made = []
+    front, stop = FakeFrontEnds(), threading.Event()
+    a, b = tone(tmp_path / "a.wav", 2.0), tone(tmp_path / "b.wav", 2.0)
+    sf.write(tmp_path / "silent.wav", np.zeros(16_000, dtype=np.float32), 16_000)
+    cache, meta = tmp_path / ".cache" / "gpt_sovits.pt", features.cache_meta(tmp_path, "v2ProPlus")
+    run_1 = [{"audio": str(a), "text": "一。"}, {"audio": str(tmp_path / "silent.wav"), "text": "静。"}]
 
-    def make():
-        made.append(1)
-        return [{"index": 0, "wav": torch.zeros(4, dtype=torch.int16)}], {"silent": 2}
+    clips, skipped = features.extract(front, FakeBase, run_1, stop, cache, meta)
+    assert [c["index"] for c in clips] == [0] and skipped == {"silent": 1} and len(front.heard) == 1
+    run_2 = [{"audio": str(b), "text": "二。"}, *run_1]  # another run (split) of the dataset
+    clips, skipped = features.extract(front, FakeBase, run_2, stop, cache, meta)
+    assert [c["index"] for c in clips] == [0, 1] and skipped == {"silent": 1}
+    assert len(front.heard) == 2  # only the new clip computed; the skip remembered
 
-    key = features.cache_key(manifest, tmp_path, "v2ProPlus")
-    assert features.cached(cache, key, lambda: None) == ([], {})  # stopped: nothing saved
-    assert not cache.exists()
-    first = features.cached(cache, key, make)
-    again = features.cached(cache, key, make)
-    assert len(made) == 1 and again[1] == {"silent": 2} and again[0][0]["index"] == first[0][0]["index"]
-    manifest.write_text('{"audio": "a.wav", "text": "改"}\n', encoding="utf-8")  # edited: extracted again
-    features.cached(cache, features.cache_key(manifest, tmp_path, "v2ProPlus"), make)
-    assert len(made) == 2
+    edited = [{"audio": str(a), "text": "改。"}]  # a changed transcript: computed again
+    features.extract(front, FakeBase, edited, stop, cache, meta)
+    assert len(front.heard) == 3
+    features.extract(front, FakeBase, edited, stop, cache, features.cache_meta(tmp_path, "v2Pro"))
+    assert len(front.heard) == 4  # other models: nothing reused
+
+    stop.set()
+    assert features.extract(front, FakeBase, [{"audio": str(b), "text": "新。"}], stop, cache, meta) is None
+
+
+# --------------------------------------------------------------------------- decoding
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_fast_decoding_makes_upstreams_tokens(seed, monkeypatch):
+    """Greedy, so sampling noise doesn't matter: the same tokens and count as
+    upstream's infer_panel, with or without a prompt, stopping where it stops."""
+    from polyvox.engines.gpt_sovits.decode import Decoder
+    from polyvox.vendor.gpt_sovits.AR.models import t2s_model
+
+    monkeypatch.setattr(t2s_model, "tqdm", lambda it, *a, **k: it)
+    torch.manual_seed(seed)
+    config = {"model": {"hidden_dim": 32, "embedding_dim": 32, "head": 4, "n_layer": 2, "vocab_size": 1025,
+                        "phoneme_vocab_size": 732, "dropout": 0, "EOS": 1024}}  # fmt: skip
+    gpt = t2s_model.Text2SemanticDecoder(config).eval()
+    with torch.no_grad():  # sharp logits; the end of speech likelier the higher the seed
+        gpt.ar_predict_layer.weight.mul_(20)
+        gpt.ar_predict_layer.weight[1024].mul_(0.5 + 0.4 * seed)
+    x, bert = torch.randint(0, 700, (1, 12)), torch.randn(1, 1024, 12)
+    decoder = Decoder(gpt, max_len=1600)
+    for prompt, penalty in ((torch.randint(0, 1024, (1, 9)), 1.35), (None, 1.0)):
+        expected = gpt.infer_panel(x, torch.tensor([12]), prompt, bert, top_k=1, early_stop_num=120,
+                                   repetition_penalty=penalty)  # fmt: skip
+        tokens, n = decoder.generate(x, prompt, bert, top_k=1, early_stop_num=120, repetition_penalty=penalty)
+        assert torch.equal(tokens, expected[0].long()) and n == expected[1]

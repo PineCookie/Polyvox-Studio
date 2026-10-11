@@ -49,8 +49,12 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    import torch
 
 SAMPLES = 2  # validation clips whose texts are synthesized at each validation
 SAMPLE_SEED = 42
@@ -145,6 +149,16 @@ def plan_steps(
     return sovits, math.ceil(gpt_epochs * gpt_batches / GPT_ACCUM)
 
 
+def grad_norm(params) -> torch.Tensor:
+    """The gradients' total L2 norm (for the log), as upstream's
+    commons.clip_grad_value_(params, None) computes it, in one fused call
+    instead of a GPU sync per parameter."""
+    import torch
+
+    grads = [p.grad for p in params if p.grad is not None]
+    return torch.linalg.vector_norm(torch.stack(torch._foreach_norm(grads)).float())
+
+
 def format_metrics(values: dict[str, float]) -> str:
     def fmt(k: str, v: float) -> str:
         if k == "lr":
@@ -226,16 +240,18 @@ class Run:
         self._t_log = time.time()
 
     # ------------------------------------------------------------ logging
-    def record(self, step: int, values: dict[str, float], extra: dict[str, float], last: bool) -> None:
-        """Collect a step's values; every log_interval steps (and the last) a
-        ``[train]`` line with their means (non-finite ones, from steps the
-        gradient scaler skipped, left out) and ``extra`` as is."""
+    def record(self, step: int, values: dict, extra: dict[str, float], last: bool) -> None:
+        """Collect a step's values (numbers, or GPU tensors read back only here);
+        every log_interval steps (and the last) a ``[train]`` line with their
+        means (non-finite ones, from steps the gradient scaler skipped, left
+        out) and ``extra`` as is."""
         for k, v in values.items():
             self._window.setdefault(k, []).append(v)
         if step % self.log_interval and not last:
             return
         now = time.time()
-        means = {k: sum(f) / len(f) for k, v in self._window.items() if (f := [x for x in v if math.isfinite(x)])}
+        window = {k: [float(x) for x in v] for k, v in self._window.items()}
+        means = {k: sum(f) / len(f) for k, v in window.items() if (f := [x for x in v if math.isfinite(x)])}
         means |= extra
         means["log interval"] = now - self._t_log
         line = f"[train] step {step}: {format_metrics(means)}"
@@ -435,7 +451,7 @@ def train_sovits(run: Run, clips: list[dict], val_records: list[dict], step: int
         out["text_lengths"] = torch.tensor([len(c["phones"]) for c in items], device=dev)
         return out
 
-    def train_step(batch: dict) -> dict[str, float]:
+    def train_step(batch: dict) -> dict[str, torch.Tensor]:
         """One discriminator and one generator update, as s2_train.train_and_evaluate."""
         autocast = torch.autocast("cuda", dtype=torch.float16)
         spec, spec_lengths = batch["spec"], batch["spec_lengths"]
@@ -464,7 +480,7 @@ def train_sovits(run: Run, clips: list[dict], val_records: list[dict], step: int
         optim_d.zero_grad(set_to_none=True)
         scaler.scale(loss_disc).backward()
         scaler.unscale_(optim_d)
-        grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+        grad_norm_d = grad_norm(net_d.parameters())
         scaler.step(optim_d)
 
         with autocast:
@@ -478,14 +494,15 @@ def train_sovits(run: Run, clips: list[dict], val_records: list[dict], step: int
         optim_g.zero_grad(set_to_none=True)
         scaler.scale(loss_g).backward()
         scaler.unscale_(optim_g)
-        grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+        grad_norm_g = grad_norm(net_g.parameters())
         scaler.step(optim_g)
         scaler.update()
         losses = (loss_mel, loss_kl, loss_fm, loss_gen, loss_disc)
+        # Tensors: read back when a log line is written, not every step (a GPU sync).
         return {
-            **{k: float(v) for k, v in zip(NAMES, losses, strict=True)},
-            "grad_norm": float(grad_norm_g),
-            "grad_norm_d": float(grad_norm_d),
+            **{k: v.detach() for k, v in zip(NAMES, losses, strict=True)},
+            "grad_norm": grad_norm_g,
+            "grad_norm_d": grad_norm_d,
         }
 
     if step == 0:
@@ -599,7 +616,7 @@ def train_gpt(
         tensors = {"phones": phones, "semantic": semantic, "bert": bert, **lengths}
         return {k: v.to(dev, non_blocking=True) for k, v in tensors.items()}
 
-    def update(at: int) -> dict[str, float]:
+    def update(at: int) -> dict:
         """One optimizer update over GPT_ACCUM batches (upstream: every 4 batches)."""
         losses, accs = [], []
         for j in range(GPT_ACCUM):
@@ -610,14 +627,14 @@ def train_gpt(
                 )
             scaler.scale(loss).backward()
             tokens = batch["semantic"].shape[0] * (batch["semantic"].shape[1] + 1)  # each with its end of speech
-            losses.append(float(loss) / tokens)
+            losses.append(loss.detach() / tokens)
             accs.append(acc)
         for g in opt.param_groups:  # upstream: 0.01 until its scheduler first steps, then pinned to 0.002
             g["lr"] = GPT_LR_FIRST if at == start else GPT_LR
         scaler.step(opt)
         scaler.update()
         opt.zero_grad(set_to_none=True)
-        return {"loss/gpt": sum(losses) / len(losses), "top3_acc": sum(accs) / len(accs)}
+        return {"loss/gpt": torch.stack(losses).mean(), "top3_acc": sum(accs) / len(accs)}
 
     gpt.train()
     run.reset_log()
@@ -663,15 +680,14 @@ def main() -> None:
     val_path = Path(config["val_manifest"]) if config.get("val_manifest") else None
     val_records = [dict(e) for e in manifests.read_manifest(val_path)[0]] if val_path and val_path.is_file() else []
 
-    def make():
-        result = features.extract(run.pipeline, run.voice, records, run.stop)
-        return None if run.stop.is_set() else result
-
-    cache = run.run_dir / "cache" / "features_train.pt"
-    clips, skipped = features.cached(cache, features.cache_key(train_manifest, run.base_dir, run.version), make)
-    if run.stop.is_set():
+    # The dataset's cache (shared by its runs); runs from before that: their own folder.
+    cache = config.get("feature_cache") or run.run_dir / "cache" / f"gpt_sovits_{run.version}.pt"
+    meta = features.cache_meta(run.base_dir, run.version)
+    result = features.extract(run.pipeline, run.voice, records, run.stop, Path(cache), meta)
+    if result is None:
         log("Stopped.")
         return
+    clips, skipped = result
     if skipped:
         log(f"Left out {sum(skipped.values())} clips: " + ", ".join(f"{k} {n}" for k, n in skipped.items()))
     sovits_clips = [c for c in clips if sovits_keeps(c)]

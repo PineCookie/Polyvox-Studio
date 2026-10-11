@@ -161,6 +161,8 @@ class GptSovitsEngine(Engine):
             g2pw = Path(self.settings.model_path("gsv_g2pw_model"))
             t0 = time.time()
             self._pipeline = self._loader(base, g2pw, self.device)
+            if self.settings.optimize is False:  # upstream's decoding loop instead of the CUDA graph
+                self._pipeline.fast_decode = False
             logger.info("GPT-SoVITS front ends loaded in %.1f s", time.time() - t0)
         return self._pipeline
 
@@ -234,4 +236,6 @@ class GptSovitsEngine(Engine):
             "gpt_batch_size": params.gpt_batch_size,
             "log_interval": params.log_interval,
             "reference": {"audio": str(audio), "text": text, "source": f"{params.dataset}: {audio.name}"},
+            # Clip features, shared by the dataset's runs (hidden folders aren't datasets).
+            "feature_cache": str(dataset.parent / ".cache" / f"gpt_sovits_{BASE_VERSION}.pt"),
         }
