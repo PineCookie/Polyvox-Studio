@@ -119,7 +119,7 @@ export const en = {
   voice: 'Voice',
   import: 'Import',
   importing: 'Importing…',
-  importLoraTitle: 'Add a LoRA package (.zip) exported from VoxCPM Studio',
+  importLoraTitle: 'Add a LoRA package (.zip) exported from Polyvox Studio',
   refresh: 'Refresh',
   scanning: 'Scanning…',
   export: 'Export',

@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from voxcpm_studio.jobs import JobRunner
+from polyvox.jobs import JobRunner
 
 
 def wait(job, timeout=10):
@@ -29,7 +29,7 @@ def test_job_result_and_progress():
 
 
 def test_seconds_left_from_the_phase_rate(monkeypatch):
-    from voxcpm_studio import jobs
+    from polyvox import jobs
 
     now = [1000.0]
     monkeypatch.setattr(jobs.time, "time", lambda: now[0])

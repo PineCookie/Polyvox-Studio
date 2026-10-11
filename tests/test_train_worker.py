@@ -10,7 +10,7 @@ from voxcpm.model import voxcpm2 as v2
 from voxcpm.training import TrainingTracker
 from voxcpm.training import config as config_module
 
-from voxcpm_studio.engines.voxcpm import worker as train_worker
+from polyvox.engines.voxcpm import worker as train_worker
 
 
 @pytest.fixture
@@ -150,7 +150,7 @@ def test_schedule_free_trains_one_group_per_network(restore_patches, monkeypatch
 
 
 def test_schedule_free_logs_step_sizes_per_network_without_rounding(restore_patches, monkeypatch, tmp_path):
-    from voxcpm_studio import training
+    from polyvox import training
 
     train_worker.use_optimizer("prodigy_sf")
     model = Toy()
@@ -200,6 +200,10 @@ def test_schedule_free_follows_the_models_train_and_eval(restore_patches, monkey
     assert all(g["train_mode"] for g in opt.param_groups)
 
 
+def test_the_vendored_script_is_found():
+    assert train_worker.SCRIPT.is_file()
+
+
 def test_each_clip_is_encoded_once(monkeypatch):
     from voxcpm.training import packers
 
@@ -238,7 +242,7 @@ def test_stop_file_runs_the_sigint_handler(tmp_path):
     script.write_text(
         "import signal, sys, threading, time\n"
         "from pathlib import Path\n"
-        "from voxcpm_studio.engines.voxcpm import worker as train_worker\n"
+        "from polyvox.engines.voxcpm import worker as train_worker\n"
         "train_worker.POLL_S = 0.02\n"
         "signal.signal(signal.SIGINT, lambda *a: (print('saved', flush=True), sys.exit(0)))\n"
         f"threading.Thread(target=train_worker.watch_for_stop, args=(Path(r'{tmp_path / 'stop'}'), None), daemon=True).start()\n"

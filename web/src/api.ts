@@ -1,4 +1,4 @@
-// Typed client for the VoxCPM Studio API (src/voxcpm_studio/api.py).
+// Typed client for the Polyvox Studio API (src/polyvox/server/).
 
 export interface LoraConfig {
   r: number
@@ -23,7 +23,7 @@ export interface Lora {
   config: LoraConfig | null // VoxCPM's layout (VoxCPM LoRAs only)
 }
 
-// A TTS model family (src/voxcpm_studio/engines/base.py).
+// A TTS model family (src/polyvox/engines/base.py).
 export interface EngineParam {
   name: string
   kind: 'float' | 'int' | 'bool'
@@ -74,7 +74,7 @@ export interface Status {
   cleanup: CleanupOption[]
   // Required models not in the models folder yet (names).
   missing_required: string[]
-  // The GPU's memory and the settings picked for it (src/voxcpm_studio/vram.py).
+  // The GPU's memory and the settings picked for it (src/polyvox/vram.py).
   gpu: GpuProfile
   lora_rank: number | null
   active_lora: string | null
@@ -132,7 +132,7 @@ export async function getStatus(): Promise<Status> {
   return (await request('/api/status')).json()
 }
 
-// Models the studio uses (src/voxcpm_studio/models.py).
+// Models the studio uses (src/polyvox/models.py).
 export interface ModelInfo {
   setting: string
   name: string
@@ -192,7 +192,7 @@ export async function transcribe(audio: File, language?: string): Promise<{ text
   return (await request('/api/asr', { method: 'POST', body: form })).json()
 }
 
-// The running synthesis (src/voxcpm_studio/inference.py Progress).
+// The running synthesis (src/polyvox/inference.py Progress).
 export interface TtsProgress {
   phase: 'idle' | 'loading' | 'preparing' | 'compiling' | 'generating'
   step: number
@@ -352,10 +352,10 @@ export interface Job<R = unknown> {
   result: R
 }
 
-// Optional clean-up before import (src/voxcpm_studio/separation.py).
+// Optional clean-up before import (src/polyvox/separation.py).
 export type CleanupOption = 'separate' | 'dereverb' | 'denoise'
 
-// Forced aligners (src/voxcpm_studio/aligner.py).
+// Forced aligners (src/polyvox/aligner.py).
 export type Aligner = 'qwen3' | 'ctc'
 
 export type CheckFlag =
@@ -437,7 +437,7 @@ export async function tidyFillers(id: string): Promise<{ changed: number }> {
   return (await postJson('/api/datasets/tidy-fillers', { id })).json()
 }
 
-// Loudness normalization (src/voxcpm_studio/loudness.py); levels are [p10, median, p90] LUFS.
+// Loudness normalization (src/polyvox/loudness.py); levels are [p10, median, p90] LUFS.
 export const DEFAULT_LUFS = -20
 
 export type NormalizeJob = Job<{

@@ -1,6 +1,6 @@
 import pytest
 
-from voxcpm_studio import lora_library
+from polyvox import lora_library
 
 from conftest import make_lora
 

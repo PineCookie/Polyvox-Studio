@@ -6,8 +6,8 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from voxcpm_studio.prep import exporter
-from voxcpm_studio.server import create_app
+from polyvox.prep import exporter
+from polyvox.server import create_app
 
 RATE = 44_100
 

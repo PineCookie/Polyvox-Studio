@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the VoxCPM Studio server on Linux (the counterpart of run.bat).
+# Start the Polyvox Studio server on Linux (the counterpart of run.bat).
 # Arguments go to the server, e.g. ./run.sh --host 0.0.0.0 --port 8808
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,9 +8,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONUTF8=1
 # Models downloaded in the Models tab live here; settings left at their
 # defaults use them (see README: Models).
-export VOXCPM_STUDIO_MODELS_DIR="${VOXCPM_STUDIO_MODELS_DIR:-$here/models}"
-export VOXCPM_STUDIO_LORA_DIR="${VOXCPM_STUDIO_LORA_DIR:-$here/lora}"
-export VOXCPM_STUDIO_DATA_DIR="${VOXCPM_STUDIO_DATA_DIR:-$here/data}"
+export POLYVOX_MODELS_DIR="${POLYVOX_MODELS_DIR:-$here/models}"
+export POLYVOX_LORA_DIR="${POLYVOX_LORA_DIR:-$here/lora}"
+export POLYVOX_DATA_DIR="${POLYVOX_DATA_DIR:-$here/data}"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv is not installed. Install it, then run this again:" >&2
@@ -29,8 +29,8 @@ if [ ! -f "$here/web/dist/index.html" ]; then
   (cd "$here/web" && npm ci && npm run build)
 fi
 
-# The PyTorch build for this machine: cu130, cu126 or cpu (VOXCPM_STUDIO_TORCH overrides).
-variant="$(uv run --no-project --python 3.13 "$here/src/voxcpm_studio/torch_variant.py")"
+# The PyTorch build for this machine: cu130, cu126 or cpu (POLYVOX_TORCH overrides).
+variant="$(uv run --no-project --python 3.13 "$here/src/polyvox/torch_variant.py")"
 echo "PyTorch build: $variant"
 # uv installs Python and the dependencies on the first run (and swaps PyTorch builds).
-exec uv run --project "$here" --no-default-groups --group "$variant" voxcpm-studio "$@"
+exec uv run --project "$here" --no-default-groups --group "$variant" polyvox "$@"

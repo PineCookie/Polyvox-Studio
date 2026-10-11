@@ -15,7 +15,7 @@ export const LANGS: Record<Lang, { messages: Messages; name: string; html: strin
   zh: { messages: zh, name: '简体中文', html: 'zh-CN' },
 }
 
-export const STORAGE_KEY = 'voxcpm-studio.lang'
+export const STORAGE_KEY = 'polyvox.lang'
 
 // For code outside components (format.ts); set by the provider before its children render.
 let current: Messages = en

@@ -1,6 +1,6 @@
 import pytest
 
-from voxcpm_studio import timing
+from polyvox import timing
 
 
 def test_stages_count_their_own_time_without_nested_stages(monkeypatch):
@@ -35,7 +35,7 @@ def test_import_job_reports_its_timings(tmp_path, data_dir, service, training):
     from fastapi.testclient import TestClient
     from test_importer import wait_job, write_list
 
-    from voxcpm_studio.server import create_app
+    from polyvox.server import create_app
 
     clip = tmp_path / "a.wav"
     sf.write(clip, [0.0] * 16000, 16000)

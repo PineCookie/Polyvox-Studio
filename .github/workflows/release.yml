@@ -24,7 +24,7 @@ jobs:
         run: npm ci && npm run build
       - name: Package
         run: |
-          name="voxcpm-studio-${GITHUB_REF_NAME}"
+          name="polyvox-${GITHUB_REF_NAME}"
           # The tracked files (line endings per .gitattributes), plus the built UI.
           git archive --format=tar --prefix="$name/" HEAD | tar -x
           mkdir -p "$name/web/dist"
@@ -35,5 +35,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          name="voxcpm-studio-${GITHUB_REF_NAME}"
+          name="polyvox-${GITHUB_REF_NAME}"
           gh release create "$GITHUB_REF_NAME" "$name.zip" "$name.tar.gz" --title "$GITHUB_REF_NAME" --generate-notes

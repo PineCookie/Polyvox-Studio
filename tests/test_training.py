@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from voxcpm_studio import training
-from voxcpm_studio.training import TrainingConflict, TrainParams
+from polyvox import training
+from polyvox.training import TrainingConflict, TrainParams
 
 from conftest import make_dataset, wait_for, wait_idle
 

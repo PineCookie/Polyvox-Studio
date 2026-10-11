@@ -2,8 +2,8 @@
 
 import pytest
 
-from voxcpm_studio import torch_variant
-from voxcpm_studio.torch_variant import choose
+from polyvox import torch_variant
+from polyvox.torch_variant import choose
 
 
 @pytest.mark.parametrize(

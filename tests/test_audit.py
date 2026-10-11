@@ -9,10 +9,10 @@ from test_aligner import tone
 from test_checks import write_dataset
 from test_importer import wait_job
 
-from voxcpm_studio.data import manifests
-from voxcpm_studio.prep import checks, singing, slicer
-from voxcpm_studio.server import create_app
-from voxcpm_studio.training import TrainParams
+from polyvox.data import manifests
+from polyvox.prep import checks, singing, slicer
+from polyvox.server import create_app
+from polyvox.training import TrainParams
 
 ID = "speaker_a/train.jsonl"
 

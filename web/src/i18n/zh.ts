@@ -114,7 +114,7 @@ export const zh: Messages = {
   voice: '音色',
   import: '导入',
   importing: '导入中…',
-  importLoraTitle: '添加从 VoxCPM Studio 导出的 LoRA 包（.zip）',
+  importLoraTitle: '添加从 Polyvox Studio 导出的 LoRA 包（.zip）',
   refresh: '刷新',
   scanning: '扫描中…',
   export: '导出',

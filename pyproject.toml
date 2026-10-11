@@ -1,5 +1,5 @@
 [project]
-name = "voxcpm-studio"
+name = "polyvox"
 version = "0.3.0"
 description = "LoRA training and fast inference studio for VoxCPM"
 readme = "README.md"
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-voxcpm-studio = "voxcpm_studio.__main__:main"
+polyvox = "polyvox.__main__:main"
 
 [dependency-groups]
 dev = [
@@ -56,7 +56,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/voxcpm_studio"]
+packages = ["src/polyvox"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -65,7 +65,7 @@ testpaths = ["tests"]
 line-length = 120
 target-version = "py313"
 # Byte-identical copy of upstream's training script: never reformat it.
-extend-exclude = ["src/voxcpm_studio/vendor"]
+extend-exclude = ["src/polyvox/vendor"]
 
 [tool.ruff.lint]
 # pycodestyle, pyflakes, import order, pyupgrade, bugbear.

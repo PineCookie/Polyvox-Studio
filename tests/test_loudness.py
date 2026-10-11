@@ -7,8 +7,8 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 from test_importer import wait_job, write_list
 
-from voxcpm_studio.prep import importer, loudness
-from voxcpm_studio.server import create_app
+from polyvox.prep import importer, loudness
+from polyvox.server import create_app
 
 RATE = 44100
 

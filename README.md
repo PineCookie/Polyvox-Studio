@@ -1,6 +1,9 @@
-# VoxCPM Studio
+# Polyvox Studio
 
-LoRA training and fast inference for [VoxCPM](https://github.com/OpenBMB/VoxCPM), with a web UI.
+LoRA training and fast inference for several TTS models, with dataset
+preparation and a web UI. Models (engines): [VoxCPM](https://github.com/OpenBMB/VoxCPM)
+2 and [dots.tts](https://github.com/rednote-hilab/dots.tts); datasets, runs and
+tools are shared between them.
 
 VoxCPM is used as a library, pinned to an upstream commit in `pyproject.toml`
 (PyPI 2.0.3 predates `generate(seed=...)`; switch to PyPI once a newer release
@@ -15,8 +18,8 @@ To develop against a local VoxCPM checkout instead, temporarily set
 models/            downloaded models, e.g. models/openbmb__VoxCPM2 (git-ignored)
 data/              training datasets: <name>/train.jsonl + audio (git-ignored)
 lora/              training runs and LoRA checkpoints (git-ignored)
-src/voxcpm_studio/
-  config.py        settings from VOXCPM_STUDIO_* env vars
+src/polyvox/
+  config.py        settings from POLYVOX_* env vars
   models.py        the models used, and downloading them (Hugging Face / mirror)
   vram.py          settings per GPU size (batches, which models share the GPU)
   engines/         TTS engines behind one interface (base.py: synthesis settings,
@@ -56,7 +59,7 @@ tests/             run without a GPU (fake model loader and training worker)
 
 Runs on Windows and Linux with [uv](https://docs.astral.sh/uv/), which installs
 Python 3.13, PyTorch and everything else on the first run. `run.bat` / `run.sh`
-pick the PyTorch build for the machine (`VOXCPM_STUDIO_TORCH` overrides):
+pick the PyTorch build for the machine (`POLYVOX_TORCH` overrides):
 
 | Build | For |
 |---|---|
@@ -92,9 +95,9 @@ later ones are fast.
 
 The **Models** tab lists every model the studio uses, with its size, license and
 whether it is downloaded, and downloads the missing ones with progress into the
-models folder (`models/`; `VOXCPM_STUDIO_MODELS_DIR`). Downloads come from
+models folder (`models/`; `POLYVOX_MODELS_DIR`). Downloads come from
 Hugging Face or a mirror of it (hf-mirror.com, or any URL; the server default is
-`VOXCPM_STUDIO_HF_ENDPOINT`), only the files that are used, and resume when
+`POLYVOX_HF_ENDPOINT`), only the files that are used, and resume when
 interrupted. A model downloaded while the server runs is used from its next
 load, no restart needed.
 
@@ -107,21 +110,21 @@ folder. A model variable set explicitly (below) always wins.
 
 | Variable | Default | |
 |---|---|---|
-| `VOXCPM_STUDIO_MODELS_DIR` | `models` | downloaded models (see Models) |
-| `VOXCPM_STUDIO_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` |
-| `VOXCPM_STUDIO_MODEL` | `openbmb/VoxCPM2` | local model dir or Hugging Face id |
-| `VOXCPM_STUDIO_LORA_DIR` | `lora` | LoRA checkpoints and training runs |
-| `VOXCPM_STUDIO_DATA_DIR` | `data` | JSONL training manifests |
-| `VOXCPM_STUDIO_DEVICE` | `auto` | inference device: `cuda`, `cuda:1`, `cpu`, ... |
-| `VOXCPM_STUDIO_TRAIN_GPU` | | CUDA index for training jobs (default: the first GPU) |
-| `VOXCPM_STUDIO_ASR_MODEL` | `Qwen/Qwen3-ASR-1.7B-hf` | speech recognition model (dir or Hugging Face id) |
-| `VOXCPM_STUDIO_ASR_DEVICE` | `auto` | ASR and aligner device; `auto` = the inference device |
-| `VOXCPM_STUDIO_ALIGN_MODEL` | `Qwen/Qwen3-ForcedAligner-0.6B-hf` | forced aligner |
-| `VOXCPM_STUDIO_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (character vocabulary, one language) |
-| `VOXCPM_STUDIO_OPTIMIZE` | `auto` | Triton `torch.compile`; `auto` = on for CUDA |
-| `VOXCPM_STUDIO_VRAM_GB` | | use at most this much GPU memory (a shared GPU), and pick the settings for it |
-| `VOXCPM_STUDIO_DENOISER` | `1` | load the ZipEnhancer denoiser |
-| `VOXCPM_STUDIO_DENOISER_MODEL` | `iic/speech_zipenhancer_ans_multiloss_16k_base` | its dir or ModelScope id |
+| `POLYVOX_MODELS_DIR` | `models` | downloaded models (see Models) |
+| `POLYVOX_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` |
+| `POLYVOX_MODEL` | `openbmb/VoxCPM2` | local model dir or Hugging Face id |
+| `POLYVOX_LORA_DIR` | `lora` | LoRA checkpoints and training runs |
+| `POLYVOX_DATA_DIR` | `data` | JSONL training manifests |
+| `POLYVOX_DEVICE` | `auto` | inference device: `cuda`, `cuda:1`, `cpu`, ... |
+| `POLYVOX_TRAIN_GPU` | | CUDA index for training jobs (default: the first GPU) |
+| `POLYVOX_ASR_MODEL` | `Qwen/Qwen3-ASR-1.7B-hf` | speech recognition model (dir or Hugging Face id) |
+| `POLYVOX_ASR_DEVICE` | `auto` | ASR and aligner device; `auto` = the inference device |
+| `POLYVOX_ALIGN_MODEL` | `Qwen/Qwen3-ForcedAligner-0.6B-hf` | forced aligner |
+| `POLYVOX_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (character vocabulary, one language) |
+| `POLYVOX_OPTIMIZE` | `auto` | Triton `torch.compile`; `auto` = on for CUDA |
+| `POLYVOX_VRAM_GB` | | use at most this much GPU memory (a shared GPU), and pick the settings for it |
+| `POLYVOX_DENOISER` | `1` | load the ZipEnhancer denoiser |
+| `POLYVOX_DENOISER_MODEL` | `iic/speech_zipenhancer_ans_multiloss_16k_base` | its dir or ModelScope id |
 
 `run.bat` / `run.sh` use the project's own `models/`, `lora/` and `data/`; set the
 variables to use other paths.
@@ -132,7 +135,7 @@ on first use (about 4 GB of GPU memory); Unload frees it with the TTS model.
 
 Starting a training job unloads the inference model if both use the same GPU.
 To keep synthesizing while training, put them on different GPUs, e.g.
-`VOXCPM_STUDIO_DEVICE=cuda:1`.
+`POLYVOX_DEVICE=cuda:1`.
 
 ### GPU memory
 
@@ -166,7 +169,7 @@ continued with more steps.
   diffusion decoder); the learning rate is then a multiplier (1). AdamW with a
   cosine schedule (the training script's own) and Prodigy are the alternatives.
 - Speaker similarity: each validation sample is scored against the training
-  set's voice with CAM++ speaker embeddings (`VOXCPM_STUDIO_SPEAKER_MODEL`, a
+  set's voice with CAM++ speaker embeddings (`POLYVOX_SPEAKER_MODEL`, a
   28 MB ModelScope model, on the CPU), next to the score real clips of the set
   reach. Scores are cached in the run folder (`similarity.json`).
 - Each run gets copies of its manifests with absolute audio paths. Webui
@@ -215,8 +218,8 @@ reverb**, **remove noise**. Each is an import option, off by default, and
 available once its model is downloaded (Models tab). The de-reverb weights are
 GPL-3.0.
 
-Any MSST-style checkpoint works: set `VOXCPM_STUDIO_VOCALS_MODEL`,
-`VOXCPM_STUDIO_DEREVERB_MODEL` or `VOXCPM_STUDIO_DENOISE_MODEL` to `model.ckpt`
+Any MSST-style checkpoint works: set `POLYVOX_VOCALS_MODEL`,
+`POLYVOX_DEREVERB_MODEL` or `POLYVOX_DENOISE_MODEL` to `model.ckpt`
 (its config: the same-name or only `.yaml` beside it) or `model.ckpt|config.yaml`.
 The default vocal model is a "bleedless" one: for training data, music left in the
 voice is worse than a slightly thinner voice. It adds time to an import and
@@ -242,7 +245,7 @@ Forced alignment places each word of a transcript in its audio. The import (and
 Two aligners, both running in this environment: **Qwen3-ForcedAligner** (11
 languages, mixed scripts) and a **wav2vec2 CTC** model with a character
 vocabulary (sharper on single wrong words; Chinese by default, set
-`VOXCPM_STUDIO_CTC_ALIGN_MODEL` for another language). The import can also trim
+`POLYVOX_CTC_ALIGN_MODEL` for another language). The import can also trim
 the copied clips' edges: long silence, and sound before the first or after the
 last transcribed word (a laugh, 嗯) when a pause separates it, keeping 0.15 s.
 
@@ -293,7 +296,7 @@ until the filter or search changes. With one flag shown, **Drop all** drops ever
 clip that has it, e.g. all sung clips.
 
 Singing is detected with an AudioSet audio tagger (AST, run through
-transformers; `VOXCPM_STUDIO_SINGING_MODEL`) by its singing scores together
+transformers; `POLYVOX_SINGING_MODEL`) by its singing scores together
 with a low speech score, so talk over background music is not taken for
 singing. It also works on separated vocals; very short sing-song exclamations
 can be flagged too. It is off by default (it slows checks down, and most
@@ -321,7 +324,7 @@ optional clip length range leaves out clips outside it (GPT-SoVITS suggests 1-15
 Select a checkpoint in the Voice panel and choose **Export for sharing**. The zip
 holds only `lora_weights.safetensors` (bfloat16 by default: half the size, same
 output), `lora_config.json` with the base model as a Hugging Face id, and a
-README with usage for VoxCPM Studio, the `voxcpm` Python API and its CLI. Local
+README with usage for Polyvox Studio, the `voxcpm` Python API and its CLI. Local
 paths, optimizer state, logs, transcripts and dataset audio are left out.
 
 **Import** in the Voice panel adds such a zip to the LoRA dir.
@@ -331,12 +334,12 @@ paths, optimizer state, logs, transcripts and dataset audio are left out.
 ```powershell
 uv run pytest
 uv run ruff check; uv run ruff format   # Python lint / format
-uv run voxcpm-studio            # API on :8808
+uv run polyvox            # API on :8808
 cd web; npm run dev             # UI on :5173, proxies /api to :8808
 cd web; npm run lint            # ESLint + Prettier check; `npm run format` fixes
 ```
 
-`src/voxcpm_studio/vendor/` is excluded from Ruff: it stays byte-identical to upstream.
+`src/polyvox/vendor/` is excluded from Ruff: it stays byte-identical to upstream.
 
 GitHub Actions run the tests, linters and web build on Ubuntu and Windows for
 every push. Pushing a tag like `v0.2.0` publishes a release whose `.zip` and

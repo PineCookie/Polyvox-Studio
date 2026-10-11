@@ -2,8 +2,8 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from voxcpm_studio import vram
-from voxcpm_studio.server import create_app
+from polyvox import vram
+from polyvox.server import create_app
 
 
 def test_profiles_by_card_size():
@@ -20,9 +20,9 @@ def test_profiles_by_card_size():
 
 
 def test_override_and_cpu(monkeypatch):
-    monkeypatch.setenv("VOXCPM_STUDIO_VRAM_GB", "12")
+    monkeypatch.setenv("POLYVOX_VRAM_GB", "12")
     assert vram.detect("cpu") == (12.0, vram.profile_for(12))
-    monkeypatch.delenv("VOXCPM_STUDIO_VRAM_GB")
+    monkeypatch.delenv("POLYVOX_VRAM_GB")
     assert vram.detect("cpu") == (None, vram.CPU)
     # A CUDA device name without the GPU (CPU-only PyTorch, as in CI): no profile, no crash.
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
@@ -65,7 +65,7 @@ def test_in_batches_halves_the_limit_when_out_of_memory():
 
 
 def test_status_reports_the_profile_and_services_use_it(monkeypatch, service, training):
-    monkeypatch.setenv("VOXCPM_STUDIO_VRAM_GB", "8")
+    monkeypatch.setenv("POLYVOX_VRAM_GB", "8")
     client = TestClient(create_app(service.settings, service, training))
     gpu = client.get("/api/status").json()["gpu"]
     assert (gpu["total_gb"], gpu["name"], gpu["train_batch"]) == (8.0, "8 GB", 1)
@@ -74,15 +74,15 @@ def test_status_reports_the_profile_and_services_use_it(monkeypatch, service, tr
 
 
 def test_dots_checkpoints_batches_too_large_for_the_card(monkeypatch):
-    from voxcpm_studio.engines.dots.worker import use_checkpointing
+    from polyvox.engines.dots.worker import use_checkpointing
 
-    monkeypatch.delenv("VOXCPM_STUDIO_TRAIN_CHECKPOINT", raising=False)
+    monkeypatch.delenv("POLYVOX_TRAIN_CHECKPOINT", raising=False)
     big, mid, small = vram.profile_for(16), vram.profile_for(12), vram.profile_for(8)
     assert not use_checkpointing(big.dots_train_batch, big)
     assert use_checkpointing(8, big)  # a larger batch set by hand
     assert use_checkpointing(mid.dots_train_batch, mid) and use_checkpointing(small.dots_train_batch, small)
     assert not use_checkpointing(16, vram.CPU)
-    monkeypatch.setenv("VOXCPM_STUDIO_TRAIN_CHECKPOINT", "0")
+    monkeypatch.setenv("POLYVOX_TRAIN_CHECKPOINT", "0")
     assert not use_checkpointing(8, small)
-    monkeypatch.setenv("VOXCPM_STUDIO_TRAIN_CHECKPOINT", "1")
+    monkeypatch.setenv("POLYVOX_TRAIN_CHECKPOINT", "1")
     assert use_checkpointing(1, big)

@@ -7,9 +7,9 @@ import torch
 from fastapi.testclient import TestClient
 from safetensors.torch import load, save_file
 
-from voxcpm_studio import lora_library, sharing
-from voxcpm_studio.engines.dots import lora as dots_lora
-from voxcpm_studio.server import create_app
+from polyvox import lora_library, sharing
+from polyvox.engines.dots import lora as dots_lora
+from polyvox.server import create_app
 
 from conftest import make_lora
 

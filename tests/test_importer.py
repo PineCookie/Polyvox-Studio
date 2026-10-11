@@ -8,12 +8,12 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from voxcpm_studio.data import manifests
-from voxcpm_studio.jobs import JobCancelled
-from voxcpm_studio.prep import importer
-from voxcpm_studio.prep.asr import AsrService
-from voxcpm_studio.server import create_app
-from voxcpm_studio.training import TrainParams
+from polyvox.data import manifests
+from polyvox.jobs import JobCancelled
+from polyvox.prep import importer
+from polyvox.prep.asr import AsrService
+from polyvox.server import create_app
+from polyvox.training import TrainParams
 
 from conftest import make_dataset, wait_for
 

@@ -4,7 +4,7 @@ import { useT } from '../i18n'
 type Theme = 'auto' | 'light' | 'dark'
 
 // Also read in index.html, which applies it before the page renders.
-const STORAGE_KEY = 'voxcpm-studio.theme'
+const STORAGE_KEY = 'polyvox.theme'
 const NEXT: Record<Theme, Theme> = { auto: 'light', light: 'dark', dark: 'auto' }
 
 function stored(): Theme {

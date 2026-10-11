@@ -6,7 +6,7 @@ import soundfile as sf
 import torchaudio
 from test_slicer import bursts, write_m4a
 
-from voxcpm_studio.data import audio_io
+from polyvox.data import audio_io
 
 
 def test_m4a_reference_becomes_wav(tmp_path):

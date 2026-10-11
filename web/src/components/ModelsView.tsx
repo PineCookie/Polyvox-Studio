@@ -14,7 +14,7 @@ interface Props {
 
 const SOURCES = ['', 'https://hf-mirror.com'] // labels: t.sources
 const CUSTOM = 'custom'
-const SOURCE_KEY = 'voxcpm-studio.hf-endpoint'
+const SOURCE_KEY = 'polyvox.hf-endpoint'
 
 function storedSource(): string | null {
   try {
@@ -92,7 +92,7 @@ export function ModelsView({ onError, onChanged }: Props) {
     <section className="panel models">
       <header className="panel-head">
         <h2>{t.models}</h2>
-        <span className="muted hint" title="VOXCPM_STUDIO_MODELS_DIR">
+        <span className="muted hint" title="POLYVOX_MODELS_DIR">
           {list.models_dir}
         </span>
       </header>

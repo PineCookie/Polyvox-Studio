@@ -5,8 +5,8 @@ import dataclasses
 from fastapi.testclient import TestClient
 from test_importer import wait_job
 
-from voxcpm_studio import models
-from voxcpm_studio.server import create_app
+from polyvox import models
+from polyvox.server import create_app
 
 
 def fake_download(spec, models_dir, endpoint=None, progress=None):

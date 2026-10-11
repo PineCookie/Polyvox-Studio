@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from voxcpm_studio import engines, lora_library, training
-from voxcpm_studio.engines import Capabilities, Engine, Param, SynthesisResult
-from voxcpm_studio.engines.voxcpm.engine import VoxCPMEngine
-from voxcpm_studio.engines.voxcpm.inference import SynthesisRequest
-from voxcpm_studio.server import create_app
-from voxcpm_studio.training import TrainParams
+from polyvox import engines, lora_library, training
+from polyvox.engines import Capabilities, Engine, Param, SynthesisResult
+from polyvox.engines.voxcpm.engine import VoxCPMEngine
+from polyvox.engines.voxcpm.inference import SynthesisRequest
+from polyvox.server import create_app
+from polyvox.training import TrainParams
 
 from conftest import make_dataset, make_lora, wait_idle
 
@@ -151,7 +151,7 @@ def test_runs_record_their_engine(client, manager, data_dir, lora_dir):
 def test_worker_command_runs_the_engines_worker(tmp_path):
     training.write_config(tmp_path, {"num_iters": 1})
     cmd = training.worker_command(tmp_path / training.CONFIG_FILE, tmp_path / "samples", tmp_path / "stop")
-    assert cmd[1:3] == ["-m", "voxcpm_studio.engines.voxcpm.worker"]
+    assert cmd[1:3] == ["-m", "polyvox.engines.voxcpm.worker"]
 
     training.write_config(tmp_path, {"engine": "nope"})
     with pytest.raises(KeyError):

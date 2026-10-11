@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// In dev, the API runs separately (`uv run voxcpm-studio`); in production the
+// In dev, the API runs separately (`uv run polyvox`); in production the
 // built UI is served by the API itself.
 export default defineConfig({
   plugins: [react()],

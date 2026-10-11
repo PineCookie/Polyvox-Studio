@@ -7,11 +7,19 @@
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%235b5bd6'/><path d='M7 16h2M11 11v10M15 7v18M19 11v10M23 14v4' stroke='white' stroke-width='2.4' stroke-linecap='round'/></svg>"
     />
-    <title>VoxCPM Studio</title>
+    <title>Polyvox Studio</title>
     <script>
+      // Settings saved before the rename (voxcpm-studio.*) carry over once.
+      try {
+        for (const key of ['lang', 'theme', 'hf-endpoint']) {
+          const old = localStorage.getItem('voxcpm-studio.' + key)
+          if (old !== null && localStorage.getItem('polyvox.' + key) === null)
+            localStorage.setItem('polyvox.' + key, old)
+        }
+      } catch {}
       // The theme chosen with the toggle (ThemeToggle.tsx), applied before the first paint.
       try {
-        const theme = localStorage.getItem('voxcpm-studio.theme')
+        const theme = localStorage.getItem('polyvox.theme')
         if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme
       } catch {}
     </script>

@@ -3,8 +3,8 @@ import json
 import numpy as np
 import soundfile as sf
 
-from voxcpm_studio import speaker
-from voxcpm_studio.config import Settings
+from polyvox import speaker
+from polyvox.config import Settings
 
 RATE = 16_000
 
