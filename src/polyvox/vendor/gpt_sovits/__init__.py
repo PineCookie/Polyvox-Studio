@@ -1,0 +1,28 @@
+"""GPT-SoVITS (RVC-Boss/GPT-SoVITS, MIT, see LICENSE) at commit 1b47ca07ef43a284e0b8bd7f29d3e1e3ff76082a:
+the modules v2Pro / v2ProPlus synthesis needs (GPT text-to-semantic model,
+SoVITS v2Pro, HuBERT and speaker-embedding front ends, Chinese and English
+text processing), vendored because upstream is a webui rather than a package.
+Used by engines/gpt_sovits.
+
+Changes from upstream:
+- bare top-level imports (AR, module, text, ...) made absolute under
+  ``polyvox.vendor.gpt_sovits``; the eres2net modules import each other relatively;
+- left out: webui, gradio, i18n, tools/, v3 / v4 / v5 parts (f5_tts DiT,
+  BigVGAN, models_v5, Accel), training scripts, Japanese / Korean / Cantonese text;
+- text/LangSegmenter: Chinese / English split by script instead of split_lang +
+  fast_langdetect (which download a 125 MB detector model);
+- text/chinese2.py: jieba instead of jieba_fast (no Python 3.13 wheel; same
+  API, also in tone_sandhi.py); G2PW built by ``configure(g2pw_dir, bert_dir)``
+  instead of at import from webui-relative paths;
+- text/g2pw: no model download (the folder comes from the studio's models);
+  config.py read as literal assignments instead of executed; the polyphonic
+  dictionary read from its text files with ast.literal_eval instead of eval,
+  without the pickle cache (not vendored, nor written);
+- text/english.py: dictionaries opened as UTF-8 (the locale may not be), no
+  pickle caches (engdict / namedict caches not vendored, nor written);
+- text/cleaner.py: language modules imported within this package;
+- process_ckpt.py: checkpoints loaded with torch's weights-only loader, with
+  the webui's HParams (as older saved weights pickle their config) allowed;
+- sv.py: the speaker model's path is a parameter, loaded weights-only;
+- feature_extractor/cnhubert.py: no flash-attention setup from tools/.
+"""
