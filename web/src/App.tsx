@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getStatus, importLora, listLoras, synthesize, unloadModel } from './api'
-import type { Lora, Status, SynthesisParams } from './api'
+import { DEFAULT_ENGINE, getStatus, importLora, listEngines, listLoras, synthesize, unloadModel } from './api'
+import type { Engine, Lora, Status, SynthesisParams } from './api'
+import { BASE_VOICE, engineName } from './engines'
+import type { VoiceChoice } from './engines'
 import { forgetPeaks } from './peaks'
 import { History } from './components/History'
 import { ModelsView } from './components/ModelsView'
@@ -32,7 +34,8 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(null)
   const [loras, setLoras] = useState<Lora[]>([])
   const [lorasLoading, setLorasLoading] = useState(true)
-  const [selectedLora, setSelectedLora] = useState<string | null>(null)
+  const [engines, setEngines] = useState<Engine[]>([])
+  const [voice, setVoice] = useState<VoiceChoice>(BASE_VOICE)
   const [seed, setSeed] = useState<number | null>(null)
   const [clips, setClips] = useState<Clip[]>([])
   const [busy, setBusy] = useState(false)
@@ -50,8 +53,8 @@ export default function App() {
       .then(
         (list) => {
           setLoras(list)
-          // Drop a selection whose checkpoint disappeared.
-          setSelectedLora((sel) => (sel && list.some((l) => l.id === sel) ? sel : null))
+          // A checkpoint that disappeared leaves its engine's base model selected.
+          setVoice((v) => (v.lora && !list.some((l) => l.id === v.lora) ? { engine: v.engine, lora: null } : v))
         },
         (e: Error) => setError(e.message),
       )
@@ -61,19 +64,20 @@ export default function App() {
   useEffect(() => {
     refreshStatus()
     refreshLoras()
+    listEngines().then(setEngines, (e: Error) => setError(e.message))
   }, [refreshStatus, refreshLoras])
 
-  async function generate(params: Omit<SynthesisParams, 'loraId'>) {
+  async function generate(params: Omit<SynthesisParams, 'loraId' | 'engine'>) {
     setBusy(true)
     setError(null)
     const started = performance.now()
     try {
-      const out = await synthesize({ ...params, loraId: selectedLora })
+      const out = await synthesize({ ...params, engine: voice.engine, loraId: voice.lora })
       const clip: Clip = {
         id: nextClipId.current++,
         url: URL.createObjectURL(out.audio),
         text: params.text.trim(),
-        voice: selectedLora ?? t.baseModel,
+        voice: voice.lora ?? `${t.baseModel} · ${engineName(voice.engine, engines)}`,
         seed: out.seed,
         elapsedMs: performance.now() - started,
         createdAt: new Date(),
@@ -121,14 +125,14 @@ export default function App() {
     try {
       const id = await importLora(file)
       refreshLoras()
-      setSelectedLora(id)
+      setVoice({ engine: DEFAULT_ENGINE, lora: id }) // packages are VoxCPM LoRAs
     } catch (e) {
       setError((e as Error).message)
     }
   }
 
   function tryCheckpoint(loraId: string) {
-    setSelectedLora(loraId)
+    setVoice({ engine: loras.find((l) => l.id === loraId)?.engine ?? DEFAULT_ENGINE, lora: loraId })
     switchTab('synthesize')
   }
 
@@ -184,6 +188,7 @@ export default function App() {
       <main className="layout" hidden={tab !== 'synthesize'}>
         <div className="main-col">
           <SynthesisPanel
+            engine={engines.find((e) => e.id === voice.engine) ?? null}
             busy={busy}
             seed={seed}
             onSeedChange={setSeed}
@@ -195,10 +200,11 @@ export default function App() {
         </div>
         <aside className="side-col">
           <VoicePanel
+            engines={engines}
             loras={loras}
-            selected={selectedLora}
+            selected={voice}
             modelId={status?.model_id ?? null}
-            onSelect={setSelectedLora}
+            onSelect={setVoice}
             onRefresh={refreshLoras}
             onImport={importPackage}
             onError={showError}

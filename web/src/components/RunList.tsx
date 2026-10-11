@@ -1,4 +1,6 @@
+import { DEFAULT_ENGINE } from '../api'
 import type { RunStatus, RunSummary } from '../api'
+import { engineName } from '../engines'
 import { formatStep } from '../format'
 import { useT } from '../i18n'
 
@@ -54,6 +56,7 @@ export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
             <span className="muted">
               {t.runSteps(run.step !== null ? formatStep(run.step) : '–', formatStep(run.num_iters))}
               {run.lora_rank !== null && t.rankSuffix(run.lora_rank)}
+              {run.engine !== DEFAULT_ENGINE && ` · ${engineName(run.engine)}`}
             </span>
           </button>
         ))}

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useT } from '../i18n'
-import { OPTIMIZERS, type Optimizer } from '../api'
+import { DEFAULT_ENGINE, OPTIMIZERS, type Engine, type Optimizer } from '../api'
 import { OPTIMIZER_LR, type Params } from '../trainParams'
 
 type NumericKey = { [K in keyof Params]: Params[K] extends number ? K : never }[keyof Params]
@@ -18,12 +18,19 @@ interface Props {
   validation: ReactNode
   // A new run is sized in epochs (steps follow from the dataset); an existing one shows its steps.
   epochs?: { value: number; onChange: (value: number) => void }
+  // The models a run can train (the choice shows when there is more than one).
+  engines?: Engine[]
 }
 
 /** Training parameters, editable for a new run and read-only for an existing one. */
-export function ParamsFields({ params, onChange, header, hint, validation, epochs }: Props) {
+export function ParamsFields({ params, onChange, header, hint, validation, epochs, engines = [] }: Props) {
   const t = useT()
   const readOnly = !onChange
+  const voxcpm = params.engine === DEFAULT_ENGINE // token budget and projections are VoxCPM's
+  const showEngine = engines.length > 1 || !voxcpm
+  const engineOptions = engines.some((e) => e.id === params.engine)
+    ? engines
+    : [...engines, { id: params.engine, name: params.engine, unavailable: null } as Engine]
 
   function numberField(
     key: NumericKey,
@@ -56,6 +63,18 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
     <fieldset className="params" disabled={readOnly}>
       {header}
       <div className="form-grid">
+        {showEngine && (
+          <label className="field">
+            <span>{t.params.engine}</span>
+            <select value={params.engine} onChange={(e) => onChange?.('engine', e.target.value)}>
+              {engineOptions.map((e) => (
+                <option key={e.id} value={e.id} disabled={!!e.unavailable} title={e.unavailable ?? undefined}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {epochs ? (
           <label className="field">
             <span>{t.params.epochs}</span>
@@ -107,7 +126,7 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
           {params.optimizer === 'adamw' || params.optimizer === 'prodigy'
             ? numberField('warmup_steps', { min: 0 })
             : numberField('prodigy_steps', { min: 0 })}
-          {numberField('max_batch_tokens', { min: 0, step: 1024 })}
+          {voxcpm && numberField('max_batch_tokens', { min: 0, step: 1024 })}
           {numberField('weight_decay', { min: 0, step: 'any' })}
           {numberField('max_grad_norm', { min: 0, step: 'any' })}
           {numberField('lora_dropout', { min: 0, max: 0.99, step: 'any' })}
@@ -118,7 +137,7 @@ export function ParamsFields({ params, onChange, header, hint, validation, epoch
           <div className="toggles">
             {flag('enable_lm')}
             {flag('enable_dit')}
-            {flag('enable_proj')}
+            {voxcpm && flag('enable_proj')}
           </div>
         </div>
       </details>

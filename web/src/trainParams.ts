@@ -1,5 +1,5 @@
 // Training parameters of a run: defaults, and reading them back from a run's config.
-import { OPTIMIZERS, type Optimizer, type TrainParams } from './api'
+import { DEFAULT_ENGINE, OPTIMIZERS, type Optimizer, type TrainParams } from './api'
 
 export type Params = Omit<TrainParams, 'name' | 'dataset'>
 
@@ -14,6 +14,7 @@ export const WARMUP_SHARE = 0.05 // of the steps
 export const CHECKPOINTS_PER_EPOCH = 2
 
 export const DEFAULT_PARAMS: Params = {
+  engine: DEFAULT_ENGINE,
   val_dataset: null,
   val_holdout: 2,
   num_iters: 200,
@@ -82,6 +83,7 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
   const d = DEFAULT_PARAMS
   return {
     ...d,
+    engine: typeof config.engine === 'string' ? config.engine : DEFAULT_ENGINE,
     num_iters: num(config.num_iters, d.num_iters),
     batch_size: num(config.batch_size, 1),
     grad_accum_steps: num(config.grad_accum_steps, 1),

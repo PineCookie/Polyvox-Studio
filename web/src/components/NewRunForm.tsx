@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { getStatus } from '../api'
-import type { DatasetReport, GpuProfile, TrainParams } from '../api'
+import { DEFAULT_ENGINE, getStatus, listEngines } from '../api'
+import type { DatasetReport, Engine, GpuProfile, TrainParams } from '../api'
 import { datasetName, formatStep } from '../format'
 import { useT } from '../i18n'
 import { DatasetReview } from './DatasetReview'
@@ -32,8 +32,10 @@ const SCHEDULE_KEYS: (keyof Schedule)[] = [
   'log_interval',
 ]
 
-function suggestName(dataset: string, rank: number, taken: string[]): string {
-  const base = `${datasetName(dataset).split('/').at(-1)}_r${rank}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
+function suggestName(dataset: string, engine: string, rank: number, taken: string[]): string {
+  // e.g. voice_r32 (VoxCPM, as before engines), voice_dots_r32
+  const model = engine === DEFAULT_ENGINE ? '' : `_${engine.split('_')[0]}`
+  const base = `${datasetName(dataset).split('/').at(-1)}${model}_r${rank}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
   let name = base
   for (let i = 2; taken.includes(name); i++) name = `${base}_${i}`
   return name
@@ -53,6 +55,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
   const [report, setReport] = useState<DatasetReport | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [gpu, setGpu] = useState<GpuProfile | null>(null)
+  const [engines, setEngines] = useState<Engine[]>([])
 
   // The batch that fits this GPU (the defaults are for 16 GB).
   useEffect(() => {
@@ -64,6 +67,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       },
       () => {},
     )
+    listEngines().then(setEngines, () => {})
   }, [])
 
   const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(base.val_holdout, report.valid - 1)) : 0
@@ -72,7 +76,8 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
     ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base) : {}),
     ...overrides,
   }
-  const name = customName ?? (dataset ? suggestName(dataset, params.lora_rank, runNames) : '')
+  const name = customName ?? (dataset ? suggestName(dataset, params.engine, params.lora_rank, runNames) : '')
+  const engineName = engines.find((e) => e.id === params.engine)?.name ?? params.engine
   const set = <K extends keyof Params>(key: K, value: Params[K]) =>
     SCHEDULE_KEYS.includes(key as keyof Schedule)
       ? setOverrides((o) => ({ ...o, [key]: value }))
@@ -173,7 +178,10 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
               <span>{t.trainingClipsFrom(trainClips.toLocaleString(), datasetName(dataset))}</span>
               {epochs !== null && <span>{t.epochsValue(epochs.toFixed(1))}</span>}
               <span className="muted">{t.stepsTimesClips(formatStep(params.num_iters), perStep)}</span>
-              <span className="muted">{t.rankAlpha(params.lora_rank, params.lora_alpha)}</span>
+              <span className="muted">
+                {engines.length > 1 && `${engineName} · `}
+                {t.rankAlpha(params.lora_rank, params.lora_alpha)}
+              </span>
             </>
           )}
         </p>
@@ -212,6 +220,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
         <section className="panel">
           <ParamsFields
             params={params}
+            engines={engines}
             onChange={set}
             validation={validation}
             header={

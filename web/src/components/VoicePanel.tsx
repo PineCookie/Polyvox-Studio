@@ -1,16 +1,19 @@
 import { useMemo, useRef, useState } from 'react'
-import type { Lora } from '../api'
+import { DEFAULT_ENGINE } from '../api'
+import type { Engine, Lora } from '../api'
+import type { VoiceChoice } from '../engines'
 import { formatStep } from '../format'
 import { useT } from '../i18n'
 import type { Messages } from '../i18n'
 import { ExportDialog } from './ExportDialog'
 
 interface Props {
+  engines: Engine[]
   loras: Lora[]
-  selected: string | null
-  // Hub id of the model the server runs; LoRAs for another base model can't load.
+  selected: VoiceChoice
+  // Hub id of the VoxCPM model the server runs; VoxCPM LoRAs for another base model can't load.
   modelId: string | null
-  onSelect: (id: string | null) => void
+  onSelect: (choice: VoiceChoice) => void
   onRefresh: () => void
   onImport: (file: File) => Promise<void>
   onError: (message: string) => void
@@ -25,6 +28,7 @@ interface Checkpoint {
 
 interface Voice {
   name: string
+  engine: string
   checkpoints: Checkpoint[] // best (highest step) first
   baseModelId: string | null
 }
@@ -55,7 +59,8 @@ function groupVoices(loras: Lora[], t: Messages): Voice[] {
           label: lora.step !== null ? t.stepLabel(formatStep(lora.step)) : t.latest,
         }))
         .sort((a, b) => (b.step ?? -1) - (a.step ?? -1))
-      return { name, checkpoints, baseModelId: checkpoints[0]?.lora.base_model_id ?? null }
+      const best = checkpoints[0]?.lora
+      return { name, engine: best?.engine ?? DEFAULT_ENGINE, checkpoints, baseModelId: best?.base_model_id ?? null }
     })
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
 }
@@ -64,7 +69,17 @@ function shortModel(id: string): string {
   return id.split('/').at(-1) ?? id
 }
 
-export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onImport, onError, loading }: Props) {
+export function VoicePanel({
+  engines,
+  loras,
+  selected,
+  modelId,
+  onSelect,
+  onRefresh,
+  onImport,
+  onError,
+  loading,
+}: Props) {
   const t = useT()
   const voices = useMemo(() => groupVoices(loras, t), [loras, t])
   const [filter, setFilter] = useState('')
@@ -72,15 +87,32 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
   const [importing, setImporting] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
-  const current = loras.find((l) => l.id === selected) ?? null
+  const engineName = (id: string) => engines.find((e) => e.id === id)?.name ?? id
+  const current = loras.find((l) => l.id === selected.lora) ?? null
   const currentVoice = current ? voices.find((v) => v.name === current.id.split('/')[0]) : null
   // A hidden duplicate (e.g. picked from the Train tab) still needs an option.
   const options =
     currentVoice && current && !currentVoice.checkpoints.some((c) => c.lora.id === current.id)
       ? [...currentVoice.checkpoints, { lora: current, step: current.step, label: current.id.split('/').at(-1)! }]
       : (currentVoice?.checkpoints ?? [])
-  const incompatible = (v: Voice) => !!modelId && !!v.baseModelId && v.baseModelId !== modelId
+  // Only VoxCPM records a base model the server could differ from; other engines have one model each.
+  const incompatible = (v: Voice) =>
+    v.engine === DEFAULT_ENGINE && !!modelId && !!v.baseModelId && v.baseModelId !== modelId
+  const unknownEngine = (v: Voice) => engines.length > 0 && !engines.some((e) => e.id === v.engine)
   const shown = voices.filter((v) => v.name.toLowerCase().includes(filter.trim().toLowerCase()))
+  const select = (lora: Lora) => onSelect({ engine: lora.engine, lora: lora.id })
+  const layout = (lora: Lora) =>
+    lora.config
+      ? t.loraLayout(
+          lora.config.r,
+          lora.config.alpha,
+          [lora.config.enable_lm && 'LM', lora.config.enable_dit && 'DiT', lora.config.enable_proj && t.projections]
+            .filter(Boolean)
+            .join(' + '),
+        )
+      : lora.rank !== null && lora.alpha !== null
+        ? t.rankAlpha(lora.rank, lora.alpha)
+        : t.defaultLayout
 
   async function importFile(file: File | undefined) {
     if (!file) return
@@ -125,12 +157,18 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
           <>
             <div className="voice-current-head">
               <span className="voice-name">{currentVoice.name}</span>
-              <button type="button" className="ghost small" onClick={() => setExporting(current)}>
-                {t.export}
-              </button>
+              {current.engine === DEFAULT_ENGINE && (
+                <button type="button" className="ghost small" onClick={() => setExporting(current)}>
+                  {t.export}
+                </button>
+              )}
             </div>
             {options.length > 1 && (
-              <select value={current.id} onChange={(e) => onSelect(e.target.value)} aria-label={t.checkpoint}>
+              <select
+                value={current.id}
+                onChange={(e) => onSelect({ engine: current.engine, lora: e.target.value })}
+                aria-label={t.checkpoint}
+              >
                 {options.map((c, i) => (
                   <option key={c.lora.id} value={c.lora.id}>
                     {c.label}
@@ -140,19 +178,7 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
               </select>
             )}
             <p className="voice-meta">
-              {current.config
-                ? t.loraLayout(
-                    current.config.r,
-                    current.config.alpha,
-                    [
-                      current.config.enable_lm && 'LM',
-                      current.config.enable_dit && 'DiT',
-                      current.config.enable_proj && t.projections,
-                    ]
-                      .filter(Boolean)
-                      .join(' + '),
-                  )
-                : t.defaultLayout}
+              {engineName(current.engine)} · {layout(current)}
               <br />
               <span title={current.base_model ?? undefined}>
                 {t.baseOf(current.base_model_id ?? current.base_model ?? t.notRecorded)}
@@ -163,8 +189,8 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
           <>
             <span className="voice-name">{t.baseModel}</span>
             <p className="voice-meta">
-              {t.noLora}
-              {modelId ? ` · ${modelId}` : ''}
+              {engineName(selected.engine)} · {t.noLora}
+              {selected.engine === DEFAULT_ENGINE && modelId ? ` · ${modelId}` : ''}
             </p>
           </>
         )}
@@ -182,23 +208,32 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
       )}
 
       <div className="voice-list" role="radiogroup" aria-label={t.voice}>
-        {!filter && (
-          <button
-            type="button"
-            role="radio"
-            aria-checked={selected === null}
-            className={`voice-row ${selected === null ? 'active' : ''}`}
-            onClick={() => onSelect(null)}
-          >
-            <span className="voice-row-name">{t.baseModel}</span>
-            <span className="muted">{t.noLoraShort}</span>
-          </button>
-        )}
+        {/* A base model per engine, in the server's order (VoxCPM first). */}
+        {!filter &&
+          engines.map((engine) => {
+            const active = selected.lora === null && selected.engine === engine.id
+            return (
+              <button
+                key={`base:${engine.id}`}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                className={`voice-row ${active ? 'active' : ''}`}
+                onClick={() => onSelect({ engine: engine.id, lora: null })}
+                disabled={!!engine.unavailable}
+                title={engine.unavailable ? t.engineUnavailable(engine.name, engine.unavailable) : undefined}
+              >
+                <span className="voice-row-name">{t.baseModel}</span>
+                <span className="muted">{engine.name}</span>
+              </button>
+            )
+          })}
 
         {shown.map((voice) => {
           const active = voice === currentVoice
           const best = voice.checkpoints[0]
-          const blocked = incompatible(voice)
+          const blocked = incompatible(voice) || unknownEngine(voice)
+          const otherEngine = voice.engine !== DEFAULT_ENGINE
           return (
             <button
               key={voice.name}
@@ -206,17 +241,18 @@ export function VoicePanel({ loras, selected, modelId, onSelect, onRefresh, onIm
               role="radio"
               aria-checked={active}
               className={`voice-row ${active ? 'active' : ''}`}
-              onClick={() => onSelect(best.lora.id)}
+              onClick={() => select(best.lora)}
               disabled={blocked}
-              title={blocked ? t.trainedOn(voice.baseModelId!, modelId!) : best.lora.id}
+              title={incompatible(voice) ? t.trainedOn(voice.baseModelId!, modelId!) : best.lora.id}
             >
               <span className="voice-row-name">{voice.name}</span>
-              {blocked ? (
+              {incompatible(voice) ? (
                 <span className="tag subtle">{shortModel(voice.baseModelId!)}</span>
               ) : (
                 <span className="muted">
+                  {otherEngine && <span className="tag subtle">{engineName(voice.engine)}</span>}{' '}
                   {[
-                    best.lora.config && t.rank(best.lora.config.r),
+                    best.lora.rank !== null && t.rank(best.lora.rank),
                     best.step !== null && t.stepsCount(formatStep(best.step)),
                   ]
                     .filter(Boolean)

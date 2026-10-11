@@ -13,11 +13,49 @@ export interface LoraConfig {
 
 export interface Lora {
   id: string
+  engine: string // the engine it was trained for (Engine.id)
   base_model: string | null
   // Hugging Face id guessed from base_model (the export default).
   base_model_id: string | null
   step: number | null
-  config: LoraConfig | null
+  rank: number | null
+  alpha: number | null
+  config: LoraConfig | null // VoxCPM's layout (VoxCPM LoRAs only)
+}
+
+// A TTS model family (src/voxcpm_studio/engines/base.py).
+export interface EngineParam {
+  name: string
+  kind: 'float' | 'int' | 'bool'
+  default: number | boolean
+  min: number | null
+  max: number | null
+  step: number | null
+}
+
+export interface Engine {
+  id: string
+  name: string
+  unavailable: string | null // why it can't run here
+  capabilities: {
+    sample_rate: number
+    training_rate: number
+    languages: string[]
+    reference_audio: boolean
+    reference_transcript: boolean
+    style: boolean
+    tags: boolean
+    lora_hot_swap: boolean
+  }
+  params: EngineParam[] // synthesis settings
+  model_setting: string // its base model in the Models list
+  loaded: boolean
+}
+
+export const DEFAULT_ENGINE = 'voxcpm' // runs and LoRAs from before engines
+
+export async function listEngines(): Promise<Engine[]> {
+  return (await request('/api/engines')).json()
 }
 
 export interface Status {
@@ -40,18 +78,19 @@ export interface Status {
   gpu: GpuProfile
   lora_rank: number | null
   active_lora: string | null
+  loaded_engines: string[] // engines with a model in memory
 }
 
+export type EngineOptions = Record<string, number | boolean>
+
 export interface SynthesisParams {
+  engine: string
   text: string
-  control: string
+  control: string // style (engines with capabilities.style)
   loraId: string | null
   referenceAudio: File | null
   promptText: string
-  cfgValue: number
-  steps: number
-  normalize: boolean
-  denoise: boolean
+  options: EngineOptions // the engine's params by name
   seed: number | null
 }
 
@@ -166,6 +205,7 @@ export async function getTtsProgress(): Promise<TtsProgress> {
 
 export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
   const form = new FormData()
+  form.set('engine', p.engine)
   form.set('text', p.text)
   form.set('control', p.control)
   if (p.loraId) form.set('lora_id', p.loraId)
@@ -173,10 +213,7 @@ export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
     form.set('reference_audio', p.referenceAudio)
     if (p.promptText.trim()) form.set('prompt_text', p.promptText)
   }
-  form.set('cfg_value', String(p.cfgValue))
-  form.set('inference_timesteps', String(p.steps))
-  form.set('normalize', String(p.normalize))
-  form.set('denoise', String(p.denoise))
+  form.set('options', JSON.stringify(p.options))
   if (p.seed !== null) form.set('seed', String(p.seed))
 
   const resp = await request('/api/tts', { method: 'POST', body: form })
@@ -204,6 +241,7 @@ export type RunStatus = 'running' | 'stopping' | 'complete' | 'incomplete' | 'fa
 
 export interface RunSummary {
   name: string
+  engine: string
   status: RunStatus
   step: number | null
   saved_step: number | null
@@ -236,6 +274,7 @@ export type Optimizer = (typeof OPTIMIZERS)[number]
 
 export interface TrainParams {
   name: string
+  engine: string
   dataset: string
   val_dataset: string | null
   val_holdout: number

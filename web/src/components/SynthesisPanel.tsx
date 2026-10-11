@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { getTtsProgress, transcribe } from '../api'
-import type { SynthesisParams, TtsProgress } from '../api'
+import type { Engine, EngineOptions, EngineParam, SynthesisParams, TtsProgress } from '../api'
+import { defaultOptions } from '../engines'
 import { formatDuration } from '../format'
 import { useT } from '../i18n'
 import { forgetPeaks } from '../peaks'
@@ -69,29 +70,54 @@ function SynthesisProgress() {
   )
 }
 
+/** One numeric synthesis setting of an engine, as a slider. */
+function ParamSlider({ param, value, onChange }: { param: EngineParam; value: number; onChange: (v: number) => void }) {
+  const t = useT()
+  const step = param.step ?? (param.kind === 'int' ? 1 : 0.1)
+  const decimals = param.kind === 'int' ? 0 : Math.max(0, -Math.floor(Math.log10(step)))
+  return (
+    <label className="field">
+      <span>
+        {t.paramLabels[param.name] ?? param.name} <output>{value.toFixed(decimals)}</output>
+      </span>
+      <input
+        type="range"
+        min={param.min ?? 0}
+        max={param.max ?? 10}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+      {t.paramHints[param.name] && <span className="muted hint">{t.paramHints[param.name]}</span>}
+    </label>
+  )
+}
+
 interface Props {
+  // The engine of the chosen voice: its settings and what it can do.
+  engine: Engine | null
   busy: boolean
   seed: number | null
   onSeedChange: (seed: number | null) => void
-  onGenerate: (params: Omit<SynthesisParams, 'loraId'>) => void
+  onGenerate: (params: Omit<SynthesisParams, 'loraId' | 'engine'>) => void
   onError: (message: string) => void
   // Called after a transcription (it loads the ASR model).
   onTranscribed: () => void
 }
 
-export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, onTranscribed }: Props) {
+export function SynthesisPanel({ engine, busy, seed, onSeedChange, onGenerate, onError, onTranscribed }: Props) {
   const t = useT()
   const [text, setText] = useState('')
   const [control, setControl] = useState('')
   const [referenceAudio, setReferenceAudio] = useState<File | null>(null)
   const [promptText, setPromptText] = useState('')
-  // Below VoxCPM's 2.0: with a voice LoRA, 1.6 sounded more natural and closer to the
-  // voice, and the occasional added sound at 1.5 was gone.
-  const [cfgValue, setCfgValue] = useState(1.6)
-  const [steps, setSteps] = useState(10)
-  const [normalize, setNormalize] = useState(true)
-  const [denoise, setDenoise] = useState(true)
+  // Settings changed by hand, per engine (each keeps its own while switching voices).
+  const [changed, setChanged] = useState<Record<string, EngineOptions>>({})
   const [transcribing, setTranscribing] = useState(false)
+  const caps = engine?.capabilities
+  const options: EngineOptions = engine ? { ...defaultOptions(engine), ...changed[engine.id] } : {}
+  const setOption = (name: string, value: number | boolean) =>
+    engine && setChanged((c) => ({ ...c, [engine.id]: { ...c[engine.id], [name]: value } }))
   const textArea = useRef<HTMLTextAreaElement>(null)
   // A playable URL for the chosen reference, released when it changes.
   const referenceUrl = useMemo(() => (referenceAudio ? URL.createObjectURL(referenceAudio) : null), [referenceAudio])
@@ -105,7 +131,7 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
     [referenceUrl],
   )
 
-  const canSubmit = !busy && text.trim().length > 0
+  const canSubmit = !busy && !!engine && !engine.unavailable && text.trim().length > 0
 
   async function transcribeReference() {
     if (!referenceAudio) return
@@ -123,7 +149,14 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
   function submit(e?: FormEvent) {
     e?.preventDefault()
     if (!canSubmit) return
-    onGenerate({ text, control, referenceAudio, promptText, cfgValue, steps, normalize, denoise, seed })
+    onGenerate({
+      text,
+      control: caps?.style ? control : '',
+      referenceAudio: caps?.reference_audio ? referenceAudio : null,
+      promptText: caps?.reference_transcript ? promptText : '',
+      options,
+      seed,
+    })
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -164,98 +197,93 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
           autoFocus
         />
       </label>
-      <div className="tag-row" role="group" aria-label={t.tagGroup}>
-        {TAGS.map(([tag, label]) => (
-          <button
-            key={tag}
-            type="button"
-            className="ghost small"
-            onClick={() => insertTag(tag)}
-            title={t.insertTag(tag)}
-          >
-            {t.tagNames[label]}
-          </button>
-        ))}
-        <select
-          value=""
-          onChange={(e) => e.target.value && insertTag(e.target.value)}
-          aria-label={t.moreTagsLabel}
-          className="small"
-        >
-          <option value="">{t.moreTags}</option>
-          {MORE_TAGS.map((tag) => (
-            <option key={tag} value={tag}>
-              {tag}
-            </option>
-          ))}
-        </select>
-        <span className="muted hint">{t.tagsHint}</span>
-      </div>
-
-      <label className="field">
-        <span>
-          {t.style} <span className="muted">{t.optional}</span>
-        </span>
-        <input value={control} onChange={(e) => setControl(e.target.value)} placeholder={t.stylePlaceholder} />
-      </label>
-
-      <fieldset className="field reference">
-        <legend>
-          {t.referenceAudio} <span className="muted">{t.referenceOptional}</span>
-        </legend>
-        <FilePicker
-          file={referenceAudio}
-          onChange={(f) => (f ? setReferenceAudio(f) : clearReference())}
-          accept="audio/*"
-          label={t.chooseAudio}
-          empty={t.orDropFile}
-        >
-          {referenceUrl && <AudioPlayer url={referenceUrl} />}
-        </FilePicker>
-        {referenceAudio && (
-          <div className="file-row">
-            <input
-              value={promptText}
-              onChange={(e) => setPromptText(e.target.value)}
-              placeholder={t.referenceTranscript}
-            />
+      {caps?.tags && (
+        <div className="tag-row" role="group" aria-label={t.tagGroup}>
+          {TAGS.map(([tag, label]) => (
             <button
+              key={tag}
               type="button"
               className="ghost small"
-              onClick={transcribeReference}
-              disabled={transcribing}
-              title={t.transcribeTitle}
+              onClick={() => insertTag(tag)}
+              title={t.insertTag(tag)}
             >
-              {transcribing ? t.transcribing : t.transcribe}
+              {t.tagNames[label]}
             </button>
-          </div>
-        )}
-      </fieldset>
+          ))}
+          <select
+            value=""
+            onChange={(e) => e.target.value && insertTag(e.target.value)}
+            aria-label={t.moreTagsLabel}
+            className="small"
+          >
+            <option value="">{t.moreTags}</option>
+            {MORE_TAGS.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+          <span className="muted hint">{t.tagsHint}</span>
+        </div>
+      )}
+
+      {caps?.style && (
+        <label className="field">
+          <span>
+            {t.style} <span className="muted">{t.optional}</span>
+          </span>
+          <input value={control} onChange={(e) => setControl(e.target.value)} placeholder={t.stylePlaceholder} />
+        </label>
+      )}
+
+      {caps?.reference_audio !== false && (
+        <fieldset className="field reference">
+          <legend>
+            {t.referenceAudio} <span className="muted">{t.referenceOptional}</span>
+          </legend>
+          <FilePicker
+            file={referenceAudio}
+            onChange={(f) => (f ? setReferenceAudio(f) : clearReference())}
+            accept="audio/*"
+            label={t.chooseAudio}
+            empty={t.orDropFile}
+          >
+            {referenceUrl && <AudioPlayer url={referenceUrl} />}
+          </FilePicker>
+          {referenceAudio && caps?.reference_transcript !== false && (
+            <div className="file-row">
+              <input
+                value={promptText}
+                onChange={(e) => setPromptText(e.target.value)}
+                placeholder={t.referenceTranscript}
+              />
+              <button
+                type="button"
+                className="ghost small"
+                onClick={transcribeReference}
+                disabled={transcribing}
+                title={t.transcribeTitle}
+              >
+                {transcribing ? t.transcribing : t.transcribe}
+              </button>
+            </div>
+          )}
+        </fieldset>
+      )}
 
       <details className="advanced">
         <summary>{t.advanced}</summary>
         <div className="advanced-grid">
-          <label className="field">
-            <span>
-              {t.guidance} <output>{cfgValue.toFixed(1)}</output>
-            </span>
-            <input
-              type="range"
-              min={0.5}
-              max={5}
-              step={0.1}
-              value={cfgValue}
-              onChange={(e) => setCfgValue(Number(e.target.value))}
-            />
-            <span className="muted hint">{t.guidanceHint}</span>
-          </label>
-          <label className="field">
-            <span>
-              {t.steps} <output>{steps}</output>
-            </span>
-            <input type="range" min={1} max={50} value={steps} onChange={(e) => setSteps(Number(e.target.value))} />
-            <span className="muted hint">{t.stepsHint}</span>
-          </label>
+          {engine?.params
+            .filter((p) => p.kind !== 'bool')
+            .map((p) => (
+              <ParamSlider
+                key={`${engine.id}.${p.name}`}
+                param={p}
+                value={Number(options[p.name])}
+                onChange={(v) => setOption(p.name, v)}
+              />
+            ))}
           <label className="field">
             <span>{t.seed}</span>
             <input
@@ -266,21 +294,29 @@ export function SynthesisPanel({ busy, seed, onSeedChange, onGenerate, onError, 
             />
           </label>
           <div className="toggles">
-            <label>
-              <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} />{' '}
-              {t.normalizeText}
-            </label>
-            <label>
-              <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} />{' '}
-              {t.denoiseReference}
-            </label>
+            {engine?.params
+              .filter((p) => p.kind === 'bool')
+              .map((p) => (
+                <label key={`${engine.id}.${p.name}`}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(options[p.name])}
+                    onChange={(e) => setOption(p.name, e.target.checked)}
+                  />{' '}
+                  {t.paramLabels[p.name] ?? p.name}
+                </label>
+              ))}
           </div>
         </div>
       </details>
 
       {busy && <SynthesisProgress />}
       <div className="actions">
-        <span className="muted hint">{t.ctrlEnter}</span>
+        {engine?.unavailable ? (
+          <span className="field-error">{t.engineUnavailable(engine.name, engine.unavailable)}</span>
+        ) : (
+          <span className="muted hint">{t.ctrlEnter}</span>
+        )}
         <button type="submit" className="primary" disabled={!canSubmit}>
           {busy ? t.generating : t.generate}
         </button>

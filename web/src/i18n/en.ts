@@ -74,16 +74,28 @@ export const en = {
   transcribing: 'Transcribing…',
   transcribeTitle: 'Fill in the transcript with speech recognition (Qwen3-ASR)',
   advanced: 'Advanced',
-  guidance: 'Guidance',
-  guidanceHint:
-    'Lower sounds more natural and closer to the voice; raise toward 2.0 if words get dropped or sounds added. Above 2 the voice drifts away.',
-  stepsHint: 'Detail passes per sound chunk: 10 is enough; more is slower and rarely better.',
-  steps: 'Steps',
+  // Synthesis settings by the engine's param name (engines/*.py); unknown names show as they are.
+  paramLabels: {
+    cfg_value: 'Guidance',
+    guidance_scale: 'Guidance',
+    inference_timesteps: 'Steps',
+    num_steps: 'Steps',
+    speaker_scale: 'Reference voice strength',
+    normalize: 'Normalize text',
+    denoise: 'Denoise reference',
+  } as Record<string, string>,
+  paramHints: {
+    cfg_value:
+      'Lower sounds more natural and closer to the voice; raise toward 2.0 if words get dropped or sounds added. Above 2 the voice drifts away.',
+    guidance_scale: 'dots.tts default 1.2; higher follows the text more strictly.',
+    inference_timesteps: 'Detail passes per sound chunk: 10 is enough; more is slower and rarely better.',
+    num_steps: 'Detail passes per sound chunk: 10 is enough; more is slower and rarely better.',
+    speaker_scale: 'With reference audio: how strongly its voice steers the result.',
+  } as Record<string, string>,
   seed: 'Seed',
   random: 'Random',
-  normalizeText: 'Normalize text',
-  denoiseReference: 'Denoise reference',
   ctrlEnter: 'Ctrl + Enter',
+  engineUnavailable: (name: string, reason: string) => `${name} can't run here: ${reason}`,
   generate: 'Generate',
   generating: 'Generating…',
   // Synthesis progress
@@ -560,6 +572,7 @@ export const en = {
 
   // Parameters
   params: {
+    engine: 'Model',
     epochs: 'Epochs',
     num_iters: 'Steps',
     lora_rank: 'LoRA rank',

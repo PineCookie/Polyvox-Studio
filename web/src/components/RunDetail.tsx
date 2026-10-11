@@ -141,7 +141,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
       {tab === 'parameters' && (
         <section className="panel">
           <ParamsFields
-            params={paramsFromConfig(run.config)}
+            params={paramsFromConfig({ engine: run.engine, ...run.config })}
             validation={
               <div className="field">
                 <span>{t.validation}</span>
