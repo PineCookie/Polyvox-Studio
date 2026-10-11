@@ -26,6 +26,7 @@ vocabulary logits are not computed, as the basic template puts no loss on them.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -170,7 +171,8 @@ def encode(model, pipeline, records: list[dict], workers: int, stop: threading.E
                     "input_ids": torch.tensor(s["input_ids"]),
                     "labels": torch.tensor(s["labels"]),
                     "loss_mask": torch.tensor(s["loss_mask"], dtype=torch.float32),
-                    "latents": model.vocoder.extract_latents(wav)[0].cpu(),  # [2 x latent dim, frames]
+                    # [2 x latent dim, frames]; float16 halves the cache, far below the sampling noise
+                    "latents": model.vocoder.extract_latents(wav)[0].half().cpu(),
                     "xvectors": xvecs,
                 }
             )
@@ -178,6 +180,43 @@ def encode(model, pipeline, records: list[dict], workers: int, stop: threading.E
                 log(f"Encoding {what}: {i + 1} / {len(records)} clips")
     log(f"Encoded {len(out)} {what} clips in {time.time() - t0:.0f} s.")
     return out
+
+
+CACHE_VERSION = 1  # bump when encode's output changes
+
+
+def cache_key(manifest: Path, model_path: str) -> dict:
+    """What encoded clips depend on: the manifest's bytes (edits, dropped clips),
+    the base model and the encoding itself."""
+    return {
+        "version": CACHE_VERSION,
+        "manifest": hashlib.sha1(manifest.read_bytes()).hexdigest(),
+        "model": str(model_path),
+        "xvec_crops": XVEC_CROPS,
+    }
+
+
+def cached(cache_file: Path, key: dict, make, expected: int) -> list[dict]:
+    """``make()``'s encoded clips, from ``cache_file`` when it was written for the
+    same ``key``; a complete fresh result (``expected`` clips; a stop cuts it
+    short) is saved there. A resumed or continued run skips the encode pass."""
+    import torch
+
+    if cache_file.is_file():
+        try:
+            saved = torch.load(cache_file, map_location="cpu", weights_only=True)
+            if saved.get("key") == key and len(saved.get("clips", ())) == expected:
+                log(f"Encoded clips from {cache_file.name} ({expected}).")
+                return saved["clips"]
+        except Exception as e:  # unreadable or from another version: encode again
+            log(f"Ignoring {cache_file.name}: {e}")
+    clips = make()
+    if len(clips) == expected:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_file.with_suffix(".tmp")
+        torch.save({"key": key, "clips": clips}, tmp)
+        tmp.replace(cache_file)
+    return clips
 
 
 def collate(model, items: list[dict], pad_id: int) -> dict:
@@ -197,7 +236,7 @@ def collate(model, items: list[dict], pad_id: int) -> dict:
     )
     out = {k: v.to(dev, non_blocking=True) for k, v in batch.items() if torch.is_tensor(v)}
     out["loss_masks"] = {k: v.to(dev) for k, v in batch["loss_masks"].items()}
-    latents = pad_sequence([c["latents"].T for c in items], batch_first=True).transpose(1, 2).to(dev)
+    latents = pad_sequence([c["latents"].T for c in items], batch_first=True).transpose(1, 2).to(dev, torch.float32)
     out["latents"] = latents
     out["latent_lengths"] = torch.tensor([c["latents"].shape[-1] for c in items], device=dev)
     out["latents_sampled"] = model.core.io_helper.sample_from_latent(latents)  # a new draw each step
@@ -298,8 +337,23 @@ def main() -> None:
     pad_id = pad_id if pad_id is not None else (model.tokenizer.eos_token_id or 0)
     batch_size, accum = int(config["batch_size"]), int(config["grad_accum_steps"])
     workers = int(config.get("num_workers") or 0)
-    train_clips = encode(model, pipeline, train_records, workers, stop, "training")
-    val_clips = encode(model, pipeline, val_records, 0, stop, "validation") if val_records else []
+    cache_dir = save_dir.parent / "cache"  # the run folder's
+    train_clips = cached(
+        cache_dir / "encoded_train.pt",
+        cache_key(Path(config["train_manifest"]), config["pretrained_path"]),
+        lambda: encode(model, pipeline, train_records, workers, stop, "training"),
+        len(train_records),
+    )
+    val_clips = (
+        cached(
+            cache_dir / "encoded_val.pt",
+            cache_key(val_path, config["pretrained_path"]),
+            lambda: encode(model, pipeline, val_records, 0, stop, "validation"),
+            len(val_records),
+        )
+        if val_records
+        else []
+    )
     batches = Batches(train_clips, batch_size, seed=0)
     epoch_steps = max(1.0, batches.per_epoch / accum)
 

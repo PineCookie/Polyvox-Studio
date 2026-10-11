@@ -8,7 +8,7 @@ from torch import nn
 from voxcpm_studio import lora_library, training
 from voxcpm_studio.engines import SynthesisRequest, dots_lora
 from voxcpm_studio.engines.dots import DotsEngine
-from voxcpm_studio.engines.dots_worker import format_metrics, make_optimizer, rates
+from voxcpm_studio.engines.dots_worker import cache_key, cached, format_metrics, make_optimizer, rates
 
 from conftest import make_lora
 
@@ -280,6 +280,32 @@ def test_worker_log_lines_parse_as_the_studio_reads_them(tmp_path):
         opt.step()
         scheduler.step()
     assert lrs[0] < lrs[2] == pytest.approx(1e-4) and lrs[-1] < lrs[5]
+
+
+def test_encoded_clips_are_cached_per_manifest_and_model(tmp_path):
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text('{"audio": "a.wav", "text": "x"}\n', encoding="utf-8")
+    cache = tmp_path / "cache" / "encoded_train.pt"
+    calls = []
+
+    def make(n=1):
+        calls.append(n)
+        return [{"latents": torch.ones(4, 3, dtype=torch.float16), "xvectors": [torch.zeros(2)]}] * n
+
+    first = cached(cache, cache_key(manifest, "model"), make, 1)
+    again = cached(cache, cache_key(manifest, "model"), make, 1)
+    assert calls == [1] and torch.equal(again[0]["latents"], first[0]["latents"])
+
+    cached(cache, cache_key(manifest, "other_model"), make, 1)  # another base model
+    manifest.write_text('{"audio": "b.wav", "text": "y"}\n', encoding="utf-8")
+    cached(cache, cache_key(manifest, "other_model"), make, 1)  # edited clips
+    assert len(calls) == 3
+
+    stopped = tmp_path / "cache" / "stopped.pt"
+    cached(stopped, cache_key(manifest, "model"), lambda: make(0), 1)  # a stop cut the pass short
+    assert not stopped.exists()
+    cache.write_bytes(b"not a cache")
+    assert len(cached(cache, cache_key(manifest, "model"), make, 1)) == 1 and len(calls) == 5
 
 
 def test_dots_checkpoints_are_listed_with_their_engine(lora_dir):
