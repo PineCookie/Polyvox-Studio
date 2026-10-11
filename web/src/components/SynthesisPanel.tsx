@@ -105,6 +105,8 @@ interface Props {
   onTranscribed: () => void
   // Transcript of the chosen voice's own reference clip (GPT-SoVITS voices); null: it has none.
   voiceReference: string | null
+  // The base model is chosen (no voice): settings only it uses show.
+  isBase: boolean
 }
 
 export function SynthesisPanel({
@@ -116,6 +118,7 @@ export function SynthesisPanel({
   onError,
   onTranscribed,
   voiceReference,
+  isBase,
 }: Props) {
   const t = useT()
   const [text, setText] = useState('')
@@ -127,7 +130,7 @@ export function SynthesisPanel({
   const [transcribing, setTranscribing] = useState(false)
   const caps = engine?.capabilities
   const options: EngineOptions = engine ? { ...defaultOptions(engine), ...changed[engine.id] } : {}
-  const setOption = (name: string, value: number | boolean) =>
+  const setOption = (name: string, value: number | boolean | string) =>
     engine && setChanged((c) => ({ ...c, [engine.id]: { ...c[engine.id], [name]: value } }))
   const textArea = useRef<HTMLTextAreaElement>(null)
   // A playable URL for the chosen reference, released when it changes.
@@ -298,7 +301,22 @@ export function SynthesisPanel({
         <summary>{t.advanced}</summary>
         <div className="advanced-grid">
           {engine?.params
-            .filter((p) => p.kind !== 'bool')
+            .filter((p) => p.kind === 'choice' && (isBase || !p.base_only))
+            .map((p) => (
+              <label key={`${engine.id}.${p.name}`} className="field">
+                <span>{t.paramLabels[p.name] ?? p.name}</span>
+                <select value={String(options[p.name])} onChange={(e) => setOption(p.name, e.target.value)}>
+                  {(p.choices ?? []).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                {t.paramHints[p.name] && <span className="muted hint">{t.paramHints[p.name]}</span>}
+              </label>
+            ))}
+          {engine?.params
+            .filter((p) => p.kind === 'float' || p.kind === 'int')
             .map((p) => (
               <ParamSlider
                 key={`${engine.id}.${p.name}`}

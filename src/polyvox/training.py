@@ -99,6 +99,7 @@ class TrainParams(BaseModel):
     sovits_epochs: int = Field(8, ge=0, le=100)
     gpt_epochs: int = Field(15, ge=0, le=100)
     gpt_batch_size: int = Field(8, ge=1, le=64)
+    gsv_version: Literal["v2ProPlus", "v2Pro"] = "v2ProPlus"  # the base model trained from
 
 
 class RunSummary(BaseModel):

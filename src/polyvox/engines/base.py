@@ -19,13 +19,19 @@ class Param:
     """One synthesis setting an engine accepts; the UI draws its control from this."""
 
     name: str
-    kind: Literal["float", "int", "bool"]
-    default: float | int | bool
+    kind: Literal["float", "int", "bool", "choice"]
+    default: float | int | bool | str
     min: float | None = None
     max: float | None = None
     step: float | None = None
+    choices: tuple[str, ...] | None = None  # kind "choice": the allowed values
+    base_only: bool = False  # only used with the base model (no voice / LoRA chosen)
 
-    def coerce(self, value) -> float | int | bool:
+    def coerce(self, value) -> float | int | bool | str:
+        if self.kind == "choice":
+            if str(value) not in (self.choices or ()):
+                raise ValueError(f"'{self.name}' must be one of {', '.join(self.choices or ())}.")
+            return str(value)
         if self.kind == "bool":
             if isinstance(value, str):
                 return value.strip().lower() in ("1", "true", "yes", "on")

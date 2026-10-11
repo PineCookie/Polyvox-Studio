@@ -40,6 +40,7 @@ export const DEFAULT_PARAMS: Params = {
   sovits_epochs: 8,
   gpt_epochs: 15,
   gpt_batch_size: 8,
+  gsv_version: 'v2ProPlus',
 }
 
 // Prodigy finds its own step size: learning_rate is a multiplier, 1 by its authors' advice.
@@ -135,5 +136,6 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     sovits_epochs: num(config.sovits_epochs, d.sovits_epochs),
     gpt_epochs: num(config.gpt_epochs, 0),
     gpt_batch_size: num(config.gpt_batch_size, d.gpt_batch_size),
+    gsv_version: typeof config.version === 'string' ? config.version : d.gsv_version,
   }
 }

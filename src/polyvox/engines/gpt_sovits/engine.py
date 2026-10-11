@@ -34,6 +34,7 @@ TOKENS_PER_CHAR = 5.5  # first guess of semantic tokens per character; refined f
 MIN_TOKENS = 12
 LEARN_MIN_CHARS = 10
 BASE_VERSION = "v2ProPlus"
+VERSIONS = ("v2ProPlus", "v2Pro")
 
 # (base models folder, G2PW folder, device) -> synth.Pipeline
 PipelineLoader = Callable[[Path, Path, str], object]
@@ -76,6 +77,8 @@ class GptSovitsEngine(Engine):
         # Against loops and stutters: penalizes semantic tokens the GPT just made.
         Param("repetition_penalty", "float", 1.35, 1.0, 2.0, 0.05),
         Param("speed", "float", 1.0, 0.6, 1.65, 0.05),
+        # The base model's version (a voice has its own, from its weights).
+        Param("base_version", "choice", BASE_VERSION, choices=VERSIONS, base_only=True),
     )
     model_setting = "gsv_model"
     worker_module = "polyvox.engines.gpt_sovits.worker"
@@ -123,7 +126,9 @@ class GptSovitsEngine(Engine):
             raise ValueError("Text to synthesize is empty.")
         if reason := self.unavailable():
             raise ValueError(f"GPT-SoVITS can't run yet: {reason}")
-        options = Options(**self.options(req.options))
+        values = self.options(req.options)
+        base_version = values.pop("base_version")
+        options = Options(**values)
         ckpt = lora_library.resolve(self.settings.lora_dir, req.lora_id) if req.lora_id else None
         if ckpt and ckpt.engine != self.id:
             raise ValueError(f"'{ckpt.id}' was trained for another model ({ckpt.engine}), not GPT-SoVITS.")
@@ -135,7 +140,7 @@ class GptSovitsEngine(Engine):
             self._progress = Progress(phase="loading" if self._pipeline is None else "preparing", started=time.time())
             try:
                 pipeline = self._ensure_pipeline()
-                voice = self._ensure_voice(pipeline, ckpt)
+                voice = self._ensure_voice(pipeline, ckpt, base_version)
                 if req.reference_wav is not None:
                     ref = pipeline.reference(voice, req.reference_wav, req.prompt_text)
                 else:
@@ -166,10 +171,10 @@ class GptSovitsEngine(Engine):
             logger.info("GPT-SoVITS front ends loaded in %.1f s", time.time() - t0)
         return self._pipeline
 
-    def _ensure_voice(self, pipeline, ckpt: lora_library.LoraCheckpoint | None):
+    def _ensure_voice(self, pipeline, ckpt: lora_library.LoraCheckpoint | None, base_version: str = BASE_VERSION):
         if ckpt is None:
-            key = ("base", BASE_VERSION)
-            sovits, gpt = pipeline.base_weights(BASE_VERSION)
+            key = ("base", base_version)
+            sovits, gpt = pipeline.base_weights(base_version)
         else:
             key = (ckpt.id, ckpt.weights_mtime)
             sovits, gpt = ckpt.path / voices.SOVITS_FILE, ckpt.path / voices.GPT_FILE
@@ -222,7 +227,7 @@ class GptSovitsEngine(Engine):
             clips, params.batch_size, params.sovits_epochs, clips, params.gpt_batch_size, params.gpt_epochs
         )
         return {
-            "version": BASE_VERSION,
+            "version": params.gsv_version,
             "pretrained_path": self.settings.model_path("gsv_model"),
             "g2pw_path": self.settings.model_path("gsv_g2pw_model"),
             "train_manifest": str(train_manifest),
@@ -237,5 +242,5 @@ class GptSovitsEngine(Engine):
             "log_interval": params.log_interval,
             "reference": {"audio": str(audio), "text": text, "source": f"{params.dataset}: {audio.name}"},
             # Clip features, shared by the dataset's runs (hidden folders aren't datasets).
-            "feature_cache": str(dataset.parent / ".cache" / f"gpt_sovits_{BASE_VERSION}.pt"),
+            "feature_cache": str(dataset.parent / ".cache" / f"gpt_sovits_{params.gsv_version}.pt"),
         }

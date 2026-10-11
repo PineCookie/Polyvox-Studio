@@ -196,6 +196,7 @@ export default function App() {
             onError={showError}
             onTranscribed={refreshStatus}
             voiceReference={loras.find((l) => l.id === voice.lora)?.reference_text ?? null}
+            isBase={!voice.lora}
           />
           <History clips={clips} onUseSeed={setSeed} onRemove={removeClip} />
         </div>

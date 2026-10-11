@@ -89,6 +89,7 @@ export const zh: Messages = {
     top_k: 'Top-k',
     top_p: 'Top-p',
     repetition_penalty: '重复惩罚',
+    base_version: '基础模型版本',
     speed: '语速',
   },
   paramHints: {
@@ -100,6 +101,7 @@ export const zh: Messages = {
     temperature: '声音 token 的随机程度：越低越稳定平淡，越高越生动但更易出错。',
     top_k: '每一步从多少个最可能的声音 token 中选择。',
     repetition_penalty: '防止重复和卡顿；若有句子重复可调高。',
+    base_version: 'v2ProPlus（默认）或 v2Pro：未选择音色时使用的基础模型。音色使用其训练时的版本。',
     speed: '语速；1 为音色本身的语速。',
   },
   seed: '随机种子',
@@ -615,6 +617,7 @@ export const zh: Messages = {
     sovits_epochs: 'SoVITS 轮数',
     gpt_epochs: 'GPT 轮数',
     gpt_batch_size: 'GPT 批大小',
+    gsv_version: '模型版本',
   },
   optimizers: {
     adamw: 'AdamW',

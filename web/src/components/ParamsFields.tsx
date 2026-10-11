@@ -5,6 +5,8 @@ import { OPTIMIZER_LR, type Params } from '../trainParams'
 
 type NumericKey = { [K in keyof Params]: Params[K] extends number ? K : never }[keyof Params]
 type FlagKey = 'enable_lm' | 'enable_dit' | 'enable_proj'
+// GPT-SoVITS base models a run can start from (TrainParams.gsv_version), the default first.
+const GSV_VERSIONS = ['v2ProPlus', 'v2Pro']
 
 interface Props {
   params: Params
@@ -134,6 +136,18 @@ export function ParamsFields({
         )}
         {!lora && numberField('batch_size', { min: 1 })}
         {!lora && numberField('gpt_batch_size', { min: 1, max: 64 })}
+        {!lora && (
+          <label className="field">
+            <span>{t.params.gsv_version}</span>
+            <select value={params.gsv_version} onChange={(e) => onChange?.('gsv_version', e.target.value)}>
+              {GSV_VERSIONS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
       {hint}
       {validation}

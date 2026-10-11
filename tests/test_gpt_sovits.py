@@ -459,3 +459,27 @@ def test_fast_decoding_makes_upstreams_tokens(seed, monkeypatch):
                                    repetition_penalty=penalty)  # fmt: skip
         tokens, n = decoder.generate(x, prompt, bert, top_k=1, early_stop_num=120, repetition_penalty=penalty)
         assert torch.equal(tokens, expected[0].long()) and n == expected[1]
+
+
+def test_the_base_models_version_is_a_choice(engine, pipeline, lora_dir, tmp_path):
+    clip = tone(tmp_path / "clip.wav", 4.0)
+    engine.synthesize(SynthesisRequest(text="你好", reference_wav=clip, options={"base_version": "v2Pro"}))
+    make_voice(lora_dir, tmp=tmp_path)  # a voice keeps its own version whatever is chosen
+    engine.synthesize(SynthesisRequest(text="你好", lora_id="voice_a", options={"base_version": "v2Pro"}))
+    assert pipeline.voices[0] == ("s2Gv2Pro.pth", "s1v3.ckpt")
+    assert pipeline.voices[1][0].endswith(voices.SOVITS_FILE)
+    with pytest.raises(ValueError, match="one of"):
+        engine.synthesize(SynthesisRequest(text="你好", reference_wav=clip, options={"base_version": "v4"}))
+    (param,) = [p for p in engine.public()["params"] if p["name"] == "base_version"]
+    assert (param["kind"], list(param["choices"]), param["base_only"]) == ("choice", ["v2ProPlus", "v2Pro"], True)
+
+
+def test_training_can_start_from_v2pro(engine, data_dir, tmp_path):
+    from polyvox.training import TrainParams
+
+    dataset(data_dir, [("good", 6.0, "我们今天就先说到这里，下次再见吧。", None)])
+    run_manifest = tmp_path / "train.jsonl"
+    manifests.write_manifest([{"audio": "wavs/0.wav", "text": "示例。"}], run_manifest)
+    params = TrainParams(name="run_v", engine="gpt_sovits", dataset="speaker_a/train.jsonl", gsv_version="v2Pro")
+    config = engine.training_config(params, tmp_path / "run_v", run_manifest, None)
+    assert config["version"] == "v2Pro" and config["feature_cache"].endswith("gpt_sovits_v2Pro.pt")

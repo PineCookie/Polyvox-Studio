@@ -91,6 +91,7 @@ export const en = {
     top_k: 'Top-k',
     top_p: 'Top-p',
     repetition_penalty: 'Repetition penalty',
+    base_version: 'Base model version',
     speed: 'Speed',
   } as Record<string, string>,
   paramHints: {
@@ -104,6 +105,8 @@ export const en = {
     temperature: 'Randomness of the sound tokens: lower is steadier and flatter, higher livelier but riskier.',
     top_k: 'How many of the likeliest sound tokens each step chooses among.',
     repetition_penalty: 'Against loops and stutters; raise it if a phrase repeats.',
+    base_version:
+      'v2ProPlus (default) or v2Pro: the base model without a voice. Voices speak with the version they were trained from.',
     speed: "Speaking rate; 1 is the voice's own.",
   } as Record<string, string>,
   seed: 'Seed',
@@ -654,6 +657,7 @@ export const en = {
     sovits_epochs: 'SoVITS epochs',
     gpt_epochs: 'GPT epochs',
     gpt_batch_size: 'GPT batch size',
+    gsv_version: 'Model version',
   },
   optimizers: {
     adamw: 'AdamW',

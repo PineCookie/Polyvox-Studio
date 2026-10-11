@@ -182,7 +182,6 @@ export function VoicePanel({
         title={engine.unavailable ? t.engineUnavailable(engine.name, engine.unavailable) : undefined}
       >
         <span className="voice-row-name">{t.baseModel}</span>
-        <span className="muted">{engine.id === GSV_ENGINE ? 'v2ProPlus' : ''}</span>
       </button>
     )
   }

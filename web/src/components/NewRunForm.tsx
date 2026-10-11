@@ -32,11 +32,11 @@ const SCHEDULE_KEYS: (keyof Schedule)[] = [
   'log_interval',
 ]
 
-function suggestName(dataset: string, engine: string, rank: number | null, taken: string[]): string {
+function suggestName(dataset: string, engine: string, rank: number | null, taken: string[], variant = ''): string {
   // e.g. voice_r32 (VoxCPM, as before engines), voice_dots_r32, voice_gsv (full fine-tuning: no rank)
   const tag = engine === 'gpt_sovits' ? 'gsv' : engine.split('_')[0]
   const model = engine === DEFAULT_ENGINE ? '' : `_${tag}`
-  const suffix = rank === null ? '' : `_r${rank}`
+  const suffix = (rank === null ? '' : `_r${rank}`) + (variant ? `_${variant}` : '')
   const base = `${datasetName(dataset).split('/').at(-1)}${model}${suffix}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
   let name = base
   for (let i = 2; taken.includes(name); i++) name = `${base}_${i}`
@@ -89,7 +89,16 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
         ...overrides,
       }
   const name =
-    customName ?? (dataset ? suggestName(dataset, params.engine, full ? null : params.lora_rank, runNames) : '')
+    customName ??
+    (dataset
+      ? suggestName(
+          dataset,
+          params.engine,
+          full ? null : params.lora_rank,
+          runNames,
+          full && params.gsv_version !== 'v2ProPlus' ? params.gsv_version.toLowerCase() : '',
+        )
+      : '')
   const engineName = engines.find((e) => e.id === params.engine)?.name ?? params.engine
   const set = <K extends keyof Params>(key: K, value: Params[K]) => {
     if (SCHEDULE_KEYS.includes(key as keyof Schedule)) {

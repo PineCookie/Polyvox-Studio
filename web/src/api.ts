@@ -28,11 +28,13 @@ export interface Lora {
 // A TTS model family (src/polyvox/engines/base.py).
 export interface EngineParam {
   name: string
-  kind: 'float' | 'int' | 'bool'
-  default: number | boolean
+  kind: 'float' | 'int' | 'bool' | 'choice'
+  default: number | boolean | string
   min: number | null
   max: number | null
   step: number | null
+  choices: string[] | null // kind 'choice': the allowed values
+  base_only: boolean // only used with the base model (no voice chosen)
 }
 
 export interface Engine {
@@ -86,7 +88,7 @@ export interface Status {
   loaded_engines: string[] // engines with a model in memory
 }
 
-export type EngineOptions = Record<string, number | boolean>
+export type EngineOptions = Record<string, number | boolean | string>
 
 export interface SynthesisParams {
   engine: string
@@ -353,6 +355,7 @@ export interface TrainParams {
   sovits_epochs: number
   gpt_epochs: number
   gpt_batch_size: number
+  gsv_version: string // the GPT-SoVITS base model trained from: v2ProPlus | v2Pro
 }
 
 function postJson(url: string, body?: unknown): Promise<Response> {

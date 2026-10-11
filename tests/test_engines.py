@@ -98,6 +98,8 @@ def test_engines_are_listed_with_their_settings(client):
         "min": 1,
         "max": 32,
         "step": None,
+        "choices": None,
+        "base_only": False,
     }
 
 
