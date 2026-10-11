@@ -163,18 +163,26 @@ class Decoder:
         self.audio_pos.add_(1)
 
     def _run_step(self, top_k: int, use_top_p: bool) -> None:
-        if not self.graphs:
+        if self.graphs:
+            self._graph.replay()  # captured by generate() before decoding
+        else:
             self._step(top_k, use_top_p)
-            return
+
+    def _ensure_graph(self, top_k: int, use_top_p: bool) -> None:
+        """Capture the step before a generation starts (not halfway through
+        one), so every generation, the first included, runs the same steps
+        and repeats exactly with the same seed."""
         key = (top_k, use_top_p)
         if self._graph is None or self._graph_key != key:
             self._capture(key)
-        self._graph.replay()
 
     def _capture(self, key) -> None:
         """Record one step; replays then run it without Python. The state is
         saved and restored around the warm-up and capture runs."""
         saved = [t.clone() for t in self._state()]
+        # The warm-up runs draw random numbers: without this the call that
+        # captures would sample differently from later calls with the same seed.
+        rng = torch.cuda.get_rng_state(self.device)
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side):
@@ -186,6 +194,7 @@ class Decoder:
             self._step(*key)
         for t, s in zip(self._state(), saved, strict=True):
             t.copy_(s)
+        torch.cuda.set_rng_state(rng, self.device)
         self._graph, self._graph_key = graph, key
 
     def _state(self) -> list[torch.Tensor]:
@@ -239,6 +248,8 @@ class Decoder:
         self.penalty.fill_(repetition_penalty)
         self.top_p.fill_(top_p)
         use_top_p = top_p < 1.0
+        if self.graphs:
+            self._ensure_graph(top_k, use_top_p)
 
         new: list[torch.Tensor] = []
         idx = 0
