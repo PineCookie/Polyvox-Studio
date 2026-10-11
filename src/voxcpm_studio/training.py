@@ -590,7 +590,11 @@ class TrainingManager:
         env = {**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
         # Less fragmentation: a run that generates validation samples between steps
         # otherwise filled the GPU's cache and hit allocation retries (same speed).
-        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+        # Not on Windows: there growing a segment can fail in the driver ("CUDA
+        # driver error: device not ready", "Failed to create GPU mapping") on the
+        # first backward pass of some datasets; the retries are only warnings.
+        if sys.platform != "win32":
+            env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
         if self.settings.train_gpu is not None:
             env["CUDA_VISIBLE_DEVICES"] = str(self.settings.train_gpu)
 
