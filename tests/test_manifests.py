@@ -10,6 +10,20 @@ from polyvox.data import manifests
 from conftest import make_dataset
 
 
+def test_a_sidecar_rewritten_within_one_clock_tick_is_read_again(tmp_path):
+    import os
+
+    path = tmp_path / "align.json"
+    path.write_text(json.dumps({"clips": {"a": 1}}), encoding="utf-8")
+    assert manifests.read_sidecar(path) == {"clips": {"a": 1}}
+    stamp = path.stat().st_mtime_ns
+    tmp = tmp_path / ".align.json.tmp"  # as the checks write it: a new file, renamed over the old
+    tmp.write_text(json.dumps({"clips": {"a": 2}}), encoding="utf-8")
+    tmp.replace(path)
+    os.utime(path, ns=(stamp, stamp))  # the same modification time as before
+    assert manifests.read_sidecar(path) == {"clips": {"a": 2}}
+
+
 def test_scan_and_resolve_stay_inside_data_dir(data_dir):
     make_dataset(data_dir, "a")
     (data_dir.parent / "outside.jsonl").write_text("")

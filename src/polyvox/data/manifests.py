@@ -242,14 +242,18 @@ def text_key(text: str) -> str:
 
 
 @functools.lru_cache(maxsize=32)
-def _sidecar(path: str, mtime_ns: int) -> dict:
+def _sidecar(path: str, mtime_ns: int, size: int, file_id: int) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def read_sidecar(path: Path) -> dict:
-    """A JSON file next to a manifest ({} if absent), cached until it changes."""
+    """A JSON file next to a manifest ({} if absent), cached until it changes.
+    The modification time alone can miss a change (two writes within one tick
+    of the filesystem's clock); sidecars are written to a temporary file and
+    renamed, so each write is also a new file (a new st_ino, also on NTFS)."""
     try:
-        return _sidecar(str(path), path.stat().st_mtime_ns)
+        st = path.stat()
+        return _sidecar(str(path), st.st_mtime_ns, st.st_size, st.st_ino)
     except FileNotFoundError:
         return {}
 
