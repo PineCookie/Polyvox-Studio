@@ -9,6 +9,8 @@ export const ALIGNER_LABEL: Record<Aligner, string> = {
 // Alignment check flags (checks.py), in display order.
 export const FLAGS: CheckFlag[] = [
   'singing',
+  'other_speaker',
+  'clipping',
   'mismatch',
   'asr_more',
   'filler',

@@ -20,7 +20,14 @@ from ..data.manifests import read_manifest, row_key
 
 TARGET_LUFS = -20.0
 PEAK_CEILING_DB = -1.0  # dBFS, sample peak after normalizing
-CLIPPED_LEVEL = 0.999  # |sample| at or above this counts as at full scale
+# Clipping leaves flat tops: this many samples in a row at the clip's peak (a
+# gain applied after clipping keeps them flat), reached by a step: a low
+# voice's natural peaks also span a few equal samples, but its neighbours lie
+# within a quantization step or so. Quiet clips are not judged.
+CLIPPED_RUN = 3
+CLIPPED_TOLERANCE = 1e-4  # of the peak
+CLIPPED_STEP = 2e-3  # of the peak, between a flat top and a sample beside it
+CLIPPED_MIN_PEAK = 0.25  # -12 dBFS
 UNCHANGED_DB = 0.5  # a smaller gain is not worth rewriting a file
 PROGRESS_EVERY = 50  # clips
 
@@ -44,9 +51,23 @@ def peak_db(audio: np.ndarray) -> float:
     return 20 * math.log10(peak) if peak > 0 else -math.inf
 
 
-def clipped_share(audio: np.ndarray) -> float:
-    """Share of samples at full scale."""
-    return float((np.abs(audio) >= CLIPPED_LEVEL).mean()) if audio.size else 0.0
+def clipped_runs(audio: np.ndarray) -> int:
+    """Flat tops at the peak in float audio, (frames,) or (channels, frames):
+    runs of CLIPPED_RUN or more samples there with a step of CLIPPED_STEP to a
+    sample beside them, per channel. 0 below CLIPPED_MIN_PEAK."""
+    x = np.abs(np.atleast_2d(np.asarray(audio, dtype=np.float32)))
+    peak = float(x.max()) if x.size else 0.0
+    if peak < CLIPPED_MIN_PEAK:
+        return 0
+    at = np.pad(x >= peak * (1 - CLIPPED_TOLERANCE), ((0, 0), (1, 1))).astype(np.int8)
+    runs = 0
+    for channel, row in zip(x, np.diff(at, axis=1), strict=True):
+        starts, ends = np.flatnonzero(row == 1), np.flatnonzero(row == -1)  # [start, end) in samples
+        flat = ends - starts >= CLIPPED_RUN
+        beside = np.pad(channel, 1)  # outside the clip counts as a step
+        steps = peak - np.minimum(beside[starts[flat]], beside[ends[flat] + 1])
+        runs += int((steps >= CLIPPED_STEP * peak).sum())
+    return runs
 
 
 def gain_db(audio: np.ndarray, rate: int, target: float = TARGET_LUFS, ceiling: float = PEAK_CEILING_DB) -> float:

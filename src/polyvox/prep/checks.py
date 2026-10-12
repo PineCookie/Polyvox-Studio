@@ -19,6 +19,10 @@ For each clip with a transcript:
   speech.
 - ``long_silence``: over LEAD_SILENCE_S of silence before the speech, or over
   TRAIL_SILENCE_S after it.
+- ``other_speaker``: the voice is unlike the dataset's (CAM++ embedding vs the
+  dataset's voice, ``voice_of``), e.g. a guest or played-back audio. Short clips
+  give unsteady embeddings, so they need a lower score (SPEAKER_BELOW).
+- ``clipping``: flat tops at the clip's peak (loudness.clipped_runs).
 
 ``align.json`` (manifests.ALIGN_FILE) holds the results by audio path as in
 the manifest, with a hash of the text each was made for, so editing a
@@ -86,7 +90,27 @@ FILLER_LOUD_SHARE = 0.3
 # while rarely flagging a correct transcript.
 ASR_MORE_MIN = 2
 ASR_MORE_SHARE = 0.1
-FLAGS = ("singing", "mismatch", "asr_more", "filler", "edge_sound", "extra_speech", "cut_edge", "long_silence")
+FLAGS = (
+    "singing",
+    "other_speaker",
+    "clipping",
+    "mismatch",
+    "asr_more",
+    "filler",
+    "edge_sound",
+    "extra_speech",
+    "cut_edge",
+    "long_silence",
+)
+# (clips shorter than this many seconds, flagged below this similarity to the
+# voice): set from other people's clips scored against a dataset's voice, which
+# this catches ~96% of from 2.5 s (~60% under 1.5 s), flagging under 0.5% of
+# the right speaker's clips (~4% under 1.5 s).
+SPEAKER_BELOW = ((1.5, 0.3), (2.5, 0.5), (float("inf"), 0.55))
+SPEAKER_MIN_S = 0.5  # shorter clips get no speaker score
+VOICE_MIN_CLIPS = 10  # fewer scored clips make no voice to compare with
+VOICE_KEEP = 0.8  # the voice is the mean of the clips closest to it (twice), leaving other speakers out
+EMBED_EVERY = 512  # clips held for speaker embedding at once (batched by length)
 # Trimming many clips at once leaves these for review: the "sound" at an edge
 # may be words of the transcript the aligner misplaced, or words it misses.
 TRIM_REVIEW_FIRST = ("mismatch", "asr_more")
@@ -118,6 +142,10 @@ class ClipCheck:
     asr: dict | None = None
     # (sung, speech) scores of the singing detector, when the check ran it.
     singing: tuple[float, float] | None = None
+    # Similarity of the voice to the dataset's (with_speaker), when scored.
+    speaker: float | None = None
+    # Flat tops at the peak (loudness.clipped_runs), when measured.
+    clipped: int | None = None
 
     def trim_range(self, pad: float = TRIM_PAD_S) -> tuple[float, float] | None:
         """(start, end) to keep: ``pad`` of silence around the speech, and
@@ -342,6 +370,49 @@ def with_asr(check: ClipCheck, text: str, heard: str) -> ClipCheck:
     return replace(check, asr=asr, flags=[f for f in FLAGS if f in flags])
 
 
+def other_speaker(score: float, seconds: float) -> bool:
+    return score < next(below for shorter, below in SPEAKER_BELOW if seconds < shorter)
+
+
+def with_speaker(check: ClipCheck, score: float) -> ClipCheck:
+    """``check`` with its similarity to the dataset's voice (flag other_speaker)."""
+    flags = set(check.flags) - {"other_speaker"} | (
+        {"other_speaker"} if other_speaker(score, check.duration) else set()
+    )
+    return replace(check, speaker=round(score, 4), flags=[f for f in FLAGS if f in flags])
+
+
+def with_clipping(check: ClipCheck, runs: int | None) -> ClipCheck:
+    flags = set(check.flags) - {"clipping"} | ({"clipping"} if runs else set())
+    return replace(check, clipped=runs, flags=[f for f in FLAGS if f in flags])
+
+
+def voice_of(vectors: np.ndarray) -> np.ndarray | None:
+    """A dataset's voice from unit speaker embeddings: their mean, then twice the
+    mean of the VOICE_KEEP share closest to it (a minority of other speakers
+    stays out). None with fewer than VOICE_MIN_CLIPS."""
+    if len(vectors) < VOICE_MIN_CLIPS:
+        return None
+    voice = vectors.mean(axis=0)
+    for _ in range(2):
+        voice = voice / np.linalg.norm(voice).clip(1e-9)
+        scores = vectors @ voice
+        voice = vectors[scores >= np.quantile(scores, 1 - VOICE_KEEP)].mean(axis=0)
+    return voice / np.linalg.norm(voice).clip(1e-9)
+
+
+def clipped_in(path: Path) -> int | None:
+    """loudness.clipped_runs of an audio file as stored; None if unreadable."""
+    from ..data import audio_io
+    from .loudness import clipped_runs
+
+    try:
+        audio, _ = audio_io.read(path)
+    except Exception:
+        return None
+    return clipped_runs(audio)
+
+
 # (16 kHz clips, transcripts[, compare with ASR per clip]) -> checks
 Checker = Callable[..., list[ClipCheck]]
 # (16 kHz clips, transcripts) -> alignments
@@ -350,6 +421,8 @@ AlignFn = Callable[[list[np.ndarray], list[str]], list[Alignment]]
 Transcribe = Callable[[list[np.ndarray]], list[str]]
 # 16 kHz clips -> (sung, speech) scores each (singing.SingingService.scores)
 SingingScores = Callable[[list[np.ndarray]], list[tuple[float, float]]]
+# 16 kHz clips -> unit speaker embeddings, one row each (speaker.SpeakerService.embed_wavs)
+Embed = Callable[[list[np.ndarray]], np.ndarray]
 
 
 def make_checker(
@@ -395,12 +468,68 @@ def make_checker(
     return check
 
 
-def write_checks(manifest_dir: Path, kind: str, checks: dict[str, tuple[str, ClipCheck]]) -> None:
-    """Save ``{audio key: (text, check)}`` as align.json (atomically)."""
+def check_clips(
+    paths: list[Path],
+    texts: list[str],
+    asr_made: list[bool],
+    checker: Checker,
+    load: Callable[[Path], np.ndarray],
+    embed: Embed | None = None,
+    progress: Progress | None = None,
+) -> tuple[list[ClipCheck | None], np.ndarray | None]:
+    """Check clips in chunks of CHECK_CHUNK (texts ASR made are not compared
+    with ASR), measure clipping, and with ``embed`` score each voice against
+    the clips' common voice (embedded EMBED_EVERY clips at a time: batches of
+    similar lengths). Returns the checks (None for clips ``load`` can't read)
+    and that voice."""
+    progress = progress or (lambda phase, done, total: None)
+    out: list[ClipCheck | None] = [None] * len(paths)
+    vectors: dict[int, np.ndarray] = {}
+    to_embed: dict[int, np.ndarray] = {}
+
+    def embed_pending() -> None:
+        if to_embed:
+            with timing.stage("speaker"):
+                vectors.update(zip(to_embed, embed(list(to_embed.values())), strict=True))
+            to_embed.clear()
+
+    for start in range(0, len(paths), CHECK_CHUNK):
+        progress("aligning", start, len(paths))
+        index, wavs = [], []
+        for i in range(start, min(start + CHECK_CHUNK, len(paths))):
+            try:
+                wavs.append(load(paths[i]))
+                index.append(i)
+            except Exception:
+                continue
+        if not index:
+            continue
+        made = [asr_made[i] for i in index]
+        checked = checker(wavs, [texts[i] for i in index], [not m for m in made], made)
+        for i, wav, check in zip(index, wavs, checked, strict=True):
+            with timing.stage("clipping"):
+                out[i] = with_clipping(check, clipped_in(paths[i]))
+            if embed and len(wav) >= SPEAKER_MIN_S * SAMPLE_RATE:
+                to_embed[i] = wav
+        if len(to_embed) >= EMBED_EVERY:
+            embed_pending()
+    embed_pending()
+    progress("aligning", len(paths), len(paths))
+    voice = voice_of(np.stack(list(vectors.values()))) if vectors else None
+    if voice is not None:
+        for i, vector in vectors.items():
+            out[i] = with_speaker(out[i], float(vector @ voice))
+    return out, voice
+
+
+def write_checks(
+    manifest_dir: Path, kind: str, checks: dict[str, tuple[str, ClipCheck]], voice: np.ndarray | None = None
+) -> None:
+    """Save ``{audio key: (text, check)}`` as align.json (atomically), with the
+    dataset's voice that ``check_one`` scores single clips against."""
     clips = {key: {"text": text_key(text), **asdict(check)} for key, (text, check) in checks.items()}
-    tmp = manifest_dir / f".{ALIGN_FILE}.tmp"
-    tmp.write_text(json.dumps({"aligner": kind, "clips": clips}, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(manifest_dir / ALIGN_FILE)
+    data = {"aligner": kind, "clips": clips} | ({"voice": voice.round(6).tolist()} if voice is not None else {})
+    _write_align(manifest_dir, data)
 
 
 def summarize(checks: list[ClipCheck]) -> dict:
@@ -423,32 +552,26 @@ def check_dataset(
     kind: str,
     load: Callable[[Path], np.ndarray],
     progress: Progress | None = None,
+    embed: Embed | None = None,
 ) -> dict:
-    """Check every clip of a manifest and write its align.json; returns a summary.
-    Unreadable clips are skipped. Nothing is written when cancelled."""
-    progress = progress or (lambda phase, done, total: None)
+    """Check every clip of a manifest (``check_clips``) and write its
+    align.json; returns a summary. Unreadable clips are skipped. Nothing is
+    written when cancelled."""
     entries, _ = read_manifest(manifest, root)
     manifest_dir = manifest.resolve().parent
     asr_made = set(read_sidecar(manifest_dir / ASR_FILE))
-    results: dict[str, tuple[str, ClipCheck]] = {}
-    for start in range(0, len(entries), CHECK_CHUNK):
-        progress("aligning", start, len(entries))
-        chunk, wavs = [], []
-        for entry in entries[start : start + CHECK_CHUNK]:
-            try:
-                wavs.append(load(Path(entry["audio"])))
-                chunk.append(entry)
-            except Exception:
-                continue
-        if not chunk:
-            continue
-        keys = [row_key(e["audio"], manifest_dir) for e in chunk]
-        made = [k in asr_made for k in keys]
-        checked = checker(wavs, [e["text"] for e in chunk], [not m for m in made], made)
-        for key, entry, check in zip(keys, chunk, checked, strict=True):
-            results[key] = (entry["text"], check)
-    progress("aligning", len(entries), len(entries))
-    write_checks(manifest_dir, kind, results)
+    keys = [row_key(e["audio"], manifest_dir) for e in entries]
+    checked, voice = check_clips(
+        [Path(e["audio"]) for e in entries],
+        [e["text"] for e in entries],
+        [k in asr_made for k in keys],
+        checker,
+        load,
+        embed,
+        progress,
+    )
+    results = {k: (e["text"], c) for k, e, c in zip(keys, entries, checked, strict=True) if c is not None}
+    write_checks(manifest_dir, kind, results, voice)
     return {"aligner": kind, **summarize([c for _, c in results.values()])}
 
 
@@ -460,11 +583,13 @@ def check_one(
     kind: str,
     load: Callable[[Path], np.ndarray],
     compare: bool | None = None,
+    embed: Embed | None = None,
 ) -> ClipCheck:
     """Check one clip again (after its text was edited or it was trimmed) and
     update its entry in align.json; the other entries stay. Uses ``kind`` for
     the whole file only when there were no checks yet. ``compare`` with ASR
-    (when the checker can): by default unless ASR made the text."""
+    (when the checker can): by default unless ASR made the text. With
+    ``embed``, the voice is scored against the dataset's saved one."""
     entries, _ = read_manifest(manifest, root)
     if not 0 <= index < len(entries):
         raise KeyError(f"No clip {index} in this dataset.")
@@ -474,11 +599,16 @@ def check_one(
     made = key in set(read_sidecar(manifest_dir / ASR_FILE))
     if compare is None:
         compare = not made
-    (check,) = checker([load(Path(entry["audio"]))], [entry["text"]], [compare], [made])
+    audio = Path(entry["audio"])
+    wav = load(audio)
+    (check,) = checker([wav], [entry["text"]], [compare], [made])
+    check = with_clipping(check, clipped_in(audio))
     saved = read_sidecar(manifest_dir / ALIGN_FILE)
+    if embed and saved.get("voice") and len(wav) >= SPEAKER_MIN_S * SAMPLE_RATE:
+        check = with_speaker(check, float(embed([wav])[0] @ np.asarray(saved["voice"])))
     clips = dict(saved.get("clips", {}))
     clips[key] = {"text": text_key(entry["text"]), **asdict(check)}
-    _write_align(manifest_dir, {"aligner": saved.get("aligner", kind), "clips": clips})
+    _write_align(manifest_dir, {**saved, "aligner": saved.get("aligner", kind), "clips": clips})
     return check
 
 

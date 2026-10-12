@@ -256,9 +256,9 @@ def fake_speaker_model(monkeypatch):
     """No test downloads or runs CAM++: a clip's embedding is its coarse spectrum."""
     from polyvox import speaker
 
-    def embed(wav):
-        spectrum = np.abs(np.fft.rfft(wav, n=16_000))[:2000]
-        return spectrum.reshape(40, 50).sum(axis=1) + 1e-6
+    def embed(wavs, device):
+        spectra = [np.abs(np.fft.rfft(w, n=16_000))[:2000] for w in wavs]
+        return np.stack([s.reshape(40, 50).sum(axis=1) + 1e-6 for s in spectra])
 
     monkeypatch.setattr(speaker, "load_campplus", lambda model: embed)
 

@@ -331,6 +331,13 @@ export function ClipView({ source, index, audio, onSeek, onChanged }: Props) {
         </div>
       )}
       {clip.heard && <HeardLine heard={clip.heard} onUse={datasetId ? () => setDraft(clip.heard!.text) : undefined} />}
+      {(clip.speaker !== null || !!clip.clipped) && (
+        <p className="muted">
+          {clip.speaker !== null && <span title={t.voiceMatchTitle}>{t.voiceMatch(clip.speaker.toFixed(2))}</span>}
+          {clip.speaker !== null && !!clip.clipped && ' · '}
+          {!!clip.clipped && t.clippedPlaces(clip.clipped)}
+        </p>
+      )}
       {datasetId && (
         <div className="edge-sound">
           <button

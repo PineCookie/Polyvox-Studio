@@ -306,6 +306,11 @@ export const en = {
   // Alignment check flags (checks.py): short tag, and what it means.
   flags: {
     singing: ['Singing', 'A sung clip (karaoke, a cover): not wanted in training data'],
+    other_speaker: [
+      'Other voice?',
+      'The voice is unlike the rest of the dataset: maybe someone else (a guest, played-back audio), or an unusual sound of the same person; listen before dropping',
+    ],
+    clipping: ['Clipped', 'The waveform is cut flat at its peak (recorded or saved too loud): it sounds distorted'],
     mismatch: ['Mismatch', 'Part of the text does not match the audio'],
     asr_more: ['Missing words?', 'Speech recognition hears words the transcript does not have'],
     filler: [
@@ -336,7 +341,12 @@ export const en = {
   checkFailed: 'Check failed.',
   normalizeFailed: 'Normalizing failed.',
   checkClipsTitle: 'Check clips',
-  checkClipsHint: 'Align each clip with its text: flags mismatches, untranscribed speech, cut edges and long silence.',
+  checkClipsHint:
+    'Align each clip with its text: flags mismatches, untranscribed speech, cut edges and long silence, other voices and clipping.',
+  voiceMatch: (score: string) => `Voice match ${score}`,
+  voiceMatchTitle:
+    'Similarity to the dataset’s voice (speaker embedding): the speaker’s clips mostly score above 0.7, other people below 0.55; clips under 2.5 s score lower',
+  clippedPlaces: (n: number) => `Clipped in ${n} ${n === 1 ? 'place' : 'places'}`,
   howChecking: 'How checking works',
   checkingExplained:
     'Forced alignment finds text that does not match the audio, untranscribed speech, words cut at the file edge and long silence; comparing with ASR finds words the text leaves out. Texts made by ASR are not compared, and get no mismatch flag (there it mostly marks laughs or fast speech); worst-first still sorts them. Qwen3 also handles mixed languages; wav2vec2 is sharper on single wrong words (Chinese model by default).',

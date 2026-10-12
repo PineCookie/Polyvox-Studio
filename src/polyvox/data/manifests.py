@@ -338,7 +338,7 @@ def read_rows(
     ``query`` matches text or file name, case-insensitively. ``flag`` keeps
     clips with that check flag, "any" with any flag (both: not dropped), or
     "dropped" the clips dropped in review. ``worst_first`` orders by alignment
-    score (unchecked clips last). Dropped clips don't count in the summary.
+    score, or for ``flag`` other_speaker by voice similarity (unchecked clips last). Dropped clips don't count in the summary.
     Clips in ``keep`` are listed whatever the search and filter (just edited
     ones stay in view).
     """
@@ -380,7 +380,9 @@ def read_rows(
             continue
         matches.append((i, audio, text, key, check))
     if worst_first:
-        matches.sort(key=lambda m: (m[4] is None, m[4]["score"] if m[4] else 0.0, m[0]))
+        # By the alignment score; for other speakers, by the voice's similarity.
+        field = "speaker" if flag == "other_speaker" else "score"
+        matches.sort(key=lambda m: (m[4] is None or m[4].get(field) is None, (m[4] or {}).get(field) or 0.0, m[0]))
 
     rows = [
         ClipRow(

@@ -167,6 +167,8 @@ def router(s: Studio) -> APIRouter:
         return ClipDetailOut(
             sound_before=check.sound_before[0] if check and check.sound_before else None,
             sound_after=check.sound_after[0] if check and check.sound_after else None,
+            speaker=check.speaker if check else None,
+            clipped=check.clipped if check else None,
             **dataclasses.asdict(detail.row),
             aligner=detail.aligner,
             words=[

@@ -9,6 +9,10 @@ Runs on the CPU (a small model), so scoring never competes with training.
 Real clips of the same speaker score far above other speakers and the base
 model; a WavLM x-vector model, tried first, barely separated speakers. With
 two samples per checkpoint, single scores are noisy: compare trends.
+
+The dataset check (checks.py) scores every clip, in batches on the prep GPU:
+clips of about the same length share a batch, cut to the shortest of them
+(~10x faster than one at a time; scores move by at most ~0.02).
 """
 
 from __future__ import annotations
@@ -34,10 +38,31 @@ TARGET_CLIPS = 30  # further clips scored like samples: the level to aim for
 WEIGHTS = "campplus_cn_common.bin"
 CACHE_FILE = "similarity.json"
 CACHE_VERSION = 1
+BATCH_CLIPS = 32
+BATCH_SECONDS = 320.0  # of audio per batch, bounding its memory
+SAME_LENGTH = 0.95  # clips in a batch are at least this share of the longest one's length
 
-# model (local dir or ModelScope id) -> embed(16 kHz mono samples) -> vector
-Embedder = Callable[[np.ndarray], np.ndarray]
+# model (local dir or ModelScope id) -> embed(16 kHz mono clips, device) -> one vector per clip
+Embedder = Callable[[list[np.ndarray], str], np.ndarray]
 SpeakerLoader = Callable[[str], Embedder]
+
+
+def batches(lengths: list[int]) -> list[list[int]]:
+    """Indices of clips, shortest first, in groups of about the same length."""
+    order = sorted(range(len(lengths)), key=lambda k: lengths[k])
+    out: list[list[int]] = []
+    for k in order:
+        group = out[-1] if out else None
+        if (
+            group is None
+            or len(group) >= BATCH_CLIPS
+            or lengths[k] * SAME_LENGTH > lengths[group[0]]
+            or (len(group) + 1) * lengths[k] > BATCH_SECONDS * SAMPLE_RATE
+        ):
+            out.append([k])
+        else:
+            group.append(k)
+    return out
 
 
 def load_campplus(model: str) -> Embedder:
@@ -54,11 +79,19 @@ def load_campplus(model: str) -> Embedder:
     net.load_state_dict(torch.load(folder / WEIGHTS, map_location="cpu", weights_only=True))
     net.eval()
 
-    def embed(wav: np.ndarray) -> np.ndarray:
+    def embed(wavs: list[np.ndarray], device: str) -> np.ndarray:
+        net.to(device)
+        out: list[np.ndarray] = [np.empty(0)] * len(wavs)
         with torch.inference_mode():
-            feats = kaldi.fbank(torch.from_numpy(wav).unsqueeze(0), num_mel_bins=80)
-            feats = feats - feats.mean(0, keepdim=True)  # as funasr's extract_feature
-            return net(feats.unsqueeze(0))[0].numpy()
+            for group in batches([len(w) for w in wavs]):
+                n = len(wavs[group[0]])  # the shortest: the others are cut to it
+                feats = []
+                for k in group:
+                    f = kaldi.fbank(torch.from_numpy(wavs[k][:n]).to(device).unsqueeze(0), num_mel_bins=80)
+                    feats.append(f - f.mean(0, keepdim=True))  # as funasr's extract_feature
+                for k, vector in zip(group, net(torch.stack(feats)).float().cpu().numpy(), strict=True):
+                    out[k] = vector
+        return np.stack(out)
 
     return embed
 
@@ -70,7 +103,7 @@ def read_16k(path: Path | str) -> np.ndarray:
 
 
 class SpeakerService:
-    """Loads CAM++ on first use (CPU)."""
+    """Loads CAM++ on first use; runs on the CPU unless a call names a device."""
 
     def __init__(self, settings: Settings, loader: SpeakerLoader | None = None):
         self.settings = settings
@@ -80,12 +113,18 @@ class SpeakerService:
 
     def embed(self, paths: list[Path | str]) -> np.ndarray:
         """Unit-length speaker embeddings, one row per clip."""
+        return self.embed_wavs([read_16k(p) for p in paths])
+
+    def embed_wavs(self, wavs: list[np.ndarray], device: str = "cpu") -> np.ndarray:
+        """``embed`` for 16 kHz mono clips (cut to MAX_SECONDS)."""
         with self._lock:
             if self._embed is None:
                 model = self.settings.model_path("speaker_model")
                 logger.info("Loading speaker model %s", model)
                 self._embed = (self._loader or load_campplus)(model)
-            vectors = np.stack([self._embed(read_16k(p)) for p in paths]).astype(np.float64)
+            limit = int(MAX_SECONDS * SAMPLE_RATE)
+            clips = [np.ascontiguousarray(w[:limit], dtype=np.float32) for w in wavs]
+            vectors = self._embed(clips, device).astype(np.float64)
         return vectors / np.linalg.norm(vectors, axis=1, keepdims=True).clip(1e-9)
 
     def score_run(self, run_dir: Path, train_manifest: Path) -> dict:

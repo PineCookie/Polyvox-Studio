@@ -168,6 +168,10 @@ class Studio:
         self.take_gpu(self.singing)
         return self.singing.scores(wavs)
 
+    def voices(self, wavs: list):
+        """Speaker embeddings for the dataset check, on the prep GPU (CAM++ is small)."""
+        return self.speaker.embed_wavs(wavs, self.asr.device)
+
     def separated(self, chain: separation_mod.Chain) -> separation_mod.Chain:
         def process(audio):
             self.take_gpu(self.separation)
@@ -199,7 +203,8 @@ class Studio:
         self.make_room_for_prep()
         root = manifests.legacy_root(self.settings.data_dir)
         checker_ = self.checker(kind, compared, sang)
-        checks.check_one(manifest, root, index, checker_, kind, load_audio, compare=True if compare_asr else None)
+        compare = True if compare_asr else None
+        checks.check_one(manifest, root, index, checker_, kind, load_audio, compare, self.voices)
 
 
 def has_checks(manifest: Path) -> bool:

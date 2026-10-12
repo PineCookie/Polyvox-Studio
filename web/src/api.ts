@@ -419,7 +419,16 @@ export type CleanupOption = 'separate' | 'dereverb' | 'denoise'
 export type Aligner = 'qwen3' | 'ctc'
 
 export type CheckFlag =
-  'singing' | 'mismatch' | 'asr_more' | 'filler' | 'edge_sound' | 'extra_speech' | 'cut_edge' | 'long_silence'
+  | 'singing'
+  | 'other_speaker'
+  | 'clipping'
+  | 'mismatch'
+  | 'asr_more'
+  | 'filler'
+  | 'edge_sound'
+  | 'extra_speech'
+  | 'cut_edge'
+  | 'long_silence'
 
 // Flags trimming fixes (trim-flagged).
 export const TRIMMABLE_FLAGS: CheckFlag[] = ['edge_sound', 'long_silence']
@@ -626,6 +635,8 @@ export interface ClipDetail extends ClipRow {
   // Untranscribed sound a pause separates from the words lies before / after this second.
   sound_before: number | null
   sound_after: number | null
+  speaker: number | null // similarity of the voice to the dataset's, when scored
+  clipped: number | null // flat tops at the peak, when measured
 }
 
 /** Trim one clip in place to `keep` seconds, or at its checked edges (the original is kept). */

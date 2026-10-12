@@ -250,6 +250,8 @@ Forced alignment places each word of a transcript in its audio. The import (and
 | Flag | Meaning |
 |---|---|
 | Singing | a sung clip (karaoke, a cover): not wanted in training data |
+| Other voice? | the voice is unlike the rest of the dataset (CAM++ speaker embedding vs the dataset's voice): maybe a guest or played-back audio; short clips need a lower score |
+| Clipped | the waveform is cut flat at its peak (recorded or saved too loud) |
 | Mismatch | part of the text does not match the audio (low confidence over a few words; fillers not counted) |
 | Filler? | a filler or laugh in the text (嗯, 哈哈, 呵呵, ...) placed on quiet audio: maybe not said, e.g. one 呵 too many |
 | Edge sound | sound before or after the words, a pause apart (a sigh, 嗯, a laugh, or words the text misses) |

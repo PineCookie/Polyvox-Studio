@@ -115,6 +115,7 @@ def router(s: Studio) -> APIRouter:
                 separation=s.separated(s.separation.chain([available[k] for k in cleanup])) if cleanup else None,
                 tidy_fillers=body.tidy_fillers,
                 normalize=body.normalize_lufs,
+                embed=s.voices,
             )
             return {
                 "id": result.id,
@@ -152,6 +153,7 @@ def router(s: Studio) -> APIRouter:
                     body.aligner,
                     load_audio,
                     job.progress,
+                    s.voices,
                 )
                 return {**summary, "timings": logged_timings(f"Check {body.id}", times)}
 

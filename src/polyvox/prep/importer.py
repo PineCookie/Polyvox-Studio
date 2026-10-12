@@ -30,6 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 
+import numpy as np
 import soundfile as sf
 
 from .. import timing
@@ -340,18 +341,19 @@ def _separate(rows: list[Row], out_dir: Path, chain, progress: Progress, sliced:
     progress("separating", len(todo), len(todo))
 
 
-def _check(rows: list[Row], checker: Checker, progress: Progress) -> list[ClipCheck]:
-    """Alignment checks of rows (all with text), in order."""
+def _check(
+    rows: list[Row], checker: Checker, embed: checks.Embed | None, progress: Progress
+) -> tuple[list[ClipCheck], np.ndarray | None]:
+    """Checks of rows (all with text), in order, and their common voice (checks.check_clips)."""
     from .asr import load_audio
 
-    out: list[ClipCheck] = []
-    for start in range(0, len(rows), checks.CHECK_CHUNK):
-        progress("aligning", start, len(rows))
-        chunk = rows[start : start + checks.CHECK_CHUNK]
-        texts, made = [row.text for row in chunk], [row.asr for row in chunk]
-        out += checker([load_audio(row.audio) for row in chunk], texts, [not m for m in made], made)
-    progress("aligning", len(rows), len(rows))
-    return out
+    paths = [row.audio for row in rows]
+    out, voice = checks.check_clips(
+        paths, [row.text for row in rows], [row.asr for row in rows], checker, load_audio, embed, progress
+    )
+    if None in out:
+        raise ValueError(f"Unreadable audio: {paths[out.index(None)]}")
+    return out, voice
 
 
 def _write_clip(source: Path, target: Path, cut: tuple[float, float] | None, normalize: float | None) -> None:
@@ -380,6 +382,7 @@ def import_dataset(
     separation=None,
     tidy_fillers: bool = False,
     normalize: float | None = None,
+    embed: checks.Embed | None = None,
 ) -> ImportResult:
     """Write ``data_dir/<name>/train.jsonl``.
 
@@ -390,7 +393,7 @@ def import_dataset(
     without text). With a ``transcriber``, clips without a transcript get one
     from ASR; otherwise they are left out. With a ``checker`` (made for the
     ``aligner`` named), every clip is checked against its text and the results
-    saved as align.json; ``trim`` then cuts long silent edges from the copies
+    saved as align.json (with ``embed``, voices are compared too); ``trim`` then cuts long silent edges from the copies
     (needs ``copy``; trimmed clips are written as PCM16 WAV). ``normalize``
     brings each copied clip to that many LUFS (loudness.normalize; mono PCM16
     WAV). ``progress`` may raise to cancel; nothing is left behind then.
@@ -430,7 +433,9 @@ def import_dataset(
         if not rows_kept:
             raise ValueError("No clips with both audio and a transcript; nothing to import.")
         with timing.stage("checking"):  # alignment, VAD, ... count as themselves
-            clip_checks = _check([row for _, row in rows_kept], checker, progress) if checker else []
+            clip_checks, voice = (
+                _check([row for _, row in rows_kept], checker, embed, progress) if checker else ([], None)
+            )
         # (start, end) to keep per clip, for those worth trimming.
         cuts = [c.trim_range() for c in clip_checks] if trim else [None] * len(rows_kept)
 
@@ -469,6 +474,7 @@ def import_dataset(
                 staging,
                 aligner,
                 {p: (row.text, c) for (p, (_, row)), c in zip(pairs, clip_checks, strict=True)},
+                voice,
             )
         staging.rename(target)
     except BaseException:

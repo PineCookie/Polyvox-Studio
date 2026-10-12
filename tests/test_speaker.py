@@ -22,10 +22,9 @@ class PitchEmbedder:
     def __init__(self):
         self.calls = 0
 
-    def __call__(self, wav):
-        self.calls += 1
-        spectrum = np.abs(np.fft.rfft(wav, n=RATE))[:2000]
-        return spectrum.reshape(40, 50).sum(axis=1)
+    def __call__(self, wavs, device):
+        self.calls += len(wavs)
+        return np.stack([np.abs(np.fft.rfft(w, n=RATE))[:2000].reshape(40, 50).sum(axis=1) for w in wavs])
 
 
 def make_run(tmp_path, voice_hz=220):
@@ -73,6 +72,14 @@ def test_scores_are_cached_until_files_change(tmp_path):
     result = service(embedder, tmp_path).score_run(run, manifest)  # a new service reads the file cache
     assert embedder.calls == first + 1
     assert set(result["scores"]) == {"step_0000020_0.wav"}
+
+
+def test_batches_hold_clips_of_about_the_same_length():
+    lengths = [16_000, 100_000, 16_400, 99_000, 16_800, 40_000, 17_000]
+    assert speaker.batches(lengths) == [[0, 2, 4], [6], [5], [3, 1]]  # within 5% of the shortest
+    # Long clips: a batch holds at most BATCH_SECONDS of audio.
+    long = [int(20 * RATE)] * 40
+    assert [len(b) for b in speaker.batches(long)] == [16, 16, 8]
 
 
 def test_run_without_samples(tmp_path):

@@ -11,7 +11,7 @@ from test_aligner import tone
 from test_importer import wait_job, write_list
 
 from polyvox.data import manifests
-from polyvox.prep import checks, importer, slicer
+from polyvox.prep import checks, importer, loudness, slicer
 from polyvox.prep.aligner import Alignment, Word
 from polyvox.prep.asr import load_audio
 from polyvox.server import create_app
@@ -167,6 +167,8 @@ def test_check_dataset_writes_results_the_review_shows(data_dir, align_service):
         "flagged": 1,
         "flags": {
             "singing": 0,
+            "other_speaker": 0,
+            "clipping": 0,
             "mismatch": 1,
             "asr_more": 0,
             "filler": 0,
@@ -187,6 +189,66 @@ def test_check_dataset_writes_results_the_review_shows(data_dir, align_service):
     assert row.flags == [] and row.score is not None and row.score < checks.MISMATCH_BELOW["qwen3"]
     check = checks.check_one(manifest, None, 1, checker, "qwen3", load_audio)
     assert "mismatch" not in check.flags
+
+
+def test_clipping_is_flat_tops_at_the_peak():
+    t = np.arange(16000) / 16000
+    loud = np.sin(2 * np.pi * 220 * t)
+    assert loudness.clipped_runs(0.9 * loud) == 0
+    clipped = np.clip(1.5 * loud, -1, 1)
+    assert loudness.clipped_runs(clipped) == 440  # every half cycle
+    assert loudness.clipped_runs(0.5 * clipped) == 440  # a gain after clipping keeps the tops flat
+    assert loudness.clipped_runs(0.1 * clipped) == 0  # too quiet to judge
+    # A low voice's peaks span a few samples, but no flat run at 16-bit precision.
+    low = np.round(0.3 * np.sin(2 * np.pi * 60 * np.arange(48000) / 48000 + 0.3) * 32767) / 32767
+    assert loudness.clipped_runs(low) == 0
+
+
+def test_the_voice_leaves_other_speakers_out():
+    rng = np.random.default_rng(0)
+
+    def near(direction, n):
+        v = np.asarray(direction, float) + rng.normal(0, 0.1, (n, 3))
+        return v / np.linalg.norm(v, axis=1, keepdims=True)
+
+    vectors = np.concatenate([near([1, 0, 0], 17), near([0, 1, 0], 3)])
+    voice = checks.voice_of(vectors)
+    assert voice @ [1, 0, 0] > 0.99
+    assert checks.voice_of(vectors[:5]) is None  # too few clips
+    # Short clips need a lower score to count as another voice.
+    assert checks.other_speaker(0.52, 3.0) and not checks.other_speaker(0.52, 2.0)
+    assert checks.other_speaker(0.25, 1.0) and not checks.other_speaker(0.4, 1.0)
+
+
+def test_check_dataset_flags_other_speakers_and_clipping(data_dir, align_service):
+    folder = data_dir / "speaker_a"
+    (folder / "wavs").mkdir(parents=True)
+    lines = []
+    for i in range(12):
+        wav = tone([(0.5, 2.7 if i == 3 else 1.5)], 3.0 if i == 3 else 2.0)  # clip 3: "another voice"
+        if i == 7:
+            wav = np.clip(5 * wav, -1, 1)
+        sf.write(folder / "wavs" / f"{i}.wav", wav, 16000)
+        lines.append(json.dumps({"audio": f"wavs/{i}.wav", "text": "第一句"}, ensure_ascii=False))
+    manifest = folder / "train.jsonl"
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def embed(wavs):  # stands in for CAM++: the 3 s clip's voice points elsewhere
+        return np.array([[0.0, 1.0] if len(w) > 2.5 * 16000 else [1.0, 0.0] for w in wavs])
+
+    checker = checks.make_checker(lambda w, t: align_service.align(w, t, "qwen3"), "qwen3", no_vad)
+    summary = checks.check_dataset(manifest, None, checker, "qwen3", load_audio, embed=embed)
+
+    assert summary["flags"]["other_speaker"] == 1 and summary["flags"]["clipping"] == 1
+    rows = {r.file: r.flags for r in manifests.read_rows(manifest, flag="any").rows}
+    assert rows == {"wavs/3.wav": ["other_speaker"], "wavs/7.wav": ["clipping"]}
+    # Worst first by the voice's similarity, for that flag.
+    page = manifests.read_rows(manifest, flag="other_speaker", worst_first=True)
+    assert [r.file for r in page.rows] == ["wavs/3.wav"]
+    # One clip checked again is scored against the saved voice.
+    check = checks.check_one(manifest, None, 3, checker, "qwen3", load_audio, embed=embed)
+    assert check.speaker == pytest.approx(0.0) and "other_speaker" in check.flags
+    assert checks.check_one(manifest, None, 0, checker, "qwen3", load_audio, embed=embed).speaker == pytest.approx(1)
 
 
 def test_import_checks_and_trims_the_copies(tmp_path, data_dir, align_service):

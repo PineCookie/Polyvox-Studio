@@ -225,6 +225,8 @@ class ClipDetailOut(ClipRowOut):
     # before / after this second. None when there is none.
     sound_before: float | None
     sound_after: float | None
+    speaker: float | None = None  # similarity of the voice to the dataset's, when scored
+    clipped: int | None = None  # flat tops at the peak, when measured
 
 
 class ClipPageOut(BaseModel):
