@@ -1,338 +1,204 @@
 # Polyvox Studio
 
-LoRA training and fast inference for several TTS models, with dataset
-preparation and a web UI. Models (engines): [VoxCPM](https://github.com/OpenBMB/VoxCPM)
-2 and [dots.tts](https://github.com/rednote-hilab/dots.tts); datasets, runs and
-tools are shared between them.
+Train text-to-speech voices from your own recordings, and use them, in one web
+app on your own computer. Polyvox Studio turns raw audio into a clean dataset,
+fine-tunes a voice on [VoxCPM2](https://github.com/OpenBMB/VoxCPM),
+[dots.tts](https://github.com/rednote-hilab/dots.tts) or
+[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS), and synthesizes with it.
 
-VoxCPM is used as a library, pinned to an upstream commit in `pyproject.toml`
-(PyPI 2.0.3 predates `generate(seed=...)`; switch to PyPI once a newer release
-ships). This project owns the UI, the API, model lifecycle and LoRA management.
+The interface is in English and Simplified Chinese (简体中文).
 
-To develop against a local VoxCPM checkout instead, temporarily set
-`voxcpm = { path = "../VoxCPM", editable = true }` under `[tool.uv.sources]`.
+## Highlights
 
-## Layout
+- **Three TTS models, one workflow.** VoxCPM2 and dots.tts (LoRA training, 48 kHz)
+  and GPT-SoVITS v2Pro, v2ProPlus and v4 (voice training). A dataset prepared
+  once trains any of them, and voices of every model sit side by side.
+- **From hours of raw audio to a dataset.** Point it at recordings (WAV, FLAC,
+  mp3, m4a, even video files) or at existing transcript lists. Long recordings
+  are cut between words with speech recognition and forced alignment, clips
+  without text are transcribed, and music, reverb or noise can be removed first.
+- **Every clip checked.** Clips are flagged when the text doesn't match the
+  audio, a word is cut off, someone else is speaking, the audio is clipped or
+  sung, or there is stray sound at the edges. Review them worst first: listen,
+  edit the text, trim, or drop.
+- **Training you can follow.** Loss charts, audio samples at each checkpoint,
+  and a speaker-similarity score that shows how close each checkpoint sounds to
+  the voice. Stop, resume and continue any run; try a checkpoint in one click.
+- **Good defaults.** New runs pick their length from the dataset size and use
+  Prodigy Schedule-Free, which finds its own learning rate. Batch sizes follow
+  your GPU's memory (8, 12 or 16 GB and up).
+- **Fast.** Switching between VoxCPM2 or dots.tts voices takes about a second
+  (no model reload), models are compiled for your GPU, and training uses fused
+  layers and caches what never changes.
+- **Works with GPT-SoVITS.** Import voices you trained in the GPT-SoVITS webui;
+  voices trained here load in the webui too.
+- **Share voices** as small zip packages, free of local paths, logs and dataset
+  audio, and import them with one click.
+- **Easy to install.** One command; [uv](https://docs.astral.sh/uv/) brings
+  Python, PyTorch and everything else. No FFmpeg needed. Windows and Linux.
 
-```
-models/            downloaded models, e.g. models/openbmb__VoxCPM2 (git-ignored)
-data/              training datasets: <name>/train.jsonl + audio (git-ignored)
-lora/              training runs, LoRAs and voices, one folder per model:
-                   voxcpm/, dots_tts/, gpt_sovits/ (git-ignored)
-src/polyvox/
-  config.py        settings from POLYVOX_* env vars
-  models.py        the models used, and downloading them (Hugging Face / mirror)
-  vram.py          settings per GPU size (batches, which models share the GPU)
-  engines/         TTS engines behind one interface (base.py: synthesis settings,
-                   capabilities, training config; __init__.py: the registry)
-    voxcpm/        engine.py; inference.py (model cache, LoRA hot-swap, synthesis);
-                   worker.py (training subprocess around the vendored script)
-    dots/          engine.py (dots.tts, 48 kHz); lora.py (LoRA layers, merging);
-                   worker.py (training subprocess)
-    gpt_sovits/    engine.py (GPT-SoVITS v2Pro / v2ProPlus, 32 kHz; v4, 48 kHz); synth.py (the
-                   synthesis pipeline); voices.py (voice folders with a default
-                   reference clip, import of weights the GPT-SoVITS webui trained);
-                   features.py + worker.py (training: full fine-tuning, SoVITS then GPT)
-  data/            manifests.py (training manifests: discovery, path fixes,
-                   inspection); audio_io.py (audio without a system FFmpeg)
-  prep/            dataset preparation:
-    importer.py    import from GPT-SoVITS lists, CSV, JSONL, folders
-    slicer.py      long recordings -> clips at pauses (Silero VAD)
-    asr.py         speech recognition (Qwen3-ASR, transformers-native)
-    aligner.py     forced alignment (Qwen3-ForcedAligner or a wav2vec2 CTC model)
-    checks.py      per-clip checks from alignment: mismatch, cut edges, silence
-    separation.py  optional vocal separation / de-reverb / denoise (RoFormer)
-    singing.py, fillers.py, loudness.py, exporter.py
-  lora_library.py  checkpoint discovery and metadata (each records its engine)
-  jobs.py          in-process background jobs with progress and cancel
-  training.py      training runs: config, job control, metrics
-  speaker.py       speaker similarity of samples (CAM++)
-  sharing.py       export / import of shareable LoRA and voice packages
-  vendor/          train_voxcpm_finetune.py, unmodified from the pinned commit;
-                   roformer/ from Music-Source-Separation-Training (MIT);
-                   dots_tts/ from the dots.tts 0.3.1 wheel (Apache-2.0, changes listed
-                   in its __init__.py); gpt_sovits/ from GPT-SoVITS (MIT): the v2Pro
-                   and v4 synthesis and training modules, Chinese + English text (rebuilt by
-                   tools/vendor_gpt_sovits.py from a pinned upstream commit; changes listed
-                   in its __init__.py)
-  server/          the FastAPI app (app.py; serves web/dist when built), what the
-                   routes share (context.py: services, GPU rules), request / response
-                   bodies (schemas.py) and one module of routes per area: status,
-                   tts, loras, datasets, clips, training
-web/               Vite + React + TypeScript frontend
-tests/             run without a GPU (fake model loader and training worker)
-```
+## Quick start
 
-## Setup
+1. Install uv:
 
-Runs on Windows and Linux with [uv](https://docs.astral.sh/uv/), which installs
-Python 3.13, PyTorch and everything else on the first run. `run.bat` / `run.sh`
-pick the PyTorch build for the machine (`POLYVOX_TORCH` overrides):
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
+   curl -LsSf https://astral.sh/uv/install.sh | sh                                       # Linux
+   ```
 
-| Build | For |
-|---|---|
-| `cu130` | NVIDIA RTX 20 series or newer (incl. RTX 50) with a driver for CUDA 13 |
-| `cu126` | older NVIDIA GPUs (e.g. GTX 10 series) or drivers (CUDA 12.6) |
-| `rocm` | AMD GPUs on Linux (ROCm 7.2: recent Radeon and Instinct; untested) |
-| `cpu` | no GPU: datasets can be prepared, but synthesis is slow and training impractical |
+2. Download the `.zip` (Windows) or `.tar.gz` (Linux) of the
+   [latest release](../../releases/latest), unpack it, and run `run.bat`
+   (Windows) or `./run.sh` (Linux) in its folder. The first start installs
+   everything, which takes a few minutes.
+3. Open http://127.0.0.1:8808, go to the **Models** tab and download **VoxCPM2**
+   (about 5 GB). Add the others when you need them (see [Models](#models)).
+4. Type something in **Synthesize** and press **Generate**. The first generation
+   after a model loads takes about 30 s while it is compiled; later ones are fast.
 
-Install uv:
+An NVIDIA GPU with 8 GB or more is recommended; see [Requirements](#requirements).
 
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
-curl -LsSf https://astral.sh/uv/install.sh | sh                                       # Linux
-```
+## How it works
 
-Download the `.zip` (Windows) or `.tar.gz` (Linux) of the latest release and run
-`run.bat` / `./run.sh` in its folder. Release archives include the built web UI.
-From a git checkout instead, the first run also builds the UI, which needs
-Node.js 20+.
+1. **Prepare** a dataset: **New dataset**, then **Add source** with a folder or a
+   transcript list, and **Run the remaining steps**. Look through the flagged
+   clips and fix or drop the bad ones.
+2. **Train** a voice: **Train on it** on the dataset's page, pick the model and
+   start. Watch the charts and listen to the samples as checkpoints arrive.
+3. **Synthesize** with it: the voice appears in the Voice list. Pick it (and a
+   checkpoint, if you like), type, and generate.
 
-No FFmpeg install is needed: audio in other formats (m4a, video files) is
-decoded with PyAV, which brings its own. On Linux, Triton (used to compile the
-model) needs a C compiler (`apt install build-essential`). To reach a server on another
-machine, start it with `./run.sh --host 0.0.0.0` (it has no login: use it on a
-trusted network or through an SSH tunnel).
+## Synthesizing
 
-Open http://127.0.0.1:8808 and download the models in the **Models** tab
-(VoxCPM2 is required, about 5 GB; the rest only for preparing datasets). The
-first generation after a model load takes about 30 s while Triton compiles;
-later ones are fast.
+The **Voice** panel lists the base models and every trained voice, grouped by
+model; a voice with several checkpoints lets you pick one. Then:
 
-## Models
+- **Text**, with VoxCPM2's non-verbal tags (laugh, sigh, ...) a click away.
+- **Style** (VoxCPM2): describe the voice, e.g. "a calm, warm voice, speaking
+  slowly".
+- **Reference audio** clones a voice from a clip; adding its transcript
+  (**Transcribe** fills it in) usually makes the result closer.
+- **Advanced**: guidance, steps, seed and the model's own settings.
+- **History** keeps this session's clips to compare and download.
 
-The **Models** tab lists every model the studio uses, with its size, license and
-whether it is downloaded, and downloads the missing ones with progress into the
-models folder (`models/`; `POLYVOX_MODELS_DIR`). Downloads come from
-Hugging Face or a mirror of it (hf-mirror.com, or any URL; the server default is
-`POLYVOX_HF_ENDPOINT`), only the files that are used, and resume when
-interrupted. A model downloaded while the server runs is used from its next
-load, no restart needed.
-
-A Hugging Face model that is not downloaded still works: it is fetched into the
-Hugging Face cache the first time it loads (with no progress shown; the mirror
-setting applies). The import's clean-up models are only used from the models
-folder. A model variable set explicitly (below) always wins.
-
-## Configuration
-
-| Variable | Default | |
-|---|---|---|
-| `POLYVOX_MODELS_DIR` | `models` | downloaded models (see Models) |
-| `POLYVOX_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` |
-| `POLYVOX_MODEL` | `openbmb/VoxCPM2` | local model dir or Hugging Face id |
-| `POLYVOX_DOTS_MODEL` | `rednote-hilab/dots.tts-soar` | dots.tts: local model dir or Hugging Face id |
-| `POLYVOX_GSV_MODEL` | (downloaded copy) | GPT-SoVITS: a folder laid out like `lj1995/GPT-SoVITS` (v2Pro, s1v3.ckpt, encoders) |
-| `POLYVOX_GSV_G2PW_MODEL` | (downloaded copy) | GPT-SoVITS: the G2PW folder (Chinese pronunciation) |
-| `POLYVOX_GSV_V4_MODEL` | (downloaded copy) | GPT-SoVITS v4: a folder with `s2Gv4.pth` and `vocoder.pth` (`gsv-v4-pretrained`) |
-| `POLYVOX_LORA_DIR` | `lora` | LoRA checkpoints and training runs |
-| `POLYVOX_DATA_DIR` | `data` | JSONL training manifests |
-| `POLYVOX_DEVICE` | `auto` | inference device: `cuda`, `cuda:1`, `cpu`, ... |
-| `POLYVOX_TRAIN_GPU` | | CUDA index for training jobs (default: the first GPU) |
-| `POLYVOX_ASR_MODEL` | `Qwen/Qwen3-ASR-1.7B-hf` | speech recognition model (dir or Hugging Face id) |
-| `POLYVOX_ASR_DEVICE` | `auto` | ASR and aligner device; `auto` = the inference device |
-| `POLYVOX_ALIGN_MODEL` | `Qwen/Qwen3-ForcedAligner-0.6B-hf` | forced aligner |
-| `POLYVOX_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (character vocabulary, one language) |
-| `POLYVOX_OPTIMIZE` | `auto` | Triton `torch.compile`; `auto` = on for CUDA |
-| `POLYVOX_VRAM_GB` | | use at most this much GPU memory (a shared GPU), and pick the settings for it |
-| `POLYVOX_DENOISER` | `1` | load the ZipEnhancer denoiser |
-| `POLYVOX_DENOISER_MODEL` | `iic/speech_zipenhancer_ans_multiloss_16k_base` | its dir or ModelScope id |
-
-`run.bat` / `run.sh` use the project's own `models/`, `lora/` and `data/`; set the
-variables to use other paths.
-
-Speech recognition (the **Transcribe** button for reference audio) uses
-Qwen3-ASR through transformers itself, so it needs no extra packages. It loads
-on first use (about 4 GB of GPU memory); Unload frees it with the TTS model.
-
-Starting a training job unloads the inference model if both use the same GPU.
-To keep synthesizing while training, put them on different GPUs, e.g.
-`POLYVOX_DEVICE=cuda:1`.
-
-### GPU memory
-
-Batch sizes and which models share the GPU follow its memory:
-
-| GPU memory | Synthesis | Training (batch x accumulation) | Preparing datasets |
-|---|---|---|---|
-| 16 GB or more | yes | 4 x 4 | all models stay loaded |
-| 12 GB | yes; unloaded while preparing | 2 x 8 | smaller ASR batches |
-| 8 GB | yes; reference denoising on the CPU | 1 x 16, gradient checkpointing (slow) | one model on the GPU at a time |
-| under 8 GB | no (needs about 8 GB) | no | as for 8 GB |
-
-The effective batch stays 16, so smaller cards train slower, not differently. A
-batch that still runs out of memory is retried in halves.
-
-## Training
-
-The Train tab starts, stops and resumes LoRA runs, one at a time. A new run
-starts from a dataset: its stats, warnings and a browsable list of its clips
-(play, transcript, length, search; ASR-made transcripts are marked), then the
-training parameters. A run lives in `<lora dir>/<model>/<name>/` (`<model>` is
-`voxcpm`, `dots_tts` or `gpt_sovits`) in the layout `lora_ft_webui.py` uses, so
-its runs appear too and can be resumed or continued with more steps. Runs and
-voices lying directly in the LoRA dir (from before these folders, or copied in)
-are moved into their model's folder when the server starts, with the paths
-their configs record.
-
-- Stop saves a checkpoint first; Resume continues from it.
-- Validation clips (held out from the training set by default) produce loss
-  points and audio samples every "Validate every" steps.
-- Optimizer: new runs use Prodigy Schedule-Free
-  ([prodigy-plus-schedule-free](https://github.com/LoganBooker/prodigy-plus-schedule-free)),
-  which finds its own step size for each network (text LM, residual LM,
-  diffusion decoder); the learning rate is then a multiplier (1). AdamW with a
-  cosine schedule (the training script's own) and Prodigy are the alternatives.
-- Speaker similarity: each validation sample is scored against the training
-  set's voice with CAM++ speaker embeddings (`POLYVOX_SPEAKER_MODEL`, a
-  28 MB ModelScope model, on the CPU), next to the score real clips of the set
-  reach. Scores are cached in the run folder (`similarity.json`).
-- Each run gets copies of its manifests with absolute audio paths. Webui
-  manifests hold paths relative to the folder holding `data/` and `lora/`
-  (`data/<name>/wavs/...`), which the current
-  `voxcpm` loader would resolve against the manifest's folder instead.
+GPT-SoVITS always speaks from a reference clip: each of its voices has a default
+one, picked from the training data, that you can change in the Voice panel.
 
 ## Preparing datasets
 
 The Prepare tab turns raw recordings and transcript lists into datasets in the
-data dir. **New dataset** makes an empty one; on its page, **Add source** takes
+data folder. **New dataset** makes an empty one; on its page, **Add source** takes
 a path on this computer:
 
 - a GPT-SoVITS `.list` (`path|speaker|lang|text`),
 - a `file|text` CSV (LJSpeech style),
 - a `.jsonl` manifest, or
-- a folder of audio files with same-name `.txt` / `.lab` transcripts.
+- a folder of audio files, with same-name `.txt` / `.lab` transcripts or without.
 
 Lists often hold stale paths (another machine, a moved folder). Each clip is
 looked up as written, by file name next to the list and in its `wavs/` folder,
 and by file name in an optional audio folder. **Scan** shows what was found
 before anything is written; rows without audio are skipped. Clips go into
-`data/<name>/train.jsonl` with paths relative to it and, by default, are copied
-into `data/<name>/wavs/` so the folder is self-contained. Long recordings (over
-20 s) are listed in `data/<name>/dataset.json` and stay where they are until
-they are sliced. Sources can be added at any time; audio already in the dataset
-is skipped.
+`data/<name>/train.jsonl` and, by default, are copied into `data/<name>/wavs/` so
+the folder is self-contained. Long recordings (over 20 s) are listed in
+`data/<name>/dataset.json` and stay where they are until they are sliced.
+Sources can be added at any time; audio already in the dataset is skipped.
 
 The page lists the dataset's steps in order: **Sources**, **Clean up**
 (optional), **Slice recordings**, **Transcribe**, **Check clips** and **Tidy**.
 Each step shows what still needs it (a dataset may mix recordings and ready
-clips, or have stopped halfway), keeps its settings for the next run, works only
-on what is left, and saves as it goes, so a stopped step loses little. **Run the
+clips, or have stopped halfway), keeps its settings for next time, works only on
+what is left, and saves as it goes, so a stopped step loses little. **Run the
 remaining steps** runs the needed ones in order; Add source can start that right
-after adding, with the settings shown.
+after adding. Steps run in the background with progress and can be cancelled.
 
-Long recordings (WAV, FLAC, mp3, m4a, video files, ...) are read 10 minutes at a time,
-so hours of audio are fine. Voice activity detection (Silero VAD) groups the
-speech into pieces of up to 28 s, Qwen3-ASR transcribes them, and the forced
-aligner places every word. Cuts then fall only between words, at pauses
-measured on the waveform, preferring sentence ends and keeping clips within a
-length range (2-15 s by default); each clip keeps its exact part of the
-transcript, punctuation included.
+**Slicing.** Long recordings are read 10 minutes at a time, so hours of audio
+are fine. Voice activity detection (Silero VAD) finds the speech, Qwen3-ASR
+transcribes it and a forced aligner places every word. Cuts fall only between
+words, at real pauses, preferring sentence ends and keeping clips within a length
+range (2-15 s by default); each clip keeps its exact part of the transcript,
+punctuation included.
 
-Clips that have audio but no transcript (a folder of bare recordings, or empty
-text in a list) are kept, and the Transcribe step fills them in with Qwen3-ASR,
-optionally with a fixed language and names / terms to spell right; until then
-they are left out of training. Steps run in the background with progress and
-can be cancelled. Transcribed clips are listed in `data/<name>/asr.json` so they
-can be reviewed.
+**Transcribing.** Clips without text are kept, and the Transcribe step fills
+them in with Qwen3-ASR, optionally with a fixed language and names or terms to
+spell right; until then they are left out of training. Transcribed clips are
+listed in `data/<name>/asr.json` so they can be reviewed.
+
+**Deleting.** **Delete…** on a dataset's page removes its folder after showing
+what goes with it (clips, size, training runs that used it) and asking to
+confirm.
 
 ### Optional clean-up: separation, de-reverb, denoise
 
-The Clean up step cleans the audio with the RoFormer models UVR5 and
+The Clean up step cleans the audio with the RoFormer models that UVR5 and
 MSST-WebUI use (architectures vendored from ZFTurbo's Music-Source-Separation-
 Training, MIT): **separate** the voice from music and background, **remove
 reverb**, **remove noise**. Each is off by default and available once its model
 is downloaded (Models tab). Clips are cleaned in place; recordings are cleaned
 while they are sliced. The de-reverb weights are GPL-3.0.
 
-Any MSST-style checkpoint works: set `POLYVOX_VOCALS_MODEL`,
-`POLYVOX_DEREVERB_MODEL` or `POLYVOX_DENOISE_MODEL` to `model.ckpt`
-(its config: the same-name or only `.yaml` beside it) or `model.ckpt|config.yaml`.
-The default vocal model is a "bleedless" one: for training data, music left in the
-voice is worse than a slightly thinner voice. It adds time to an import and
-leaves small artifacts (alignment scores on clean speech drop a little), so use it
-for recordings with music or background under the voice, not for clean ones.
-Separation does not remove singing.
+The default vocal model is a "bleedless" one: for training data, music left in
+the voice is worse than a slightly thinner voice. Separation adds time and
+leaves small artifacts, so use it for recordings with music or background under
+the voice, not for clean ones. It does not remove singing.
 
-### Checking clips against their text
+Any MSST-style checkpoint works: set `POLYVOX_VOCALS_MODEL`,
+`POLYVOX_DEREVERB_MODEL` or `POLYVOX_DENOISE_MODEL` to `model.ckpt` (its config:
+the same-name or only `.yaml` beside it) or `model.ckpt|config.yaml`.
+
+### Checking clips
 
 Forced alignment places each word of a transcript in its audio. The **Check
-clips** step uses it to flag clips for review (new clips and edited texts only;
-**Check all again** redoes every clip):
+clips** step uses it, and a few other measures, to flag clips for review (new
+clips and edited texts only; **Check all again** redoes every clip):
 
 | Flag | Meaning |
 |---|---|
 | Singing | a sung clip (karaoke, a cover): not wanted in training data |
-| Other voice? | the voice is unlike the rest of the dataset (CAM++ speaker embedding vs the dataset's voice): maybe a guest or played-back audio; short clips need a lower score |
+| Other voice? | the voice is unlike the rest of the dataset: maybe a guest or played-back audio |
 | Clipped | the waveform is cut flat at its peak (recorded or saved too loud) |
-| Mismatch | part of the text does not match the audio (low confidence over a few words; fillers not counted) |
-| Filler? | a filler or laugh in the text (嗯, 哈哈, 呵呵, ...) placed on quiet audio: maybe not said, e.g. one 呵 too many |
+| Mismatch | part of the text does not match the audio |
+| Missing words? | speech recognition hears words the transcript lacks (with **Compare with ASR**) |
+| Filler? | a filler or laugh in the text (嗯, 哈哈, 呵呵, ...) placed on quiet audio: maybe not said |
 | Edge sound | sound before or after the words, a pause apart (a sigh, 嗯, a laugh, or words the text misses) |
-| Untranscribed | voice activity right next to the aligned words: the text may miss something |
+| Untranscribed | speech right next to the aligned words: the text may miss something |
 | Cut edge | the sound is still loud at the start or end of the file: a word may be cut |
-| Long silence | over 0.5 s of silence after the speech (VoxCPM's guide: the model learns when to stop from it), or over 1 s before it |
+| Long silence | over 0.5 s of silence after the speech (the model learns when to stop from it), or over 1 s before it |
 
-Two aligners, both running in this environment: **Qwen3-ForcedAligner** (11
-languages, mixed scripts) and a **wav2vec2 CTC** model with a character
-vocabulary (sharper on single wrong words; Chinese by default, set
-`POLYVOX_CTC_ALIGN_MODEL` for another language). The **Tidy** step trims the
-checked clips' edges (long silence, and sound before the first or after the
-last transcribed word, a laugh or 嗯, when a pause separates it, keeping 0.15 s;
-clips flagged Mismatch or Missing words are left for review) and can bring every
-clip to one loudness.
+Two aligners are available: **Qwen3-ForcedAligner** (11 languages, mixed
+scripts) and a **wav2vec2 CTC** model (sharper on single wrong words; Chinese by
+default, `POLYVOX_CTC_ALIGN_MODEL` for another language). A transcript that
+leaves out a few words is mostly not caught by alignment, so **Compare with
+ASR** transcribes each clip again and flags Missing words. Singing detection
+(an AudioSet tagger) is off by default: it slows checks down and most datasets
+have no songs. Results are saved in `data/<name>/align.json`.
 
-For an existing dataset, the clip view trims one clip (**Trim…**: drag the handles on the waveform; letting go plays the new edge) or
-transcribes just its edge sound (**Add to text**), and **Trim all** trims every
-clip flagged Edge sound or Long silence, leaving for review those also flagged
-Mismatch or Missing words, or starting / ending with a filler the aligner could not
-place. The table greys what trimming would cut, and every waveform has a time ruler. Clips are rewritten in place (WAV / FLAC / OGG inside
-the dataset folder); the originals are kept in `originals/` next to the manifest.
-
-**Fillers and laughs.** ASR and aligners are unsure of them (is it 呵呵呵 or
-呵呵呵呵?), and for TTS training the count does not matter, only consistency. By
-default the Transcribe step shortens runs of one filler to two in every text
-(哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯), also when no clip needs transcribing (keeping
-the original manifest as `train.jsonl.orig`). Different fillers stay different: 哈哈
-is a laugh, 呵呵 a "he he". VoxCPM2's non-verbal tags (`[laughing]`, `[Uhm]`, ...)
-sound much the same in Chinese text but can add stray fillers, so transcripts
-keep plain characters. Results are saved in
-`data/<name>/align.json` and shown in the clips table, which can show only
-flagged clips and sort them worst match first. A check made for a transcript
-that was edited since is ignored.
-
-Each row shows the clip's waveform with the span the text covers shaded; click
-it to play from that point. Expanding a row (its length) shows a larger
-waveform with every word where the aligner placed it; words it is unsure of,
-usually not what was said, are marked in orange on both.
-
-A transcript that leaves out a few words is mostly not caught by alignment (the
-aligner spreads the remaining words over the audio). **Compare with ASR**, an
-option of the Check clips step, transcribes each clip again and flags **Missing words?**
-where ASR hears words the transcript lacks; the clip view shows what ASR heard,
-with the differences marked. Texts made by ASR are not compared with themselves.
+The **Tidy** step trims edges (long silence, and a sigh or 嗯 a pause away from
+the words, keeping 0.15 s) and can bring every clip to one loudness. Clips
+flagged Mismatch or Missing words are left for review. Clips are rewritten in
+place; originals are kept in `originals/` next to the manifest.
 
 ### Reviewing clips
 
-Filter the clips table by flag, worst match first, and open a clip:
+The clips table can show only flagged clips, worst first. Each row shows the
+clip's waveform with the span the text covers shaded; click it to play from that
+point. Open a clip to see every word where the aligner placed it (words it is
+unsure of are marked) and:
 
-- **Edit** its transcript (or **Use ASR text**); saving checks that clip again
-  (and so does trimming it).
-- **Check again** aligns it now; **Ask ASR** transcribes it and compares with the
-  text, also in a dataset checked without ASR.
-- **Drop** it: it stays in the table, dimmed, but training runs started from then
-  on leave it out (listed in `data/<name>/excluded.json`); **Restore** brings it
-  back. The manifest itself keeps every clip.
+- **Edit** its transcript (or **Use ASR text**); saving checks that clip again.
+- **Trim…**: drag the handles on the waveform; letting go plays the new edge.
+- **Check again**, or **Ask ASR** to compare with what speech recognition hears.
+- **Drop** it: it stays in the table, dimmed, but training leaves it out
+  (listed in `data/<name>/excluded.json`); **Restore** brings it back.
 
-In a filtered list, a clip you edit, trim or drop stays listed (with its new flags)
-until the filter or search changes. With one flag shown, **Drop all** drops every
-clip that has it, e.g. all sung clips.
+**Trim all** trims every clip flagged Edge sound or Long silence (the table greys
+what it would cut), and with one flag shown, **Drop all** drops every clip that
+has it, e.g. all sung clips.
 
-Singing is detected with an AudioSet audio tagger (AST, run through
-transformers; `POLYVOX_SINGING_MODEL`) by its singing scores together
-with a low speech score, so talk over background music is not taken for
-singing. It also works on separated vocals; very short sing-song exclamations
-can be flagged too. It is off by default (it slows checks down, and most
-datasets have no songs).
+A note on fillers and laughs: for training, their count matters less than
+consistency, so the Transcribe step shortens runs of one filler in every text
+(哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯; on by default). Different fillers stay different
+(哈哈 is a laugh, 呵呵 a "he he"), and transcripts keep plain characters rather
+than tags like `[laughing]`, which can add stray sounds.
 
 ### Exporting for other TTS tools
 
@@ -351,40 +217,196 @@ next to `data/`:
 Audio goes to `wavs/` as WAV with plain numbered names, copied or resampled; an
 optional clip length range leaves out clips outside it (GPT-SoVITS suggests 1-15 s).
 
-## Sharing LoRAs and voices
+## Training
 
-Select a checkpoint in the Voice panel and choose **Export for sharing**. The zip
-holds only `lora_weights.safetensors` (bfloat16 by default: half the size, same
-output), `lora_config.json` with the base model as a Hugging Face id, and a
-README with usage for Polyvox Studio, the `voxcpm` Python API and its CLI. Local
-paths, optimizer state, logs, transcripts and dataset audio are left out.
+The Train tab starts, stops and resumes runs, one at a time. **New run** starts
+from a dataset (its stats, warnings and clips to browse), then the model and the
+training settings; the name is suggested from the dataset and model.
 
-A GPT-SoVITS voice exports as both models in the GPT-SoVITS webui's format (also
-usable there; the README says where they go), its reference clip and that clip's
-transcript. Paths and names that the webui records in the weights' training
-settings are removed.
+| Model | What is trained | Defaults |
+|---|---|---|
+| VoxCPM2 | a LoRA (rank 32) on the language models and the diffusion decoder | 4 epochs, Prodigy Schedule-Free |
+| dots.tts | a LoRA (rank 32) on the language model and the diffusion head | 4 epochs, Prodigy Schedule-Free |
+| GPT-SoVITS v2Pro / v2ProPlus | both models in full, SoVITS then GPT, as the webui does | 8 + 15 epochs |
+| GPT-SoVITS v4 | a LoRA on the SoVITS diffusion model, then the GPT in full | 8 + 15 epochs |
 
-**Import** in the Voice panel adds such a zip to the LoRA dir.
+- **Stop** saves a checkpoint first; **Resume** continues from it, and
+  **Continue to** adds more steps to a finished run.
+- **Progress** shows the loss charts (each folds away), the learning rate,
+  and, from clips held out of the training set, validation loss and audio samples
+  at each checkpoint. **Try** opens a checkpoint in Synthesize.
+- **Speaker similarity** scores each sample against the training set's voice
+  (CAM++ speaker embeddings) next to the score the set's own clips reach, so you
+  can pick the checkpoint that sounds most like the speaker.
+- **Optimizer:** Prodigy Schedule-Free
+  ([prodigy-plus-schedule-free](https://github.com/LoganBooker/prodigy-plus-schedule-free))
+  finds its own step size for each part of the model, so the learning rate is a
+  multiplier (1). AdamW with a cosine schedule and Prodigy are the alternatives.
+
+A run lives in `lora/<model>/<name>/` (`voxcpm`, `dots_tts` or `gpt_sovits`). Runs
+from VoxCPM's `lora_ft_webui.py` use the same layout, so they appear too and can be
+resumed or continued. Runs and voices lying directly in `lora/` (from older
+versions, or copied in) are moved into their model's folder when the server
+starts.
+
+## Sharing voices
+
+Select a voice in the Voice panel and choose **Export**. A LoRA zip
+holds only the weights (bfloat16 by default: half the size, same output), its
+configuration with the base model as a Hugging Face id, and a README with usage.
+A GPT-SoVITS voice exports both models in the GPT-SoVITS webui's format, with
+its reference clip and transcript. Local paths, optimizer state, logs and
+dataset audio are left out.
+
+**Import** in the Voice panel adds such a zip. **GPT-SoVITS…** imports a pair
+of weights trained in the GPT-SoVITS webui (v2, v2Pro, v2ProPlus or v4), with a
+reference clip from a dataset or a file.
+
+## Requirements
+
+Windows or Linux. [uv](https://docs.astral.sh/uv/) installs Python 3.13,
+PyTorch and everything else on the first run, and `run.bat` / `run.sh` pick the
+PyTorch build for the machine (`POLYVOX_TORCH` overrides):
+
+| Build | For |
+|---|---|
+| `cu130` | NVIDIA RTX 20 series or newer (incl. RTX 50) with a driver for CUDA 13 |
+| `cu126` | older NVIDIA GPUs (e.g. GTX 10 series) or drivers (CUDA 12.6) |
+| `rocm` | AMD GPUs on Linux (ROCm 7.2: recent Radeon and Instinct; untested) |
+| `cpu` | no GPU: datasets can be prepared, but synthesis is slow and training impractical |
+
+What a GPU can do depends on its memory; the studio picks batch sizes and which
+models share the GPU accordingly:
+
+| GPU memory | Synthesis | Training | Preparing datasets |
+|---|---|---|---|
+| 16 GB or more | yes | yes | all models stay loaded |
+| 12 GB | yes; unloaded while preparing | yes; some models with gradient checkpointing (slower) | smaller batches |
+| 8 GB | yes; reference denoising on the CPU | yes, with gradient checkpointing (slower) | one model on the GPU at a time |
+| under 8 GB | no (needs about 8 GB) | no | as for 8 GB |
+
+Smaller cards keep the effective batch, so they train slower, not differently. A
+batch that still runs out of memory is retried in halves. Starting a training run
+unloads the synthesis model if both use the same GPU; to keep synthesizing while
+training, put them on different GPUs (e.g. `POLYVOX_DEVICE=cuda:1`).
+
+No FFmpeg install is needed: audio in other formats (m4a, video files) is
+decoded with PyAV, which brings its own. On Linux, Triton (used to compile the
+models) needs a C compiler (`apt install build-essential`).
+
+To reach the studio from another machine, start it with
+`./run.sh --host 0.0.0.0`. It has no login: use it on a trusted network or
+through an SSH tunnel.
+
+## Models
+
+The **Models** tab lists every model the studio uses, with its size, license and
+whether it is downloaded, and downloads the missing ones with progress into
+`models/`. Only VoxCPM2 is required; the rest are needed only for what they do:
+
+| Model | For | Size |
+|---|---|---|
+| VoxCPM2 | synthesis and LoRA training | 5 GB |
+| dots.tts SOAR | synthesis and LoRA training | 4.9 GB |
+| GPT-SoVITS v2Pro / v2ProPlus, G2PW | synthesis and voice training (G2PW: Chinese pronunciation) | 1.7 + 0.6 GB |
+| GPT-SoVITS v4 | synthesis and voice training at 48 kHz | 0.8 GB |
+| Qwen3-ASR 1.7B | transcribing, slicing, Compare with ASR | 4.1 GB |
+| Qwen3-ForcedAligner 0.6B | slicing and checking clips | 1.9 GB |
+| wav2vec2 Chinese | second aligner for checks | 1.3 GB |
+| CAM++, ZipEnhancer, AST | speaker similarity and Other voice; denoising reference clips; singing detection | 0.4 GB |
+| RoFormer vocals / de-reverb / denoise | the optional Clean up step | 0.9 GB each |
+
+Downloads come from Hugging Face, a mirror of it (hf-mirror.com, or any URL;
+`POLYVOX_HF_ENDPOINT` sets the server's default) or ModelScope, fetch only the
+files that are used, and resume when interrupted. A model downloaded while the
+server runs is used from its next load, no restart needed. A Hugging Face model
+that is not downloaded still works: it is fetched into the Hugging Face cache
+the first time it loads (without progress).
+
+## Configuration
+
+Environment variables, all optional:
+
+| Variable | Default | |
+|---|---|---|
+| `POLYVOX_MODELS_DIR` | `models` | downloaded models |
+| `POLYVOX_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` |
+| `POLYVOX_LORA_DIR` | `lora` | training runs, LoRAs and voices |
+| `POLYVOX_DATA_DIR` | `data` | datasets |
+| `POLYVOX_DEVICE` | `auto` | synthesis device: `cuda`, `cuda:1`, `cpu`, ... |
+| `POLYVOX_TRAIN_GPU` | | CUDA index for training (default: the first GPU) |
+| `POLYVOX_ASR_DEVICE` | `auto` | speech recognition and aligner device; `auto` = the synthesis device |
+| `POLYVOX_VRAM_GB` | | use at most this much GPU memory (a shared GPU), and pick the settings for it |
+| `POLYVOX_OPTIMIZE` | `auto` | compile models with Triton (`torch.compile`); `auto` = on for CUDA |
+| `POLYVOX_DENOISER` | `1` | load the ZipEnhancer denoiser for reference clips |
+| `POLYVOX_MODEL` | `openbmb/VoxCPM2` | VoxCPM2: a local folder or Hugging Face id |
+| `POLYVOX_DOTS_MODEL` | `rednote-hilab/dots.tts-soar` | dots.tts: a local folder or Hugging Face id |
+| `POLYVOX_GSV_MODEL` | (downloaded copy) | GPT-SoVITS: a folder laid out like `lj1995/GPT-SoVITS` (v2Pro, s1v3.ckpt, encoders) |
+| `POLYVOX_GSV_G2PW_MODEL` | (downloaded copy) | GPT-SoVITS: the G2PW folder |
+| `POLYVOX_GSV_V4_MODEL` | (downloaded copy) | GPT-SoVITS v4: a folder with `s2Gv4.pth` and `vocoder.pth` |
+| `POLYVOX_ASR_MODEL` | `Qwen/Qwen3-ASR-1.7B-hf` | speech recognition model |
+| `POLYVOX_ALIGN_MODEL` | `Qwen/Qwen3-ForcedAligner-0.6B-hf` | forced aligner |
+| `POLYVOX_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (one language) |
+| `POLYVOX_DENOISER_MODEL` | `iic/speech_zipenhancer_ans_multiloss_16k_base` | its folder or ModelScope id |
+
+`run.bat` / `run.sh` use the project's own `models/`, `lora/` and `data/`; set
+the variables to use other folders.
 
 ## Development
 
 ```powershell
-uv run pytest
-uv run ruff check; uv run ruff format   # Python lint / format
-uv run polyvox            # API on :8808
-cd web; npm run dev             # UI on :5173, proxies /api to :8808
-cd web; npm run lint            # ESLint + Prettier check; `npm run format` fixes
+uv run pytest                            # no GPU needed (fake model loader and training worker)
+uv run ruff check; uv run ruff format    # Python lint / format
+uv run polyvox                           # API on :8808
+cd web; npm run dev                      # UI on :5173, proxies /api to :8808
+cd web; npm run lint                     # ESLint + Prettier check; `npm run format` fixes
 ```
 
-`src/polyvox/vendor/` is excluded from Ruff: it stays byte-identical to upstream.
+From a git checkout, the first `run.bat` / `run.sh` also builds the web UI, which
+needs Node.js 20+. GitHub Actions run the tests, linters and web build on Ubuntu
+and Windows for every push; pushing a tag like `v0.4.0` publishes a release whose
+archives include the built web UI.
 
-GitHub Actions run the tests, linters and web build on Ubuntu and Windows for
-every push. Pushing a tag like `v0.2.0` publishes a release whose `.zip` and
-`.tar.gz` include the built web UI.
+VoxCPM is used as a library, pinned to an upstream commit in `pyproject.toml`
+(PyPI 2.0.3 predates `generate(seed=...)`). To develop against a local VoxCPM
+checkout, temporarily set `voxcpm = { path = "../VoxCPM", editable = true }`
+under `[tool.uv.sources]`. `src/polyvox/vendor/` is excluded from Ruff: it stays
+as upstream has it, with any changes listed in each package's `__init__.py`.
+
+```
+models/            downloaded models (git-ignored)
+data/              datasets: <name>/train.jsonl, audio, dataset.json (git-ignored)
+lora/              training runs, LoRAs and voices: voxcpm/, dots_tts/, gpt_sovits/ (git-ignored)
+src/polyvox/
+  config.py        settings from POLYVOX_* env vars
+  models.py        the models used, and downloading them
+  vram.py          settings per GPU size (batches, which models share the GPU)
+  engines/         TTS engines behind one interface (base.py; __init__.py: the registry)
+    voxcpm/        engine.py; inference.py (model cache, LoRA hot-swap); worker.py (training)
+    dots/          engine.py; lora.py (LoRA layers, merging); worker.py (training)
+    gpt_sovits/    engine.py; synth.py (synthesis); voices.py (voice folders, webui import);
+                   features.py + worker.py (training: SoVITS then GPT)
+  data/            manifests.py (training manifests); record.py (dataset.json);
+                   audio_io.py (audio without a system FFmpeg)
+  prep/            dataset preparation: steps.py (the dataset page's steps), importer.py,
+                   slicer.py, asr.py, aligner.py, checks.py, separation.py, singing.py,
+                   fillers.py, loudness.py, exporter.py
+  lora_library.py  checkpoint discovery and metadata
+  jobs.py          background jobs with progress and cancel
+  training.py      training runs: config, job control, metrics
+  speaker.py       speaker similarity (CAM++)
+  sharing.py       export / import of voice packages
+  vendor/          train_voxcpm_finetune.py (unmodified); roformer/ (MSST, MIT);
+                   dots_tts/ (Apache-2.0); gpt_sovits/ (MIT; rebuilt by
+                   tools/vendor_gpt_sovits.py from a pinned upstream commit)
+  server/          the FastAPI app: app.py, context.py (services, GPU rules),
+                   schemas.py, one module of routes per area
+web/               Vite + React + TypeScript frontend
+tests/             backend tests
+```
 
 ## Roadmap
 
-- Preprocessing: speaker outliers, loudness normalization.
-- Training speed: batch size / token budget, cuDNN attention.
-- VoxCPM 1.5 as a second base model.
-- Streaming synthesis via `VoxCPM.generate_streaming`.
+- Streaming synthesis: playback starts before generation ends.
+- VoxCPM 1.5 as another base model.
+- Keeping a long recording's own transcript when it is sliced.
