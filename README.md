@@ -1,5 +1,7 @@
 # Polyvox Studio
 
+English | [简体中文](README_zh.md)
+
 Train text-to-speech voices from your own recordings, and use them, in one web
 app on your own computer. Polyvox Studio turns raw audio into a clean dataset,
 fine-tunes a voice on [VoxCPM2](https://github.com/OpenBMB/VoxCPM),
@@ -27,9 +29,11 @@ The interface is in English and Simplified Chinese (简体中文).
 - **Good defaults.** New runs pick their length from the dataset size and use
   Prodigy Schedule-Free, which finds its own learning rate. Batch sizes follow
   your GPU's memory (8, 12 or 16 GB and up).
-- **Fast.** Switching between VoxCPM2 or dots.tts voices takes about a second
-  (no model reload), models are compiled for your GPU, and training uses fused
-  layers and caches what never changes.
+- **Faster than the models' own code, with the same results.** dots.tts
+  synthesizes about 4x faster and GPT-SoVITS about 2.5x; switching between
+  VoxCPM2 or dots.tts voices takes about a second instead of a reload. Training
+  steps run about 1.6x (VoxCPM2) to 3x (dots.tts) faster, and VoxCPM2 needs half
+  the GPU memory. See [Speed](#speed).
 - **Works with GPT-SoVITS.** Import voices you trained in the GPT-SoVITS webui;
   voices trained here load in the webui too.
 - **Share voices** as small zip packages, free of local paths, logs and dataset
@@ -248,6 +252,28 @@ from VoxCPM's `lora_ft_webui.py` use the same layout, so they appear too and can
 resumed or continued. Runs and voices lying directly in `lora/` (from older
 versions, or copied in) are moved into their model's folder when the server
 starts.
+
+## Speed
+
+Synthesis and training run on optimized paths written for this studio. Each was
+checked against the original code: the same loss curves in training, and in
+synthesis the same output up to floating-point rounding (with the same speaker
+similarity and transcripts), so the speed costs nothing in quality.
+Measured on a 16 GB NVIDIA GPU; the baseline is the model's own code where it
+has one, else a plain PyTorch loop:
+
+| | What is done | Gain |
+|---|---|---|
+| Switching voices (VoxCPM2, dots.tts) | LoRAs of any rank are written into the running, compiled model | about 1 s instead of a 30-40 s reload |
+| dots.tts synthesis | compiled; every decoding step replayed as a CUDA graph | about 4x faster |
+| GPT-SoVITS synthesis | the GPT's decoding step as one CUDA graph with a static cache and fused layer math; v4's diffusion model compiled | about 2.5x faster (v2Pro / v2ProPlus), 1.3x (v4) |
+| VoxCPM2 training | frozen weights in bfloat16 (half the memory, so batches of 4 fit 16 GB); each clip's audio encoded once; transformer layers fused | about 1.6x faster per step; 2.3x on 8 GB cards |
+| dots.tts training | each clip encoded once and cached on disk; no vocabulary logits; fused layers | about 3x faster per step |
+| GPT-SoVITS training | no per-parameter GPU syncs; features cached per clip in the dataset; v4's diffusion blocks compiled | about 1.2x faster per step; starts in seconds |
+| Preparing datasets | compiled vocal separation; voice detection and speaker embeddings batched on the GPU | separation 2x, voice detection 3.5x, the other-voice check about 10x |
+
+Compiling takes a little time once per model load (and longer on the very first
+run, while caches fill); `POLYVOX_OPTIMIZE=0` turns it off.
 
 ## Sharing voices
 
