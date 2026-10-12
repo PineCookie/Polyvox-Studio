@@ -1208,6 +1208,21 @@ input[type='search']:focus {
   margin-top: 4px;
 }
 
+/* The side column is sticky: the panel fits the window below the top bar, even before the
+   page scrolls (a short New run form can't), and its list scrolls. */
+.run-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 100px);
+}
+
+.run-panel .voice-list {
+  overflow-y: auto;
+  min-height: 120px;
+  margin: 0 -8px;
+  padding: 0 8px 2px;
+}
+
 .run-group {
   gap: 8px;
 }
@@ -1255,6 +1270,12 @@ input[type='search']:focus {
     max-height: none;
   }
   .voice-panel .voice-list {
+    max-height: 320px;
+  }
+  .run-panel {
+    max-height: none;
+  }
+  .run-panel .voice-list {
     max-height: 320px;
   }
 }

@@ -66,7 +66,7 @@ export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
   }
 
   return (
-    <section className="panel">
+    <section className="panel run-panel">
       <header className="panel-head">
         <h2>{t.runs}</h2>
         <button type="button" className={`small ${selected === NEW_RUN ? 'primary' : 'ghost'}`} onClick={onNew}>
