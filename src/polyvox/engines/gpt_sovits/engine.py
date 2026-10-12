@@ -255,5 +255,9 @@ class GptSovitsEngine(Engine):
             "feature_cache": str(dataset.parent / ".cache" / f"gpt_sovits_{feature_version(params.gsv_version)}.pt"),
         }
         if v4:  # SoVITS as a LoRA on the mel DiT
-            config |= {"v4_path": self.settings.model_path("gsv_v4_model"), "lora_rank": params.lora_rank}
+            config |= {
+                "v4_path": self.settings.model_path("gsv_v4_model"),
+                "lora_rank": params.lora_rank,
+                "compile": self.settings.optimize is not False,  # fuse the DiT's blocks (CUDA)
+            }
         return config

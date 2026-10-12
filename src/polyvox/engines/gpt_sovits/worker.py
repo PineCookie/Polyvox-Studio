@@ -153,6 +153,30 @@ def v4_checkpointing(batch_size: int) -> bool:
     return batch_size > vram.detect("cuda")[1].gsv_v4_plain_batch
 
 
+def dit_block(block, x, t, mask=None, rope=None):
+    return type(block).forward(block, x, t, mask, rope)
+
+
+_fused_block = None
+
+
+def fuse_blocks(dit, fused: bool) -> bool:
+    """v4's DiT blocks in training fused by torch.compile (``fused``; one
+    compilation, any batch shape, shared by the blocks: their weights are
+    inputs) or as they are; returns ``fused``. Same loss and gradients as
+    unfused, within float16 rounding (checked against float32)."""
+    import functools
+
+    import torch
+
+    global _fused_block
+    if fused and _fused_block is None:
+        _fused_block = torch.compile(dit_block, dynamic=True)
+    for block in dit.transformer_blocks:
+        block.forward = functools.partial(_fused_block if fused else dit_block, block)
+    return fused
+
+
 def v4_bucket(frames: int) -> int:
     import bisect
 
@@ -604,6 +628,9 @@ def train_sovits_v4(
     ).to(dev)
     net_g.load_state_dict(pretrained["weight"], strict=False)
     net_g.cfm.requires_grad_(False)  # the base DiT stays as it is; its LoRA learns
+    for p in net_g.cfm.parameters():  # float16 as s2Gv4 stores it (no rounding): no cast every step, half the memory
+        p.data = p.data.half()
+    compiled = bool(config.get("compile")) and fuse_blocks(net_g.cfm.estimator, True)
     rank = int(config.get("lora_rank") or V4_RANK)
     lora = DitLora(net_g.cfm, rank)
     frozen = {n for n, p in net_g.named_parameters() if not p.requires_grad}
@@ -629,7 +656,8 @@ def train_sovits_v4(
     )
     per_epoch = batches.per_epoch
     log(f"SoVITS (v4, LoRA rank {rank}): {len(clips)} clips, batch {batch_size}, {per_epoch} steps per epoch, "
-        f"steps {step + 1}-{end}{', gradient checkpointing' if checkpointing else ''}.")  # fmt: skip
+        f"steps {step + 1}-{end}{', gradient checkpointing' if checkpointing else ''}"
+        f"{', fused DiT blocks' if compiled else ''}.")  # fmt: skip
     saved_config = {
         **pretrained_config_without_paths(hps),
         "train": {
@@ -668,16 +696,26 @@ def train_sovits_v4(
         )
 
     n_fft, mel_hop, bands = V4_MEL
+    spectra: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}  # clip -> (spectrogram, mel) in CPU memory
 
-    def collate(items: list[dict]) -> dict:
-        """A batch on the GPU as upstream's TextAudioSpeakerCollateV4 pads it,
-        spectrogram and normalized mel computed here (upstream: in its loader)."""
-        specs, mels, ssls = [], [], []
-        for c in items:
-            y = c["wav"].to(dev, non_blocking=True).float()[None] / 32768
+    def spec_and_mel(c: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        """A clip's spectrogram and normalized mel (upstream: its loader, every
+        time), computed on its first batch and kept."""
+        key = id(c)
+        if key not in spectra:
+            y = c["wav"].to(dev).float()[None] / 32768
             spec = spectrogram_torch(y, data.filter_length, data.sampling_rate, hop, data.win_length)[0]
             mel = spec_to_mel_torch(spectrogram_torch(y, n_fft, 32000, mel_hop, n_fft), n_fft, bands, 32000, 0, None)
             mel = (mel[0] - V4_SPEC_MIN) / (V4_SPEC_MAX - V4_SPEC_MIN) * 2 - 1
+            spectra[key] = (spec.cpu().pin_memory(), mel.cpu().pin_memory())
+        spec, mel = spectra[key]
+        return spec.to(dev, non_blocking=True), mel.to(dev, non_blocking=True)
+
+    def collate(items: list[dict]) -> dict:
+        """A batch on the GPU as upstream's TextAudioSpeakerCollateV4 pads it."""
+        specs, mels, ssls = [], [], []
+        for c in items:
+            spec, mel = spec_and_mel(c)
             ssl = c["ssl"].to(dev).float()
             n = spec.shape[-1]
             ssl = F.pad(ssl[None], (0, n - ssl.shape[-1]), mode="replicate")[0] if ssl.shape[-1] < n else ssl[:, :n]
@@ -705,6 +743,18 @@ def train_sovits_v4(
         return out
 
     def train_step(b: dict) -> dict[str, torch.Tensor]:
+        nonlocal compiled
+        try:
+            return update(b)
+        except Exception as e:
+            if not compiled or isinstance(e, torch.OutOfMemoryError):
+                raise
+            log(f"Fusing the DiT blocks failed ({e}); training them unfused.")
+            compiled = fuse_blocks(net_g.cfm.estimator, False)
+            optim.zero_grad(set_to_none=True)
+            return update(b)
+
+    def update(b: dict) -> dict[str, torch.Tensor]:
         with torch.autocast("cuda", dtype=torch.float16):
             loss = net_g(
                 b["ssl"], b["spec"], b["mel"], b["ssl_lengths"], b["spec_lengths"],
