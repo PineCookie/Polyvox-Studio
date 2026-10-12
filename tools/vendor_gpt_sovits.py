@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 UPSTREAM = "https://github.com/RVC-Boss/GPT-SoVITS.git"
-COMMIT = "1b47ca07ef43a284e0b8bd7f29d3e1e3ff76082a"  # main, 2026-10-09
+COMMIT = "1b47ca07ef43a284e0b8bd7f29d3e1e3ff76082a"  # on main
 
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 parser.add_argument("--checkout", type=Path, help="an upstream clone to copy from (instead of fetching)")

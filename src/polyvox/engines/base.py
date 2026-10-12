@@ -153,3 +153,16 @@ class Engine(ABC):
             "model_setting": self.model_setting,
             "loaded": self.loaded,
         }
+
+
+def fuse_settings() -> None:
+    """torch.compile settings for the training workers' fused layers: float
+    attributes (norm eps, attention scaling, dropout p, a LoRA's scale) as
+    constants (left variable, as dynamic shapes leave them, they enter the graph
+    as CPU scalars, whose kernels need a C++ compiler), and the backward pass
+    compiled with the forward (so a failure shows in the forward call, where
+    training can fall back to unfused layers)."""
+    import torch
+
+    torch._dynamo.config.specialize_float = True
+    torch._functorch.config.force_non_lazy_backward_lowering = True
