@@ -138,6 +138,9 @@ class RunDetail(RunSummary):
     sample_texts: list[str]
     val_clips: int  # clips in the validation manifest (0: none)
     log: list[str]
+    # Set when asked for: train / val hold only the points after this step (a poll
+    # while training appends them to what it has).
+    since: int | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -428,11 +431,13 @@ class TrainingManager:
                 logger.warning("Skipping run %s: %s", run_dir.name, e)
         return sorted(runs, key=lambda r: r.updated, reverse=True)
 
-    def detail(self, name: str) -> RunDetail:
+    def detail(self, name: str, since: int | None = None) -> RunDetail:
+        """A run with its metrics; with ``since``, only the points logged after that step."""
         run_dir = self._run_dir(name)
         config = read_config(run_dir)
         metrics = parse_metrics(run_dir / "checkpoints" / "train.log")
         summary = self._summary(run_dir, config, metrics["train"])
+        shown = metrics if since is None else {k: [p for p in v if p["step"] > since] for k, v in metrics.items()}
 
         samples, references, model_inputs = [], [], []
         samples_dir = run_dir / "samples"
@@ -448,8 +453,9 @@ class TrainingManager:
         return RunDetail(
             **summary.model_dump(),
             config=config,
-            train=downsample(metrics["train"]),
-            val=downsample(metrics["val"]),
+            train=downsample(shown["train"]),
+            val=downsample(shown["val"]),
+            since=since,
             seconds_per_step=seconds_per_step(metrics["train"]),
             samples=samples,
             references=references,

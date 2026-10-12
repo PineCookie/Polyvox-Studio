@@ -24,6 +24,7 @@ On top of the script this adds:
   (``checkpoint_layers``); on CUDA unless POLYVOX_OPTIMIZE is off, the
   transformer layers fused by torch.compile (``fuse_layers``).
 - Prodigy / Prodigy Schedule-Free instead of AdamW (``use_optimizer``).
+- Logged losses averaged over the log interval (``average_logged_losses``).
 """
 
 from __future__ import annotations
@@ -235,6 +236,47 @@ def checkpoint_layers() -> None:
 
     MiniCPMDecoderLayer.forward = checkpointed
     print("[studio] Gradient checkpointing on (transformer layers).", file=sys.stderr)
+
+
+def average_logged_losses() -> None:
+    """Log each training loss as its mean over every forward pass since the last
+    line (all steps and micro-batches), as the dots and GPT-SoVITS workers do.
+    The script logs only the logged step's last micro-batch, so the steps in
+    between never reached the charts. The sums stay on the GPU and are read back
+    only when a line is written (no wait for the GPU at every step). Validation
+    and sample generation (no gradients) don't count."""
+    import torch
+    from voxcpm.model import voxcpm as v1
+    from voxcpm.model import voxcpm2 as v2
+    from voxcpm.training import TrainingTracker
+
+    sums: dict[str, list] = {}  # loss key -> [sum (tensor), count]
+
+    for cls in (v2.VoxCPM2Model, v1.VoxCPMModel):
+
+        def forward(self, *args, _forward=cls.forward, **kwargs):
+            out = _forward(self, *args, **kwargs)
+            if self.training and torch.is_grad_enabled() and isinstance(out, dict):
+                for key, value in out.items():
+                    if key.startswith("loss/") and isinstance(value, torch.Tensor):
+                        acc = sums.setdefault(key, [0, 0])
+                        acc[0] = acc[0] + value.detach().float()
+                        acc[1] += 1
+            return out
+
+        cls.forward = forward
+
+    log_metrics = TrainingTracker.log_metrics
+
+    def log_means(self, metrics, *args, **kwargs):
+        split = kwargs.get("split", args[0] if args else None)
+        if split == "train" and sums:
+            means = {key: float(total / count) for key, (total, count) in sums.items() if key in metrics and count}
+            metrics = {**metrics, **means}
+            sums.clear()
+        return log_metrics(self, metrics, *args, **kwargs)
+
+    TrainingTracker.log_metrics = log_means
 
 
 def by_network(model, params) -> list[dict]:
@@ -459,6 +501,7 @@ def main() -> None:
     args = parser.parse_args()
 
     save_samples_to(args.samples_dir, val_manifest_from_config(args.config_path))
+    average_logged_losses()
     frozen_weights_in_bf16()
     cache_audio_latents()
     from polyvox import vram

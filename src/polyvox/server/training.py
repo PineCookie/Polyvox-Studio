@@ -27,8 +27,9 @@ def router(s: Studio) -> APIRouter:
         return checked(training.start, params)
 
     @api.get("/api/training/runs/{name}")
-    def run_detail(name: str) -> RunDetail:
-        return found(training.detail, name)
+    def run_detail(name: str, since: int | None = None) -> RunDetail:
+        """``since``: only the metric points after that step (polls while training)."""
+        return found(training.detail, name, since)
 
     @api.post("/api/training/runs/{name}/resume")
     def resume_run(name: str, body: ResumeIn | None = None) -> RunDetail:

@@ -25,6 +25,8 @@ def restore_patches(monkeypatch):
         (v2.VoxCPM2Model, "state_dict"),
         (v1.VoxCPMModel, "train"),
         (v1.VoxCPMModel, "state_dict"),
+        (v2.VoxCPM2Model, "forward"),
+        (v1.VoxCPMModel, "forward"),
     ]:
         monkeypatch.setattr(owner, attr, getattr(owner, attr))
 
@@ -170,6 +172,39 @@ def test_schedule_free_logs_step_sizes_per_network_without_rounding(restore_patc
     assert point["lr_lora_A"] == pytest.approx(group["d"] * group["lr"], rel=1e-3)  # d is ~1e-6: not rounded to 0
     assert 0 < point["elr_lora_A"] <= point["lr_lora_A"]
     assert {"lr_feat_decoder", "elr_feat_decoder", "loss/diff"} <= set(point)
+
+
+def test_logged_losses_are_means_over_the_interval(restore_patches, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from polyvox import training
+
+    def fake_forward(self, x):
+        return {"loss/diff": torch.tensor(x), "loss/stop": torch.tensor(x / 10)}
+
+    monkeypatch.setattr(v2.VoxCPM2Model, "forward", fake_forward)
+    train_worker.average_logged_losses()
+    model, forward = SimpleNamespace(training=True), v2.VoxCPM2Model.forward
+    for x in (1.0, 2.0, 3.0, 6.0):  # steps (or micro-batches) since the last line
+        forward(model, x)
+    with torch.no_grad():  # validation: not counted
+        forward(model, 100.0)
+
+    log = tmp_path / "train.log"
+    tracker = TrainingTracker(writer=None, log_file=str(log), rank=0)
+    tracker.step = 3
+    tracker.log_metrics({"loss/diff": 6.0, "loss/stop": 0.6, "lr": 1.0}, split="train")  # the script: last step only
+    tracker.log_metrics({"loss/diff": 9.0}, split="val")
+    forward(model, 4.0)
+    tracker.step = 4
+    tracker.log_metrics({"loss/diff": 4.0, "loss/stop": 0.4, "lr": 1.0}, split="train")
+
+    metrics = training.parse_metrics(log)
+    first, second = metrics["train"]
+    assert first["loss/diff"] == pytest.approx(3.0) and first["loss/stop"] == pytest.approx(0.3)
+    assert first["lr"] == 1.0
+    assert second["loss/diff"] == pytest.approx(4.0)  # the sums start over after each line
+    assert metrics["val"][0]["loss/diff"] == 9.0
 
 
 def test_schedule_free_resumes_a_single_group_checkpoint_with_fresh_state(restore_patches):

@@ -67,6 +67,10 @@ def test_start_prepares_run_and_completes(training, data_dir, lora_dir):
     assert detail.val_clips == 2
     assert "progress 100%" in detail.log
 
+    newer = training.detail("voice_r32", since=10)  # a poll that has the points up to step 10
+    assert newer.since == 10 and [p["step"] for p in newer.train] == [20]
+    assert newer.seconds_per_step == detail.seconds_per_step and newer.samples == detail.samples
+
 
 def test_stop_saves_checkpoint_and_resume_continues(training, data_dir, lora_dir):
     make_dataset(data_dir, "voice")

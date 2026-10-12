@@ -327,6 +327,7 @@ export interface RunDetail extends RunSummary {
   sample_texts: string[]
   val_clips: number
   log: string[]
+  since: number | null // set: train / val hold only the points after this step
 }
 
 export const OPTIMIZERS = ['adamw', 'prodigy', 'prodigy_sf'] as const
@@ -738,8 +739,18 @@ export async function listRuns(): Promise<RunSummary[]> {
   return (await request('/api/training/runs')).json()
 }
 
-export async function getRun(name: string): Promise<RunDetail> {
-  return (await request(runUrl(name))).json()
+/** A run; with `since`, its metrics only after that step (the rest of the run in full). */
+export async function getRun(name: string, since?: number): Promise<RunDetail> {
+  return (await request(since === undefined ? runUrl(name) : `${runUrl(name)}?since=${since}`)).json()
+}
+
+/** `run` (from getRun with `since`) with its new points appended to `known`'s. */
+export function appendMetrics(known: RunDetail, run: RunDetail): RunDetail {
+  // A known point at or after the first new one was logged again (a run resumed from an
+  // earlier checkpoint): the new one replaces it.
+  const append = (old: MetricPoint[], added: MetricPoint[]) =>
+    added.length ? [...old.filter((p) => p.step < added[0].step), ...added] : old
+  return { ...run, since: null, train: append(known.train, run.train), val: append(known.val, run.val) }
 }
 
 export async function startRun(params: TrainParams): Promise<RunDetail> {

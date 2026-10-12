@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getRun, listDatasets, listRuns, resumeRun, startRun, stopTraining } from '../api'
+import { appendMetrics, getRun, listDatasets, listRuns, resumeRun, startRun, stopTraining } from '../api'
 import type { Lora, RunDetail as Run, RunSummary, TrainParams } from '../api'
 import { useT } from '../i18n'
 import { NewRunForm } from './NewRunForm'
@@ -58,10 +58,16 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
     }
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    // The first load is in full; polls while training ask only for the points after
+    // the last step they have and append them.
+    let known: Run | null = null
     const load = async () => {
       try {
-        const run = await getRun(selected)
+        const lastStep = known ? Math.max(known.train.at(-1)?.step ?? -1, known.val.at(-1)?.step ?? -1) : undefined
+        const fetched = await getRun(selected, lastStep)
         if (cancelled) return
+        const run = known && fetched.since !== null ? appendMetrics(known, fetched) : fetched
+        known = run
         setDetail(run)
         if (isLive(run)) timer = setTimeout(load, DETAIL_POLL_MS)
       } catch (e) {
