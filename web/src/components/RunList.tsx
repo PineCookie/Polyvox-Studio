@@ -4,6 +4,7 @@ import { engineName, engineRank } from '../engines'
 import { useFolded } from '../folded'
 import { formatStep } from '../format'
 import { useT } from '../i18n'
+import { Chevron } from './Fold'
 
 interface Props {
   runs: RunSummary[]
@@ -101,9 +102,7 @@ export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
                 aria-expanded={open}
                 onClick={() => !filter && toggleGroup(group.id)}
               >
-                <span className="chevron" aria-hidden>
-                  {open ? '▾' : '▸'}
-                </span>
+                <Chevron open={open} />
                 <span>{engineName(group.id)}</span>
                 <span className="muted">{group.runs.length}</span>
               </button>

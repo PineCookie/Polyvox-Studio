@@ -4,6 +4,8 @@ import type { MetricPoint } from '../api'
 import { chartHeight, MARGIN, niceTicks, useWidth } from '../chartUtils'
 import { formatStep } from '../format'
 import { useT } from '../i18n'
+import { FoldTitle } from './Fold'
+import type { Fold } from './Fold'
 
 const M = { ...MARGIN, left: 60 } // room for 1.0e-4 style ticks
 const COLORS = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)']
@@ -23,8 +25,9 @@ interface Series {
 
 /** The learning rate over the steps: per network when the run logs it
  * (Prodigy-SF: the effective rate solid, its d x lr dashed), else the logged rate. */
-export function LrChart({ train }: { train: MetricPoint[] }) {
+export function LrChart({ train, fold }: { train: MetricPoint[]; fold?: Fold }) {
   const t = useT()
+  const open = fold?.open ?? true
   const [ref, width] = useWidth<HTMLDivElement>()
   const height = chartHeight(width)
   const [hoverStep, setHoverStep] = useState<number | null>(null)
@@ -106,9 +109,15 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
   return (
     <figure className="chart">
       <figcaption className="chart-head">
-        <span className="chart-title">{t.lrTitle}</span>
+        {fold ? (
+          <FoldTitle fold={fold} className="chart-title">
+            {t.lrTitle}
+          </FoldTitle>
+        ) : (
+          <span className="chart-title">{t.lrTitle}</span>
+        )}
         <span className="spacer" />
-        <span className="legend">
+        <span className="legend" hidden={!open}>
           {solid.map((s) =>
             solid.length > 1 ? (
               <button
@@ -140,7 +149,8 @@ export function LrChart({ train }: { train: MetricPoint[] }) {
           )}
         </span>
       </figcaption>
-      <div className="chart-body" ref={ref}>
+      {/* Folded: hidden, not removed, so its width is measured again once open. */}
+      <div className="chart-body" ref={ref} hidden={!open}>
         {!geometry ? (
           <p className="muted empty chart-empty">{t.noStepsYet}</p>
         ) : (

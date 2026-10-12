@@ -564,7 +564,6 @@ export const zh: Messages = {
     'loss/cfm': '流匹配',
     'loss/gpt': 'GPT',
   },
-  moreLosses: '更多损失',
   runDatasetHint: '这次训练使用的片段（不含验证片段）。',
   validation: '验证',
   valClips: (n) => `${n} 条，用于验证损失和试听样本`,

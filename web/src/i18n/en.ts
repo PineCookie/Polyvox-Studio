@@ -603,7 +603,6 @@ export const en = {
     'loss/cfm': 'Flow matching',
     'loss/gpt': 'GPT',
   } as Record<string, string>,
-  moreLosses: 'More losses',
   runDatasetHint: 'The clips this run trains on (validation clips not included).',
   validation: 'Validation',
   valClips: (n: number) => `${n} clips, for validation loss and audio samples`,

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
 import { getSimilarity, sampleUrl } from '../api'
 import type { Lora, RunDetail as Run, Similarity } from '../api'
 import { useFolded } from '../folded'
@@ -7,6 +6,8 @@ import { formatDuration, formatStep, formatValue } from '../format'
 import { useT } from '../i18n'
 import { usePeaks } from '../peaks'
 import { DatasetReview } from './DatasetReview'
+import { FoldPanel } from './Fold'
+import type { Fold } from './Fold'
 import { LossChart } from './LossChart'
 import { LrChart } from './LrChart'
 import { paramsFromConfig } from '../trainParams'
@@ -61,6 +62,14 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
   const losses = useMemo(() => lossKeys(run), [run])
   // Progress sections (loss, similarity, samples) folded, for every run.
   const [folded, toggle] = useFolded('polyvox.runSections')
+  const section = (id: string): Fold => ({ open: !folded.has(id), onToggle: () => toggle(id) })
+  // Charts in the Loss panel: the first two losses start open, the others and the learning
+  // rate folded; remembered as the charts turned the other way, for every run.
+  const [flipped, flip] = useFolded('polyvox.runCharts')
+  const chart = (key: string, openByDefault: boolean): Fold => ({
+    open: openByDefault !== flipped.has(key),
+    onToggle: () => flip(key),
+  })
 
   return (
     <>
@@ -137,39 +146,27 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
 
       {tab === 'progress' && (
         <>
-          <FoldPanel title={t.loss} open={!folded.has('loss')} onToggle={() => toggle('loss')}>
-            {losses.slice(0, 2).map((key) => (
-              <LossChart key={key} title={t.lossTitles[key] ?? key} metric={key} train={run.train} val={run.val} />
+          <FoldPanel title={t.loss} fold={section('loss')}>
+            {losses.map((key, i) => (
+              <LossChart
+                key={key}
+                title={t.lossTitles[key] ?? key}
+                metric={key}
+                train={run.train}
+                val={run.val}
+                fold={chart(key, i < 2)}
+              />
             ))}
-            {losses.length > 2 && (
-              <details className="advanced">
-                <summary>{t.moreLosses}</summary>
-                {losses.slice(2).map((key) => (
-                  <LossChart key={key} title={t.lossTitles[key] ?? key} metric={key} train={run.train} val={run.val} />
-                ))}
-              </details>
-            )}
-            <details className="advanced">
-              <summary>{t.lrTitle}</summary>
-              <LrChart train={run.train} />
-            </details>
+            <LrChart train={run.train} fold={chart('lr', false)} />
             <MetricsTable run={run} losses={losses.slice(0, 2)} />
           </FoldPanel>
-          {run.samples.length > 0 && (
-            <SimilarityPanel
-              run={run}
-              similarity={similarity}
-              open={!folded.has('similarity')}
-              onToggle={() => toggle('similarity')}
-            />
-          )}
+          {run.samples.length > 0 && <SimilarityPanel run={run} similarity={similarity} fold={section('similarity')} />}
           <Samples
             run={run}
             loras={loras}
             scores={similarity.data?.scores}
             onTryCheckpoint={onTryCheckpoint}
-            open={!folded.has('samples')}
-            onToggle={() => toggle('samples')}
+            fold={section('samples')}
           />
           <Console lines={run.log} open={run.status === 'failed'} follow={live} />
         </>
@@ -240,38 +237,7 @@ function useSimilarity(run: Run): SimilarityState {
   }
 }
 
-interface Fold {
-  open: boolean
-  onToggle: () => void
-}
-
-/** A panel whose heading folds it; `extra` stays in the header either way. */
-function FoldPanel({
-  title,
-  extra,
-  open,
-  onToggle,
-  children,
-}: Fold & { title: string; extra?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="panel">
-      <header className="panel-head">
-        <h2>
-          <button type="button" className="fold-head" aria-expanded={open} onClick={onToggle}>
-            <span className="chevron" aria-hidden>
-              {open ? '▾' : '▸'}
-            </span>
-            {title}
-          </button>
-        </h2>
-        {extra}
-      </header>
-      {open && children}
-    </section>
-  )
-}
-
-function SimilarityPanel({ run, similarity, open, onToggle }: Fold & { run: Run; similarity: SimilarityState }) {
+function SimilarityPanel({ run, similarity, fold }: { run: Run; similarity: SimilarityState; fold: Fold }) {
   const t = useT()
   const points = useMemo<SimilarityPoint[]>(() => {
     const scores = similarity.data?.scores ?? {}
@@ -290,8 +256,7 @@ function SimilarityPanel({ run, similarity, open, onToggle }: Fold & { run: Run;
     <FoldPanel
       title={t.similarityHeading}
       extra={similarity.loading && <span className="muted">{t.similarityScoring}</span>}
-      open={open}
-      onToggle={onToggle}
+      fold={fold}
     >
       <p className="muted hint">{t.similarityHint}</p>
       {similarity.error ? (
@@ -315,7 +280,7 @@ function MetricsTable({ run, losses }: { run: Run; losses: string[] }) {
   if (rows.length === 0) return null
   const hasVal = run.val.length > 0
   return (
-    <details className="advanced">
+    <details className="advanced chart-fold">
       <summary>{t.tableLatest(rows.length)}</summary>
       <div className="table-wrap">
         <table className="metrics">
@@ -355,13 +320,13 @@ function Samples({
   loras,
   scores,
   onTryCheckpoint,
-  open,
-  onToggle,
-}: Fold & {
+  fold,
+}: {
   run: Run
   loras: Lora[]
   scores?: Record<string, number>
   onTryCheckpoint: (id: string) => void
+  fold: Fold
 }) {
   const t = useT()
   const byStep = useMemo(() => {
@@ -412,8 +377,7 @@ function Samples({
     <FoldPanel
       title={t.samples}
       extra={byStep.length > 0 && <span className="muted">{t.validations(byStep.length)}</span>}
-      open={open}
-      onToggle={onToggle}
+      fold={fold}
     >
       {byStep.length === 0 ? (
         <p className="muted empty">

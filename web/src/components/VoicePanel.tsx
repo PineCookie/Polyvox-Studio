@@ -7,6 +7,7 @@ import { formatStep } from '../format'
 import { useT } from '../i18n'
 import type { Messages } from '../i18n'
 import { ExportDialog } from './ExportDialog'
+import { Chevron } from './Fold'
 import { GptSovitsImportDialog } from './GptSovitsImportDialog'
 import { VoiceReference } from './VoiceReference'
 
@@ -317,9 +318,7 @@ export function VoicePanel({
                   aria-expanded={open}
                   onClick={() => !filter && toggleGroup(group.id)}
                 >
-                  <span className="chevron" aria-hidden>
-                    {open ? '▾' : '▸'}
-                  </span>
+                  <Chevron open={open} />
                   <span>{group.name}</span>
                   <span className="muted">{group.voices.length}</span>
                 </button>

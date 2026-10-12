@@ -4,12 +4,15 @@ import type { MetricPoint } from '../api'
 import { chartHeight, MARGIN as M, niceTicks, useWidth } from '../chartUtils'
 import { formatStep, formatValue } from '../format'
 import { useT } from '../i18n'
+import { FoldTitle } from './Fold'
+import type { Fold } from './Fold'
 
 interface Props {
   title: string
   metric: string
   train: MetricPoint[]
   val: MetricPoint[]
+  fold?: Fold // the title folds the chart
 }
 
 const SMOOTHING = 0.85
@@ -42,8 +45,9 @@ function nearest(points: Point[], step: number): Point | null {
   return best
 }
 
-export function LossChart({ title, metric, train, val }: Props) {
+export function LossChart({ title, metric, train, val, fold }: Props) {
   const t = useT()
+  const open = fold?.open ?? true
   const [ref, width] = useWidth<HTMLDivElement>()
   const height = chartHeight(width)
   const [hoverStep, setHoverStep] = useState<number | null>(null)
@@ -105,10 +109,16 @@ export function LossChart({ title, metric, train, val }: Props) {
   return (
     <figure className="chart">
       <figcaption className="chart-head">
-        <span className="chart-title">{title}</span>
+        {fold ? (
+          <FoldTitle fold={fold} className="chart-title">
+            {title}
+          </FoldTitle>
+        ) : (
+          <span className="chart-title">{title}</span>
+        )}
         {latest && <span className="muted">{t.smoothed(formatValue(latest.value))}</span>}
         <span className="spacer" />
-        {raw.length > 0 && (
+        {open && raw.length > 0 && (
           <span className="legend">
             <span className="legend-item">
               <span className="swatch line train" aria-hidden /> {t.train}
@@ -122,7 +132,8 @@ export function LossChart({ title, metric, train, val }: Props) {
         )}
       </figcaption>
 
-      <div className="chart-body" ref={ref}>
+      {/* Folded: hidden, not removed, so its width is measured again once open. */}
+      <div className="chart-body" ref={ref} hidden={!open}>
         {!geometry ? (
           <p className="muted empty chart-empty">{raw.length === 0 ? t.noStepsYet : ''}</p>
         ) : (

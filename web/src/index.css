@@ -183,14 +183,35 @@ h2 {
   font-weight: inherit;
 }
 
-.fold-head .chevron {
+/* The fold arrow: the same on fold buttons and every <summary> (instead of the browser's marker). */
+.chevron,
+summary::before {
+  display: inline-block;
   width: 1em;
   font-size: 1.1em;
   line-height: 1;
   color: var(--muted);
 }
 
-.fold-head:hover .chevron {
+summary {
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::before {
+  content: '▸';
+  margin-right: 6px;
+}
+
+details[open] > summary::before {
+  content: '▾';
+}
+
+.fold-head:hover .chevron,
+summary:hover::before {
   color: var(--text);
 }
 
@@ -361,6 +382,11 @@ input[type='file']::file-selector-button {
 
 .advanced[open] summary {
   margin-bottom: 12px;
+}
+
+/* The metrics table among the charts: its summary reads like a chart title. */
+.chart-fold summary {
+  color: var(--text);
 }
 
 .advanced-grid {
@@ -1192,12 +1218,6 @@ input[type='search']:focus {
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--muted);
-}
-
-.voice-group-head .chevron {
-  width: 1em;
-  font-size: 1.1em;
-  line-height: 1;
 }
 
 .voice-group-head .muted {
