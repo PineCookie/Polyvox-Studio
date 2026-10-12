@@ -43,7 +43,8 @@ import numpy as np
 import soundfile as sf
 
 from .. import timing
-from ..data.manifests import ALIGN_FILE, ASR_FILE, read_manifest, read_sidecar, row_key, text_key
+from ..data import record
+from ..data.manifests import ALIGN_FILE, ASR_FILE, clip_entries, read_manifest, read_sidecar, row_key, text_key
 from . import slicer
 from .aligner import (
     SAMPLE_RATE,
@@ -590,10 +591,12 @@ def check_one(
     the whole file only when there were no checks yet. ``compare`` with ASR
     (when the checker can): by default unless ASR made the text. With
     ``embed``, the voice is scored against the dataset's saved one."""
-    entries, _ = read_manifest(manifest, root)
+    entries = clip_entries(manifest, root)
     if not 0 <= index < len(entries):
         raise KeyError(f"No clip {index} in this dataset.")
     entry = entries[index]
+    if not entry["text"]:
+        raise ValueError("This clip has no text yet: transcribe it before checking.")
     manifest_dir = manifest.resolve().parent
     key = row_key(entry["audio"], manifest_dir)
     made = key in set(read_sidecar(manifest_dir / ASR_FILE))
@@ -642,11 +645,13 @@ def trim_clips(manifest: Path, root: Path | None, cut_for: CutFor) -> dict:
     edges, ClipCheck.trim_range), and update their checks. Originals are kept
     under ORIGINALS_DIR next to the manifest (the first version only). Clips
     outside the manifest's folder or in a format soundfile can't write back are
-    skipped. Returns {"trimmed", "skipped"}."""
-    entries, _ = read_manifest(manifest, root)
+    skipped. Clips cut from a recording keep their origin (record.py) in step.
+    Returns {"trimmed", "skipped"}."""
+    entries = clip_entries(manifest, root)
     manifest_dir = manifest.resolve().parent
     saved = read_sidecar(manifest_dir / ALIGN_FILE)
     clips = dict(saved.get("clips", {}))
+    cuts: dict[str, tuple[float, float]] = {}
     trimmed = skipped = 0
     for index, entry in enumerate(entries):
         audio = Path(entry["audio"])
@@ -662,9 +667,11 @@ def trim_clips(manifest: Path, root: Path | None, cut_for: CutFor) -> dict:
         _trim_file(audio, manifest_dir / ORIGINALS_DIR / key, *cut)
         if check:
             clips[key] = {"text": stored["text"], **asdict(check.trimmed(*cut))}
+        cuts[key] = cut
         trimmed += 1
     if trimmed:
         _write_align(manifest_dir, {**saved, "clips": clips})
+        record.trimmed(manifest_dir, cuts)
     return {"trimmed": trimmed, "skipped": skipped}
 
 

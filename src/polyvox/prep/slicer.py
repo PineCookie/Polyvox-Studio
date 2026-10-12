@@ -79,6 +79,8 @@ class Slice:
     path: Path
     text: str  # "" when sliced without a guide
     language: str | None = None
+    start: float = 0.0  # seconds into the recording
+    end: float = 0.0
 
 
 _vad_model = None
@@ -572,7 +574,7 @@ def slice_recording(
             for start, end, text, language in pieces:
                 file = out_dir / f"{path.stem}_{int((t0 + start) * 1000):08d}_{int((t0 + end) * 1000):08d}.wav"
                 sf.write(file, audio[int(start * rate) : int(end * rate)], rate, subtype="PCM_16")
-                out.append(Slice(file, text, language))
+                out.append(Slice(file, text, language, round(t0 + start, 3), round(t0 + end, 3)))
         if progress:
             progress(t0 + len(wav) / VAD_RATE)
     return out

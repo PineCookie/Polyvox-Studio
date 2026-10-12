@@ -55,6 +55,7 @@ class DatasetReportOut(BaseModel):
     id: str
     samples: int
     dropped: int
+    untranscribed: int = 0  # clips without text yet: not in training
     valid: int
     total_seconds: float
     min_seconds: float | None

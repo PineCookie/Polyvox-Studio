@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from polyvox.data import record
 from polyvox.prep import importer, slicer
 from polyvox.prep.slicer import SliceOptions
 
@@ -85,9 +86,22 @@ def test_import_slices_long_recordings_then_transcribes(tmp_path, data_dir):
         str(folder), None, "sliced", data_dir,
         transcriber=lambda paths: [(f"asr {p.stem[-8:]}", "Chinese") for p in paths],
         progress=lambda *p: phases.append(p), slicing=OPTS, vad=vad,
+        steps={"slice": {"min_seconds": 2.0, "max_seconds": 10.0}},
     )  # fmt: skip
 
     assert (result.imported, result.sliced, result.transcribed) == (4, 1, 3)
+    # The dataset's record: the recording, where each clip came from, the settings used.
+    saved = record.read_record(data_dir / "sliced")
+    talk = str((folder / "talk.wav").resolve())
+    assert [(r.audio, r.seconds, r.rate, r.sliced) for r in saved.recordings] == [
+        (talk, 40.0, 32000, {"min_seconds": 2.0, "max_seconds": 10.0})
+    ]
+    assert saved.origins == {
+        "wavs/talk_00000900_00006100.wav": record.Origin(talk, 0.9, 6.1),
+        "wavs/talk_00007900_00013100.wav": record.Origin(talk, 7.9, 13.1),
+        "wavs/talk_00019900_00026100.wav": record.Origin(talk, 19.9, 26.1),
+    }
+    assert saved.steps == {"slice": {"min_seconds": 2.0, "max_seconds": 10.0}}
     entries = [
         json.loads(line) for line in (data_dir / "sliced" / "train.jsonl").read_text(encoding="utf-8").splitlines()
     ]

@@ -34,6 +34,7 @@ import numpy as np
 import soundfile as sf
 
 from .. import timing
+from ..data import record
 from ..data.manifests import ASR_FILE, legacy_root, write_manifest
 from . import checks, fillers, loudness, slicer
 from .checks import Checker, ClipCheck
@@ -60,8 +61,10 @@ class Row:
     text: str  # empty when the source has no transcript for it
     audio: Path | None = None  # resolved file
     seconds: float = 0.0
+    rate: int | None = None  # sample rate of the file
     asr: bool = False  # text made by speech recognition
     language: str | None = None  # as ASR detected (or was told)
+    origin: record.Origin | None = None  # where it was cut from, for a slice of a recording
 
 
 @dataclass
@@ -219,7 +222,7 @@ def _scan(source: Path, audio_dir: Path | None, data_dir: Path) -> tuple[ImportP
             preview.unreadable += 1
             continue
         seen.add(row.audio)
-        row.seconds = seconds
+        row.seconds, row.rate = seconds, rate
         keep.append(row)
         durations.append(seconds)
         rates[rate] += 1
@@ -282,17 +285,19 @@ def _slice(
     guide: slicer.Guide | None,
     progress: Progress,
     chain=None,
-) -> tuple[list[Row], int]:
+) -> tuple[list[Row], list[record.Recording]]:
     """Replace recordings longer than LONG_RECORDING_S by their clips. With a
     ``guide`` the clips are cut between words and keep their ASR text; without
-    one they have no text. (A recording's own transcript is not kept: it is not
-    known which part of it each chunk holds.) Progress counts seconds of audio.
-    Returns the new rows and the number of recordings sliced. With a ``chain``
-    the voice is separated window by window too (phase "separating_slicing")."""
+    one they have no text. (A recording's own transcript is not used yet: it is
+    not known which part of it each chunk holds.) Progress counts seconds of
+    audio. Returns the new rows and the recordings sliced. With a ``chain`` the
+    voice is separated window by window too (phase "separating_slicing")."""
     phase = "separating_slicing" if chain is not None else "slicing"
     total = int(sum(row.seconds for row in rows if row.seconds > LONG_RECORDING_S))
     out: list[Row] = []
+    recordings: list[record.Recording] = []
     done, seconds = 0, 0.0
+    settings = {"min_seconds": opts.min_seconds, "max_seconds": opts.max_seconds}
     for row in rows:
         if row.seconds <= LONG_RECORDING_S:
             out.append(row)
@@ -317,12 +322,14 @@ def _slice(
                     seconds=sf.info(str(clip.path)).duration,
                     asr=bool(clip.text),
                     language=clip.language,
+                    origin=record.Origin(str(row.audio), clip.start, clip.end),
                 )
             )
+        recordings.append(record.Recording(str(row.audio), round(row.seconds, 3), row.rate, row.text, settings))
         done += 1
         seconds += row.seconds
     progress(phase, total, total)
-    return out, done
+    return out, recordings
 
 
 def _separate(rows: list[Row], out_dir: Path, chain, progress: Progress, sliced: bool) -> None:
@@ -383,6 +390,7 @@ def import_dataset(
     tidy_fillers: bool = False,
     normalize: float | None = None,
     embed: checks.Embed | None = None,
+    steps: dict[str, dict] | None = None,
 ) -> ImportResult:
     """Write ``data_dir/<name>/train.jsonl``.
 
@@ -397,6 +405,8 @@ def import_dataset(
     (needs ``copy``; trimmed clips are written as PCM16 WAV). ``normalize``
     brings each copied clip to that many LUFS (loudness.normalize; mono PCM16
     WAV). ``progress`` may raise to cancel; nothing is left behind then.
+    The dataset's record (record.py) lists the recordings sliced, each clip's
+    origin in them and ``steps``: the settings each step ran with.
     """
     progress = progress or (lambda phase, done, total: None)
     if slicing and not (copy and transcriber):
@@ -419,11 +429,11 @@ def import_dataset(
     staging = data_dir / f".import-{name}"
     shutil.rmtree(staging, ignore_errors=True)
     try:
-        sliced = 0
+        recordings: list[record.Recording] = []
         if separation is not None:
             _separate(rows, staging / "_separated", separation, progress, sliced=slicing is not None)
         if slicing:
-            rows, sliced = _slice(rows, staging / "_slices", slicing, vad, guide, progress, separation)
+            rows, recordings = _slice(rows, staging / "_slices", slicing, vad, guide, progress, separation)
         if transcriber:
             _transcribe(rows, transcriber, progress)
         if tidy_fillers:
@@ -476,6 +486,12 @@ def import_dataset(
                 {p: (row.text, c) for (p, (_, row)), c in zip(pairs, clip_checks, strict=True)},
                 voice,
             )
+        origins = {}
+        for p, (_, row), cut in zip(paths, rows_kept, cuts, strict=True):
+            if (o := row.origin) is not None:
+                start, end = (o.start + cut[0], o.start + cut[1]) if cut else (o.start, o.end)
+                origins[p] = record.Origin(o.recording, round(start, 3), round(end, 3))
+        record.write_record(staging, record.Record(recordings, origins, dict(steps or {})))
         staging.rename(target)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -484,7 +500,7 @@ def import_dataset(
         id=f"{name}/train.jsonl",
         imported=len(rows_kept),
         transcribed=len(asr_rows),
-        sliced=sliced,
+        sliced=len(recordings),
         preview=preview,
         trimmed=sum(cut is not None for cut in cuts),
         checks=checks.summarize(clip_checks) if clip_checks else None,

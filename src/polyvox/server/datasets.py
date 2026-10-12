@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from .. import timing
-from ..data import manifests
+from ..data import manifests, record
 from ..jobs import Job
 from ..prep import checks, exporter, fillers, importer, loudness, slicer
 from ..prep.asr import LanguageLock, load_audio
@@ -88,6 +88,18 @@ def router(s: Studio) -> APIRouter:
             with timing.collect() as times:
                 return {**import_(job), "timings": logged_timings(f"Import {body.name}", times)}
 
+        # The settings each step ran with, for the dataset's record (later runs start from them).
+        steps: dict[str, dict] = {}
+        if cleanup:
+            steps["clean_up"] = {"models": cleanup}
+        if body.slice:
+            steps["slice"] = {"min_seconds": body.slice_min_seconds, "max_seconds": body.slice_max_seconds}
+        if body.transcribe:
+            steps["transcribe"] = {"language": body.language, "prompt": body.prompt}
+        if body.check:
+            steps["check"] = {"aligner": body.aligner, "compare_asr": False, "detect_singing": body.detect_singing}
+        steps["tidy"] = {"trim": body.trim, "fillers": body.tidy_fillers, "normalize_lufs": body.normalize_lufs}
+
         def import_(job: Job) -> dict:
             result = importer.import_dataset(
                 body.source,
@@ -116,6 +128,7 @@ def router(s: Studio) -> APIRouter:
                 tidy_fillers=body.tidy_fillers,
                 normalize=body.normalize_lufs,
                 embed=s.voices,
+                steps=steps,
             )
             return {
                 "id": result.id,
@@ -134,7 +147,9 @@ def router(s: Studio) -> APIRouter:
         place; the first time, the original manifest is kept as <name>.orig.
         Checks made for the old texts become stale."""
         manifest = found(manifests.resolve, settings.data_dir, body.id)
-        return {"changed": checked(fillers.tidy_manifest, manifest)}
+        changed = checked(fillers.tidy_manifest, manifest)
+        record.remember(manifest.parent, "tidy", {"fillers": True})
+        return {"changed": changed}
 
     @api.post("/api/datasets/check", status_code=202)
     def check_dataset(body: CheckIn) -> JobOut:
@@ -155,6 +170,11 @@ def router(s: Studio) -> APIRouter:
                     job.progress,
                     s.voices,
                 )
+                record.remember(
+                    manifest.parent,
+                    "check",
+                    {"aligner": body.aligner, "compare_asr": body.compare_asr, "detect_singing": body.detect_singing},
+                )
                 return {**summary, "timings": logged_timings(f"Check {body.id}", times)}
 
         return JobOut(**jobs.start("check", f"Check {body.id}", run).public())
@@ -169,7 +189,9 @@ def router(s: Studio) -> APIRouter:
 
         def run(job: Job) -> dict:
             root = manifests.legacy_root(settings.data_dir)
-            return loudness.normalize_dataset(manifest, root, body.target_lufs, job.progress)
+            result = loudness.normalize_dataset(manifest, root, body.target_lufs, job.progress)
+            record.remember(manifest.parent, "tidy", {"normalize_lufs": body.target_lufs})
+            return result
 
         return JobOut(**jobs.start("normalize", f"Normalize {body.id}", run).public())
 

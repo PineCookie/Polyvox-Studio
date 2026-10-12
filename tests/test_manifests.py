@@ -53,15 +53,36 @@ def test_inspect_reports_rates_durations_and_missing_files(data_dir):
     manifest = make_dataset(data_dir, "a")
     with manifest.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"audio": "gone.wav", "text": "missing"}) + "\n")
-        f.write(json.dumps({"audio": "x.wav", "text": ""}) + "\n")
+        f.write(json.dumps({"audio": "x.wav", "text": ""}) + "\n")  # not transcribed yet
+        f.write('{"audio": "y.wav", "text": \n')
 
     report = manifests.inspect(manifest, manifests.legacy_root(data_dir))
 
-    assert (report.samples, report.valid) == (5, 4)
+    assert (report.samples, report.valid, report.untranscribed) == (5, 4, 1)
     assert report.sample_rates == {16000: 2, 44100: 2}
     assert report.total_seconds == pytest.approx(4.0)
     assert len(report.errors) == 1 and "file not found" in report.errors[0]
-    assert report.warnings == ["Skipped: Line 6: missing 'text'"]
+    assert report.warnings[0].startswith("Skipped: Line 7: invalid JSON")
+    assert report.warnings[1] == "1 clip without text: not used for training until transcribed"
+
+
+def test_clips_without_text_are_reviewed_but_not_trained(data_dir):
+    manifest = make_dataset(data_dir, "a")
+    with manifest.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"audio": "wavs/0.wav", "text": ""}) + "\n")
+        f.write(json.dumps({"audio": "wavs/1.wav"}) + "\n")
+    root = manifests.legacy_root(data_dir)
+    trained, _ = manifests.training_entries(manifest, root)
+    clips = manifests.clip_entries(manifest, root)
+
+    assert len(clips) == len(trained) + 2 and [c["text"] for c in clips[-2:]] == ["", ""]
+    rows = manifests.read_rows(manifest, root, limit=100).rows
+    assert [r.text for r in rows] == [c["text"] for c in clips]
+    # Typing a text in makes it a training clip.
+    manifests.set_text(manifest, len(clips) - 1, "示例")
+    assert len(manifests.training_entries(manifest, root)[0]) == len(trained) + 1
+    with pytest.raises(ValueError):
+        manifests.set_text(manifest, len(clips) - 2, " ")
 
 
 def test_scan_skips_work_in_progress_folders(data_dir):

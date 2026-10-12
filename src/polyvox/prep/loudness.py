@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from ..data.manifests import read_manifest, row_key
+from ..data.manifests import clip_entries, row_key
 
 TARGET_LUFS = -20.0
 PEAK_CEILING_DB = -1.0  # dBFS, sample peak after normalizing
@@ -117,7 +117,7 @@ def normalize_dataset(
     from .checks import ORIGINALS_DIR, TRIM_IN_PLACE_FORMATS
 
     progress = progress or (lambda phase, done, total: None)
-    entries, _ = read_manifest(manifest, root)
+    entries = clip_entries(manifest, root)  # with text or not yet
     manifest_dir = manifest.resolve().parent
     counts = {"normalized": 0, "unchanged": 0, "peak_limited": 0, "skipped": 0}
     before: list[float] = []

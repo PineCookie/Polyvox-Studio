@@ -30,6 +30,7 @@ ALIGN_FILE = "align.json"  # next to a manifest: per-clip alignment checks (chec
 # stay in the manifest (stable indices, easy to restore) but not in training runs.
 EXCLUDED_FILE = "excluded.json"
 MAX_REPORTED = 20  # errors / warnings listed individually
+NO_TEXT = "missing 'text'"
 SHORT_CLIP_S = 0.3
 LONG_CLIP_S = 30.0
 
@@ -78,9 +79,11 @@ def _resolve_audio(value: str, manifest_dir: Path, root: Path | None) -> str:
     return str(candidates[0].resolve())
 
 
-def _parse_line(line: str) -> tuple[dict | None, str | None]:
+def _parse_line(line: str, untranscribed: bool = False) -> tuple[dict | None, str | None]:
     """(entry, None) for a usable manifest line, (None, why not) otherwise,
-    (None, None) for a blank one. The one rule for what counts as a clip."""
+    (None, None) for a blank one. The one rule for what counts as a clip.
+    A clip without text (not transcribed yet) is usable only with
+    ``untranscribed``; its text reads as ""."""
     if not line.strip():
         return None, None
     try:
@@ -89,21 +92,25 @@ def _parse_line(line: str) -> tuple[dict | None, str | None]:
         return None, f"invalid JSON ({e.msg})"
     if not isinstance(entry, dict) or not isinstance(entry.get("audio"), str) or not entry["audio"]:
         return None, "missing 'audio' path"
-    if not isinstance(entry.get("text"), str) or not entry["text"].strip():
-        return None, "missing 'text'"
+    text = entry.get("text")
+    if not isinstance(text, str) or not text.strip():
+        if not untranscribed or not (text is None or isinstance(text, str)):
+            return None, NO_TEXT
+        entry["text"] = ""
     return entry, None
 
 
-def read_manifest(path: Path, root: Path | None = None) -> tuple[list[dict], list[str]]:
+def read_manifest(path: Path, root: Path | None = None, untranscribed: bool = False) -> tuple[list[dict], list[str]]:
     """Parse a manifest, making audio paths absolute.
 
-    Returns the usable entries and one error per malformed line.
+    Returns the usable entries and one error per malformed line. Clips without
+    text are left out (training can't use them), unless ``untranscribed``.
     """
     entries, errors = [], []
     manifest_dir = path.resolve().parent
     with path.open("r", encoding="utf-8") as f:
         for lineno, line in enumerate(f, 1):
-            entry, error = _parse_line(line)
+            entry, error = _parse_line(line, untranscribed)
             if error:
                 errors.append(f"Line {lineno}: {error}")
             if entry is None:
@@ -117,12 +124,13 @@ def read_manifest(path: Path, root: Path | None = None) -> tuple[list[dict], lis
 
 def rewrite_manifest(path: Path, change) -> int:
     """Apply ``change(entry) -> entry | None`` (None: unchanged) to each usable
-    entry, in place: other lines and keys stay as written. The first time, the
-    original is kept as ``<name>.orig``. Returns the number of entries changed."""
+    entry (clips without text too: text ""), in place: other lines and keys stay
+    as written. The first time, the original is kept as ``<name>.orig``. Returns
+    the number of entries changed."""
     lines = path.read_text(encoding="utf-8").splitlines()
     changed = 0
     for n, line in enumerate(lines):
-        entry, _ = _parse_line(line)
+        entry, _ = _parse_line(line, untranscribed=True)
         if entry is not None and (new := change(entry)) is not None:
             lines[n] = json.dumps(new, ensure_ascii=False)
             changed += 1
@@ -182,8 +190,14 @@ def training_entries(path: Path, root: Path | None = None) -> tuple[list[dict], 
     return [e for e in entries if row_key(e["audio"], manifest_dir) not in excluded], errors
 
 
+def clip_entries(path: Path, root: Path | None = None) -> list[dict]:
+    """Every clip of a manifest, with text or not yet: the order (index) that
+    review, editing and the per-clip actions use."""
+    return read_manifest(path, root, untranscribed=True)[0]
+
+
 def set_text(path: Path, index: int, text: str) -> None:
-    """Replace the transcript of a manifest's ``index``-th usable entry."""
+    """Replace the transcript of a manifest's ``index``-th clip (clip_entries)."""
     text = text.strip()
     if not text:
         raise ValueError("A transcript can't be empty; drop the clip instead.")
@@ -208,7 +222,7 @@ def write_manifest(entries: list[dict], path: Path) -> None:
 
 @dataclass
 class ClipRow:
-    index: int  # position among the manifest's usable entries (stable ids for audio)
+    index: int  # position among the manifest's clips (clip_entries; stable ids for audio)
     file: str  # audio path as it appears relative to the manifest, or absolute
     text: str
     seconds: float | None  # None: unreadable or missing
@@ -260,11 +274,11 @@ def read_sidecar(path: Path) -> dict:
 
 @functools.lru_cache(maxsize=16)
 def _review_entries(path: str, mtime_ns: int, size: int, root: str) -> tuple[tuple[str, str], ...]:
-    """(absolute audio, text) per usable entry; cached until the manifest changes.
+    """(absolute audio, text) per clip (clip_entries); cached until the manifest changes.
 
     Parsing resolves every clip's path on disk: ~0.4 s for 2k clips, too slow per page.
     """
-    entries, _ = read_manifest(Path(path), Path(root) if root else None)
+    entries = clip_entries(Path(path), Path(root) if root else None)
     return tuple((e["audio"], e["text"]) for e in entries)
 
 
@@ -452,7 +466,7 @@ def clip_detail(path: Path, root: Path | None, index: int, trim_of: TrimOf | Non
 
 
 def clip_audio(path: Path, root: Path | None, index: int) -> Path:
-    """The audio file of a manifest's ``index``-th usable entry."""
+    """The audio file of a manifest's ``index``-th clip (clip_entries)."""
     entries = _entries_for_review(path, root)
     if not 0 <= index < len(entries) or not Path(entries[index][0]).is_file():
         raise KeyError(f"No clip {index} in this dataset.")
@@ -474,6 +488,7 @@ def split_holdout(entries: list[dict], count: int, seed: int = 0) -> tuple[list[
 class DatasetReport:
     samples: int = 0  # well-formed lines (dropped clips not counted)
     dropped: int = 0  # clips dropped in review: not in training, nor in the numbers below
+    untranscribed: int = 0  # clips without text yet (not dropped): not in training, nor below
     valid: int = 0  # well-formed lines whose audio is readable
     total_seconds: float = 0.0
     min_seconds: float | None = None
@@ -492,9 +507,12 @@ def _capped(messages: list[str], total: int, what: str) -> list[str]:
 
 
 def inspect(path: Path, root: Path | None = None) -> DatasetReport:
-    all_entries, line_errors = read_manifest(path, root)
+    clips, line_errors = read_manifest(path, root, untranscribed=True)
+    all_entries = [e for e in clips if e["text"]]
     entries, _ = training_entries(path, root)
-    report = DatasetReport(samples=len(entries), dropped=len(all_entries) - len(entries))
+    excluded = excluded_keys(path.resolve().parent)
+    untranscribed = sum(not e["text"] and row_key(e["audio"], path.resolve().parent) not in excluded for e in clips)
+    report = DatasetReport(samples=len(entries), dropped=len(all_entries) - len(entries), untranscribed=untranscribed)
     durations: list[float] = []
     rates: Counter[int] = Counter()
     # Malformed lines are left out of a run's manifest copy, so they only warn;
@@ -520,6 +538,9 @@ def inspect(path: Path, root: Path | None = None) -> DatasetReport:
     report.valid = len(durations)
     report.errors = _capped(errors, error_count, "errors")
     report.warnings = _capped([f"Skipped: {e}" for e in line_errors[:MAX_REPORTED]], len(line_errors), "skipped lines")
+    if untranscribed:
+        clips_word = "clip" if untranscribed == 1 else "clips"
+        report.warnings.append(f"{untranscribed} {clips_word} without text: not used for training until transcribed")
     if short:
         report.warnings.append(f"{short} clips shorter than {SHORT_CLIP_S} s")
     if long:
