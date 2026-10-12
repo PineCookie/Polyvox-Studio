@@ -64,7 +64,16 @@ export function PrepareView({ onError, onTrain }: Props) {
     <main className="layout">
       <div className="main-col">
         {selected ? (
-          <DatasetPage key={selected} id={selected} isNew={selected === created} onTrain={onTrain} />
+          <DatasetPage
+            key={selected}
+            id={selected}
+            isNew={selected === created}
+            onTrain={onTrain}
+            onDeleted={() => {
+              setSelected(null)
+              refresh()
+            }}
+          />
         ) : (
           <section className="panel">
             <p className="muted empty">{datasets?.length ? t.pickDataset : t.noDatasets}</p>

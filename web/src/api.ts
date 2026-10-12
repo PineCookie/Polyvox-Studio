@@ -504,6 +504,25 @@ export async function runRemaining(id: string, settings: StepSettings): Promise<
   return (await postJson('/api/datasets/run-remaining', { id, settings })).json()
 }
 
+// What deleting a dataset removes and affects (for the confirmation).
+export interface DatasetDeletion {
+  folder: string
+  clips: number
+  bytes: number
+  runs: string[] // trained on its clips: can't be resumed or continued after
+  outside_recordings: number // recordings it only points at: not deleted
+  blocked: 'shared' | 'job' | 'training' | null // why it can't be deleted now
+}
+
+export async function getDeletion(id: string): Promise<DatasetDeletion> {
+  return (await request(`/api/datasets/deletion?id=${encodeURIComponent(id)}`)).json()
+}
+
+/** Delete a dataset's folder for good. */
+export async function deleteDataset(id: string): Promise<void> {
+  await postJson('/api/datasets/delete', { id })
+}
+
 /** A new, empty dataset (sources are added on its page): its id. */
 export async function newDataset(name: string): Promise<string> {
   return (await (await postJson('/api/datasets/new', { name })).json()).id

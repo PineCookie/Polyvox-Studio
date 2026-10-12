@@ -459,6 +459,30 @@ class TrainingManager:
             log=tail_lines(run_dir / CONSOLE_FILE),
         )
 
+    def runs_using(self, folder: Path) -> list[str]:
+        """Runs whose training clips are in ``folder`` (a dataset's): their
+        manifest copies point at its audio, so resuming / continuing them needs it."""
+        folder = folder.resolve()
+        root = manifests.legacy_root(self.settings.data_dir)
+        out = []
+        for run_dir in self._run_dirs():
+            try:
+                path = self.train_manifest(run_dir.name)
+                with path.open(encoding="utf-8") as f:
+                    line = next((ln for ln in f if ln.strip()), "")
+                entry = json.loads(line) if line else {}
+                audio = manifests.local_path(str(entry.get("audio", "")))
+                audio = (
+                    audio
+                    if audio.is_absolute()
+                    else (path.parent / audio if (path.parent / audio).exists() else root / audio)
+                )
+            except (KeyError, OSError, ValueError, yaml.YAMLError):
+                continue
+            if audio.resolve().is_relative_to(folder):
+                out.append(run_dir.name)
+        return sorted(out)
+
     def train_manifest(self, name: str) -> Path:
         """The manifest a run trains on (its own copy, or a webui run's original)."""
         value = read_config(self._run_dir(name)).get("train_manifest")

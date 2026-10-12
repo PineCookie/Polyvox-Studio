@@ -77,6 +77,10 @@ class NewDatasetIn(BaseModel):
     name: str
 
 
+class DatasetIn(BaseModel):
+    id: str  # dataset manifest id
+
+
 class AddSourceIn(ImportSourceIn):
     id: str  # dataset manifest id
     copy_audio: bool = True

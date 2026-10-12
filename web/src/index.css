@@ -1277,6 +1277,28 @@ input[type='search']:focus {
   margin: 0;
 }
 
+.dialog-body p {
+  margin: 0;
+}
+
+button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--accent-text);
+}
+
+button.danger:disabled {
+  opacity: 0.5;
+}
+
+button.ghost.danger-text {
+  color: var(--danger);
+}
+
+.delete-warning {
+  color: var(--danger);
+}
+
 .dialog code {
   font-family: ui-monospace, 'Cascadia Code', monospace;
   font-size: 0.85em;

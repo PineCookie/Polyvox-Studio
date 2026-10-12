@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -17,6 +19,7 @@ from ..prep.steps import DEFAULTS as STEP_DEFAULTS
 from .context import Studio, checked, found, logged_timings
 from .schemas import (
     AddSourceIn,
+    DatasetIn,
     DatasetReportOut,
     DropFlaggedIn,
     ExportIn,
@@ -28,6 +31,16 @@ from .schemas import (
     StepIn,
     StepStatusOut,
 )
+
+logger = logging.getLogger(__name__)
+
+
+# Why a dataset can't be deleted now (deletion's "blocked" codes).
+BLOCKED = {
+    "shared": "Its folder holds other datasets too: delete it by hand.",
+    "job": "A job is running on this dataset: wait for it or cancel it.",
+    "training": "A training run is using this dataset right now.",
+}
 
 
 def router(s: Studio) -> APIRouter:
@@ -123,6 +136,51 @@ def router(s: Studio) -> APIRouter:
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         return {"id": f"{folder.name}/{steps.MANIFEST}"}
+
+    def deletion(dataset_id: str) -> dict:
+        """What deleting a dataset removes and affects, and why it can't now (``blocked``)."""
+        manifest = found(manifests.resolve, settings.data_dir, dataset_id)
+        folder, data_dir = manifest.parent.resolve(), settings.data_dir.resolve()
+        files = [p for p in folder.rglob("*") if p.is_file()]
+        runs = s.training.runs_using(folder)
+        others = [d for d in manifests.scan(settings.data_dir) if (data_dir / d).parent == folder and d != dataset_id]
+        rec = record.read_record(folder)
+        outside = [r for r in rec.recordings if not Path(r.audio).resolve().is_relative_to(folder)]
+        blocked = None
+        if folder == data_dir or not folder.is_relative_to(data_dir) or others:
+            blocked = "shared"  # its folder holds other datasets too: delete it by hand
+        elif s.jobs.running_for(dataset_id):
+            blocked = "job"  # a job is running on it
+        elif s.training.active_run in runs:
+            blocked = "training"  # the active run trains on it
+        return {
+            "folder": folder.name,
+            "clips": len(manifests.clip_entries(manifest)),
+            "bytes": sum(p.stat().st_size for p in files),
+            "runs": runs,
+            "outside_recordings": len(outside),
+            "blocked": blocked,
+        }
+
+    @api.get("/api/datasets/deletion")
+    def deletion_info(id: str) -> dict:
+        """For the confirmation: {"folder", "clips", "bytes", "runs" (trained on its
+        clips: they can't be resumed or continued after), "outside_recordings"
+        (not deleted), "blocked" (why it can't be deleted now: "shared", "job" or
+        "training", else null)}."""
+        return deletion(id)
+
+    @api.post("/api/datasets/delete")
+    def delete_dataset(body: DatasetIn) -> dict:
+        """Delete a dataset's folder for good (clips, checks, record, caches).
+        Recordings it only points at stay where they are."""
+        info = deletion(body.id)
+        if info["blocked"]:
+            raise HTTPException(409, BLOCKED[info["blocked"]])
+        folder = found(manifests.resolve, settings.data_dir, body.id).parent
+        shutil.rmtree(folder)
+        logger.info("Deleted dataset %s (%d clips, %d bytes)", body.id, info["clips"], info["bytes"])
+        return {"deleted": body.id}
 
     @api.post("/api/datasets/add-source", status_code=202)
     def add_source(body: AddSourceIn) -> JobOut:

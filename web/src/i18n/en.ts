@@ -202,6 +202,22 @@ export const en = {
   noDatasets: 'No datasets yet. Make one with New dataset.',
   pickDataset: 'Choose a dataset on the right, or make one with New dataset.',
   newDataset: 'New dataset',
+  deleteDataset: 'Delete…',
+  deleteDatasetTitle: (name: string) => `Delete dataset “${name}”?`,
+  deleteDatasetWhat: (folder: string, clips: number, size: string) =>
+    `This deletes the folder data/${folder}: ${clips.toLocaleString()} clips (${size}) with their texts, checks and review.`,
+  deleteDatasetRuns: (n: number, names: string) =>
+    `Trained on its clips: ${names}. ${n === 1 ? 'That run' : 'Those runs'} can't be resumed or continued afterwards; ${n === 1 ? 'its' : 'their'} checkpoints keep working.`,
+  deleteDatasetOutside: (n: number) =>
+    `${n} source ${n === 1 ? 'recording stays' : 'recordings stay'} where ${n === 1 ? 'it is' : 'they are'} (only listed in the dataset).`,
+  cannotUndo: 'This can’t be undone.',
+  deleteForGood: 'Delete for good',
+  deleting: 'Deleting…',
+  deleteBlocked: {
+    shared: 'Its folder holds other datasets too: delete it by hand.',
+    job: 'A step is running on this dataset: wait for it or cancel it.',
+    training: 'A training run is using this dataset right now.',
+  } as Record<string, string>,
   create: 'Create',
 
   // Import form

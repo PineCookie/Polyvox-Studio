@@ -2,6 +2,7 @@
 with and without text plus a long recording."""
 
 import json
+import time
 
 import numpy as np
 import soundfile as sf
@@ -119,3 +120,41 @@ def test_step_endpoints(service, training, asr_service, align_service, data_dir,
     done = create(client, str(empty), "x")
     assert done["state"] == "failed" and (data_dir / "x" / "train.jsonl").is_file()
     assert client.get("/api/datasets/steps", params={"id": "x/train.jsonl"}).json()["sources"]["clips"] == 0
+
+
+def test_deleting_a_dataset_warns_of_runs_and_waits_for_training(service, training, data_dir):
+    from polyvox.training import TrainParams
+
+    from conftest import make_dataset, wait_for
+
+    make_dataset(data_dir, "speaker_a")
+    make_dataset(data_dir, "speaker_b")
+    client = TestClient(create_app(service.settings, service, training))
+    training.start(TrainParams(name="busy", dataset="speaker_a/train.jsonl", num_iters=1000))
+    wait_for(training.lora_dir / "voxcpm" / "busy" / "console.log", "waiting for stop")
+
+    info = client.get("/api/datasets/deletion", params={"id": "speaker_a/train.jsonl"}).json()
+    assert (info["folder"], info["clips"], info["runs"]) == ("speaker_a", 4, ["busy"]) and info["bytes"] > 0
+    assert info["blocked"] == "training"
+    assert client.post("/api/datasets/delete", json={"id": "speaker_a/train.jsonl"}).status_code == 409
+    other = client.get("/api/datasets/deletion", params={"id": "speaker_b/train.jsonl"}).json()
+    assert (other["runs"], other["blocked"]) == ([], None)
+
+    training.stop()
+    deadline = time.monotonic() + 30
+    while training.active_run:
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    info = client.get("/api/datasets/deletion", params={"id": "speaker_a/train.jsonl"}).json()
+    assert (info["runs"], info["blocked"]) == (["busy"], None)  # the run still used it: warned, not blocked
+    assert client.post("/api/datasets/delete", json={"id": "speaker_a/train.jsonl"}).json() == {
+        "deleted": "speaker_a/train.jsonl"
+    }
+    assert not (data_dir / "speaker_a").exists() and (data_dir / "speaker_b").is_dir()
+    assert client.post("/api/datasets/delete", json={"id": "speaker_a/train.jsonl"}).status_code == 404
+
+    # A folder holding another dataset too is not deleted from here.
+    (data_dir / "speaker_b" / "val.jsonl").write_text((data_dir / "speaker_b" / "train.jsonl").read_text())
+    blocked = client.get("/api/datasets/deletion", params={"id": "speaker_b/train.jsonl"}).json()["blocked"]
+    assert blocked == "shared"
+    assert client.post("/api/datasets/delete", json={"id": "speaker_b/train.jsonl"}).status_code == 409

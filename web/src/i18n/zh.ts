@@ -196,6 +196,21 @@ export const zh: Messages = {
   noDatasets: '还没有数据集。用「新建数据集」创建一个。',
   pickDataset: '在右侧选择一个数据集，或用「新建数据集」创建一个。',
   newDataset: '新建数据集',
+  deleteDataset: '删除…',
+  deleteDatasetTitle: (name) => `删除数据集「${name}」？`,
+  deleteDatasetWhat: (folder, clips, size) =>
+    `将删除文件夹 data/${folder}：${clips.toLocaleString()} 个片段（${size}）及其文本、检查结果和审阅记录。`,
+  deleteDatasetRuns: (_n, names) =>
+    `用它的片段训练过：${names}。删除后这些训练无法再恢复或继续；已有的检查点仍可使用。`,
+  deleteDatasetOutside: (n) => `${n} 段来源录音保留在原位置（数据集只记录了它们）。`,
+  cannotUndo: '此操作无法撤销。',
+  deleteForGood: '永久删除',
+  deleting: '正在删除…',
+  deleteBlocked: {
+    shared: '它的文件夹里还有其他数据集：请手动删除。',
+    job: '这个数据集正在运行步骤：请等待完成或取消。',
+    training: '有训练任务正在使用这个数据集。',
+  },
   create: '创建',
 
   // 导入
