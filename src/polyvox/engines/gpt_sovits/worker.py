@@ -742,12 +742,16 @@ def train_sovits_v4(
         out["text_lengths"] = torch.tensor([len(c["phones"]) for c in items], device=dev)
         return out
 
+    fused_ok = False
+
     def train_step(b: dict) -> dict[str, torch.Tensor]:
-        nonlocal compiled
+        nonlocal compiled, fused_ok
         try:
-            return update(b)
-        except Exception as e:
-            if not compiled or isinstance(e, torch.OutOfMemoryError):
+            values = update(b)
+            fused_ok = True
+            return values
+        except Exception as e:  # compiling happens on the first steps; later errors are not about it
+            if not compiled or fused_ok or isinstance(e, torch.OutOfMemoryError):
                 raise
             log(f"Fusing the DiT blocks failed ({e}); training them unfused.")
             compiled = fuse_blocks(net_g.cfm.estimator, False)

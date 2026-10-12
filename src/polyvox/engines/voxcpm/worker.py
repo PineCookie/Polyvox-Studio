@@ -21,7 +21,8 @@ On top of the script this adds:
 - ``torchaudio.load`` / ``save`` through audio_io, as in the server
   (torchcodec, which they would use, is not installed).
 - On small GPUs (vram.Profile.train_checkpointing), gradient checkpointing
-  (``checkpoint_layers``).
+  (``checkpoint_layers``); otherwise, on CUDA unless POLYVOX_OPTIMIZE is off,
+  the transformer layers fused by torch.compile (``fuse_layers``).
 - Prodigy / Prodigy Schedule-Free instead of AdamW (``use_optimizer``).
 """
 
@@ -177,6 +178,46 @@ def cache_audio_latents() -> None:
         return latents[key]
 
     packers.AudioFeatureProcessingPacker.encode_audio = encode_audio
+
+
+def fuse_layers() -> None:
+    """torch.compile of the transformer layers' training forward
+    (MiniCPMDecoderLayer: both language models and the diffusion decoder): one
+    compiled function for every layer (their weights are its inputs), any batch
+    length (dynamic shapes). Only while training with gradients: validation and
+    sample generation run as before. If compiling fails, the layers run as
+    they are for the rest of the run."""
+    import torch
+    from voxcpm.modules.minicpm4.model import MiniCPMDecoderLayer
+
+    forward = MiniCPMDecoderLayer.forward
+    fused = [torch.compile(forward, dynamic=True)]
+    worked = []  # once a fused call has succeeded, later errors are not about compiling
+
+    def maybe_fused(self, *args, **kwargs):
+        if fused and self.training and torch.is_grad_enabled():
+            try:
+                out = fused[0](self, *args, **kwargs)
+                if not worked:
+                    worked.append(True)
+                return out
+            except Exception as e:
+                if worked or isinstance(e, torch.OutOfMemoryError):
+                    raise
+                print(f"[studio] Fusing the transformer layers failed ({e!r}); running them unfused.", file=sys.stderr)
+                fused.clear()
+        return forward(self, *args, **kwargs)
+
+    MiniCPMDecoderLayer.forward = maybe_fused
+    print("[studio] Transformer layers fused for training (torch.compile).", file=sys.stderr)
+
+
+def optimize_enabled() -> bool:
+    """As the server's Settings.optimize: POLYVOX_OPTIMIZE auto (default) / 1 / 0; auto = on CUDA."""
+    import torch
+
+    value = os.environ.get("POLYVOX_OPTIMIZE", "auto").strip().lower()
+    return torch.cuda.is_available() if value == "auto" else value in ("1", "true", "yes", "on")
 
 
 def checkpoint_layers() -> None:
@@ -430,7 +471,11 @@ def main() -> None:
     audio_io.patch_torchaudio()
     vram.apply_limit("cuda")  # POLYVOX_VRAM_GB, as in the server
     if os.environ.get("POLYVOX_TRAIN_CHECKPOINT") == "1" or vram.detect("cuda")[1].train_checkpointing:
+        # Not fused too: recomputing compiled layers mismatches, and compiling the
+        # checkpointed ones needs a C++ compiler on Windows (checked 2026-10-12).
         checkpoint_layers()
+    elif optimize_enabled():
+        fuse_layers()
     use_optimizer(*optimizer_from_config(args.config_path))
     threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid), daemon=True).start()
     sys.argv = [str(SCRIPT), "--config_path", str(args.config_path)]
