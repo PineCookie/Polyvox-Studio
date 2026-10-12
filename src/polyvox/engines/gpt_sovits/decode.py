@@ -15,6 +15,9 @@ Sampling as upstream's logits_to_probs: the repetition penalty on every token
 so far (prompt included), top-p, temperature, top-k, then exponential-race
 sampling; the end of speech is masked for the first 11 steps; decoding stops at
 the end of speech (sampled or most likely), the early-stop count or 1500 steps.
+
+v4's mel DiT (fast_dit) runs its 22 blocks per flow-matching step without the
+attention mask (one unpadded sequence) and, on CUDA, fused by torch.compile.
 """
 
 from __future__ import annotations
@@ -53,6 +56,42 @@ def compiled_layer_rest():
     if _compiled_layer_rest is None:
         _compiled_layer_rest = torch.compile(layer_rest, dynamic=False, fullgraph=True)
     return _compiled_layer_rest
+
+
+# ---------------------------------------------------------------- v4's DiT
+
+
+def unmasked_block(block, x, t, mask=None, rope=None):
+    """A v4 DiT block for one sequence with no padding: its mask is all true,
+    so the block runs without it (same output; SDPA without a mask, no padding
+    of the mask, no masked_fill). (cuDNN's attention was faster on one window
+    length but slower in use: it plans each new length, and every window has
+    its own.)"""
+    return type(block).forward(block, x, t, None, rope)
+
+
+_compiled_block = None
+
+
+def compiled_block():
+    """unmasked_block fused by torch.compile, for any length (dynamic shapes):
+    the block's weights are inputs, so one compilation per process serves every
+    block of every v4 voice."""
+    global _compiled_block
+    if _compiled_block is None:
+        _compiled_block = torch.compile(unmasked_block, dynamic=True)
+    return _compiled_block
+
+
+def fast_dit(sovits, compiled: bool) -> None:
+    """Make a v4 SoVITS model's DiT (sovits.cfm.estimator) faster for
+    synthesis, one sequence at a time: blocks unmasked, and fused if
+    ``compiled``. Only for inference models: training batches need the mask."""
+    import functools
+
+    run = compiled_block() if compiled else unmasked_block
+    for block in sovits.cfm.estimator.transformer_blocks:
+        block.forward = functools.partial(run, block)
 
 
 class Decoder:

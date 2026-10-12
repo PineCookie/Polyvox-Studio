@@ -543,6 +543,22 @@ def test_the_dits_rotary_embedding_rotates_interleaved_pairs():
     assert torch.allclose(rotated, expected, atol=1e-5)
 
 
+def test_v4s_faster_dit_makes_the_same_output():
+    from types import SimpleNamespace
+
+    from polyvox.engines.gpt_sovits.decode import fast_dit
+    from polyvox.vendor.gpt_sovits.f5_tts.model import DiT
+
+    torch.manual_seed(0)
+    dit = DiT(dim=64, depth=2, heads=2, dim_head=32, ff_mult=2, mel_dim=100, text_dim=16, conv_layers=1).eval()
+    x, cond, text = torch.randn(1, 100, 50), torch.randn(1, 100, 50), torch.randn(1, 16, 50)
+    inputs = (x, cond, torch.tensor([50]), torch.tensor([0.3]), torch.tensor([0.125]), text)
+    with torch.no_grad():
+        expected = dit(*inputs)
+        fast_dit(SimpleNamespace(cfm=SimpleNamespace(estimator=dit)), compiled=False)  # blocks without the mask
+        assert torch.allclose(dit(*inputs), expected, atol=1e-6)
+
+
 def test_v4_makes_its_mel_window_by_window_each_continuing_the_last():
     from types import SimpleNamespace
 

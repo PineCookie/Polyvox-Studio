@@ -161,6 +161,9 @@ class Pipeline:
         if missing:
             raise ValueError(f"{Path(sovits_path).name} lacks {len(missing)} SoVITS weights, e.g. {missing[0]}.")
         if model_version == V4:
+            from .decode import fast_dit
+
+            fast_dit(sovits, compiled=self.fast_decode and self.compile_decode)
             self._ensure_vocoder()
         gpt_saved = load_weights(gpt_path)
         gpt = Text2SemanticDecoder(gpt_saved["config"], top_k=3)
@@ -367,13 +370,28 @@ class Pipeline:
             chunk = fea[:, :, i : i + step]
             x = torch.cat([cond, chunk], 2).transpose(2, 1)
             lengths = torch.LongTensor([x.shape[1]]).to(self.device)
-            made = voice.sovits.cfm.inference(x, lengths, mel, options.sample_steps, inference_cfg_rate=0)
+            made = self._dit(voice, x, lengths, mel, options.sample_steps)
             made = made[:, :, mel.shape[2] :]
             mel, cond = made[:, :, -keep:], chunk[:, :, -keep:]
             out.append(made)
         mel = (torch.cat(out, 2) + 1) / 2 * (V4_SPEC_MAX - V4_SPEC_MIN) + V4_SPEC_MIN
         with torch.inference_mode():
             return self._ensure_vocoder()(mel)[0][0]
+
+    def _dit(self, voice: Voice, *args):
+        """cfm.inference; if its fused blocks fail (torch.compile: no working
+        Triton, say), this voice and later ones run them unfused."""
+        try:
+            return voice.sovits.cfm.inference(*args, inference_cfg_rate=0)
+        except Exception as e:
+            if not self.compile_decode or isinstance(e, torch.OutOfMemoryError):
+                raise
+            logger.warning("GPT-SoVITS: fusing the v4 DiT failed (%s); running it unfused", e)
+            from .decode import fast_dit
+
+            self.compile_decode = False
+            fast_dit(voice.sovits, compiled=False)
+            return voice.sovits.cfm.inference(*args, inference_cfg_rate=0)
 
     def _decoder(self, voice: Voice):
         if not self.fast_decode:
