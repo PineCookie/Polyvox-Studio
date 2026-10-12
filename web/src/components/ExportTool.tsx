@@ -78,7 +78,9 @@ export function ExportTool({ id, disabled }: { id: string; disabled: boolean }) 
                 ` ${t.dsExportSkipped(result.skipped.short, result.skipped.long, result.skipped.unreadable)}`}
             </span>
           ) : (
-            <span className="muted hint">{chosen?.description ?? t.dsExportHint}</span>
+            <span className="muted hint">
+              {chosen ? (t.exportFormats[chosen.id]?.[1] ?? chosen.description) : t.dsExportHint}
+            </span>
           )}
         </div>
         <div className="tool-controls export-controls">
@@ -93,7 +95,7 @@ export function ExportTool({ id, disabled }: { id: string; disabled: boolean }) 
           >
             {formats.map((f) => (
               <option key={f.id} value={f.id}>
-                {f.label}
+                {t.exportFormats[f.id]?.[0] ?? f.label}
               </option>
             ))}
           </select>

@@ -54,6 +54,8 @@ class DatasetReportOut(BaseModel):
     samples: int
     dropped: int
     untranscribed: int = 0  # clips without text yet: not in training
+    short_clips: int = 0  # shorter than 0.3 s
+    long_clips: int = 0  # longer than 30 s
     valid: int
     total_seconds: float
     min_seconds: float | None
@@ -71,16 +73,17 @@ class ImportSourceIn(BaseModel):
     audio_dir: str | None = None
 
 
+class NewDatasetIn(BaseModel):
+    name: str
+
+
 class AddSourceIn(ImportSourceIn):
     id: str  # dataset manifest id
     copy_audio: bool = True
-
-
-class CreateDatasetIn(ImportSourceIn):
-    name: str
-    copy_audio: bool = True
-    # Then run the steps with work left (slice, transcribe, check), with their defaults.
+    # Then run the steps with work left (slice, transcribe, check), with these settings
+    # per step (StepIn's fields), else each step's last ones.
     run_steps: bool = False
+    settings: dict[str, dict] = {}
 
 
 class RunStepsIn(BaseModel):
@@ -124,6 +127,7 @@ class StepStatusOut(BaseModel):
     check: dict
     tidy: dict
     settings: dict
+    job: dict | None = None  # a job running on this dataset (JobOut), to follow on a page opened later
 
 
 class ExportIn(BaseModel):
@@ -257,6 +261,9 @@ class JobOut(BaseModel):
     result: dict
     started: float
     finished: float | None
+    seconds_left: float | None = None  # of the current phase, from its rate so far
+    subject: str = ""  # e.g. the dataset it works on
+    label: str = ""  # e.g. which dataset step
 
 
 class ModelOut(BaseModel):

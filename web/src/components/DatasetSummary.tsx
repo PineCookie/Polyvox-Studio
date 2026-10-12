@@ -29,8 +29,11 @@ export function DatasetSummary({ report, error }: { report: DatasetReport | null
           ))}
         </ul>
       )}
-      {report.warnings.length > 0 && (
+      {(report.warnings.length > 0 || report.untranscribed > 0 || report.short_clips > 0 || report.long_clips > 0) && (
         <ul className="issues">
+          {report.untranscribed > 0 && <li>{t.untranscribedClips(report.untranscribed)}</li>}
+          {report.short_clips > 0 && <li>{t.shortClips(report.short_clips)}</li>}
+          {report.long_clips > 0 && <li>{t.longClips(report.long_clips)}</li>}
           {report.warnings.map((w) => (
             <li key={w}>{w}</li>
           ))}

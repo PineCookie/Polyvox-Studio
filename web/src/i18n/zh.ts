@@ -193,10 +193,12 @@ export const zh: Messages = {
 
   // 数据集列表
   datasets: '数据集',
-  noDatasets: '还没有数据集，先导入一个。',
+  noDatasets: '还没有数据集。用「新建数据集」创建一个。',
+  pickDataset: '在右侧选择一个数据集，或用「新建数据集」创建一个。',
+  newDataset: '新建数据集',
+  create: '创建',
 
   // 导入
-  importTitle: '导入数据集',
   kindLabel: {
     gsv: 'GPT-SoVITS 标注列表',
     csv: 'CSV（文件|文本）',
@@ -218,7 +220,6 @@ export const zh: Messages = {
     denoise: ['降噪', '适用于底噪、电流声或风扇声'],
   },
   noModel: '未安装模型，请在「模型」页下载。',
-  importFailed: '导入失败。',
   required: '必填',
   nameChars: '只能包含字母、数字、“.”、“_”和“-”。',
   datasetExists: '已有同名数据集。',
@@ -253,14 +254,12 @@ export const zh: Messages = {
   normalizeTo: '响度归一化到',
   targetLufs: '目标响度（LUFS）',
   datasetName: '数据集名称',
-  copyAudio: (name) => `把音频复制到 data/${name}/wavs（自成一体；否则音频留在原处）`,
   importBrings: (clips, recordings) =>
-    `数据集将包含 ${clips.toLocaleString()} 个片段` +
+    `将添加 ${clips.toLocaleString()} 个片段` +
     (recordings ? `和 ${recordings} 段待切分的长录音（切分前保留在原位置）` : '') +
-    '。清理、切分、转写和检查都是数据集页面上的步骤。',
-  runStepsAfter: '导入后用默认设置运行剩余的步骤（切分、转写、检查）',
-  runStepsAfterHint: '如需先调整设置（例如为带音乐的录音分离人声，或为语音识别设置语言和名称），请不要勾选。',
-  importButton: '导入',
+    '。',
+  runStepsAfter: '添加后按下方的设置运行剩余的步骤（切分、转写、检查）',
+  runStepsAfterHint: '如有需要，先设置下方的步骤，例如为带音乐的录音分离人声，或为语音识别设置语言和名称。',
 
   // 任务进度
   phase: {
@@ -279,13 +278,9 @@ export const zh: Messages = {
   timeLeft: (left) => ` · 约剩 ${left}`,
   jobCancelled: (what) => `${what}已取消。`,
   jobFailed: (what) => `${what}失败。`,
-  importWhat: '导入',
   stepWhat: '该步骤',
 
   // 数据集步骤
-  importedNew: (clips, recordings, ran) =>
-    `导入了 ${clips.toLocaleString()} 个片段${recordings ? `和 ${recordings} 段长录音` : ''}。` +
-    (ran ? '剩余的步骤也已运行。' : '运行下面的步骤来切分、转写和检查。'),
   stepsTitle: '步骤',
   stepNames: {
     sources: '来源',
@@ -307,6 +302,9 @@ export const zh: Messages = {
       : '') +
     (dropped ? ` · 审阅中排除了 ${dropped.toLocaleString()} 个` : ''),
   noTextYet: '尚无文本',
+  untranscribedClips: (n) => `${n} 个片段没有文本：转写之前不会用于训练`,
+  shortClips: (n) => `${n} 个片段短于 0.3 秒`,
+  longClips: (n) => `${n} 个片段长于 30 秒（训练时可能显存不足）`,
   addSource: '添加来源…',
   copyClips: '把片段复制到数据集中',
   add: '添加',
@@ -314,6 +312,7 @@ export const zh: Messages = {
     `可选 · ${clips.toLocaleString()} 个片段未清理` + (recordings ? '；长录音在切分时清理' : ''),
   notNeeded: (reason) => `不需要：${reason}`,
   nothingToSlice: '没有长录音',
+  emptyDataset: '暂无内容：请先添加来源',
   allSliced: '所有录音都已切分',
   sliceState: (n, duration) => `需要：${n} 段录音（${duration}）`,
   sliceStepHint: '每段录音先转写并对齐，再在词与词之间切开，尽量切在句末；每个片段保留对应的文本。',
@@ -379,6 +378,16 @@ export const zh: Messages = {
   checkButton: '检查',
   dsExportTitle: '导出给其他 TTS',
   dsExportHint: '按其他工具的格式写出训练片段（GPT-SoVITS、F5-TTS、Kaldi 等）。',
+  exportFormats: {
+    gpt_sovits: [
+      'GPT-SoVITS（.list）',
+      '每行 路径|说话人|语言|文本，使用绝对路径；每个片段的语言为 zh / ja / en / ko（GPT-SoVITS 的 zh 也涵盖中英混合）。片段较短时效果最好。',
+    ],
+    ljspeech: ['LJSpeech（metadata.csv）', '每行 id|文本|文本，音频在 wavs/<id>.wav。'],
+    csv: ['带表头的 CSV（F5-TTS）', 'metadata.csv，表头为 audio_file|text，路径相对于该文件（wavs/...）。'],
+    kaldi: ['Kaldi（wav.scp、text、utt2spk）', 'Kaldi 风格的数据文件夹，CosyVoice 一类的训练脚本使用。'],
+    lab: ['带 .lab 文件的文件夹', '每个 wavs/<id>.wav 的文本写在 wavs/<id>.lab 中。'],
+  },
   dsExportFormat: '导出格式',
   dsExportButton: '导出',
   dsExporting: '正在导出…',

@@ -62,8 +62,8 @@ def test_inspect_reports_rates_durations_and_missing_files(data_dir):
     assert report.sample_rates == {16000: 2, 44100: 2}
     assert report.total_seconds == pytest.approx(4.0)
     assert len(report.errors) == 1 and "file not found" in report.errors[0]
-    assert report.warnings[0].startswith("Skipped: Line 7: invalid JSON")
-    assert report.warnings[1] == "1 clip without text: not used for training until transcribed"
+    assert len(report.warnings) == 1 and report.warnings[0].startswith("Skipped: Line 7: invalid JSON")
+    assert (report.short_clips, report.long_clips) == (0, 0)
 
 
 def test_clips_without_text_are_reviewed_but_not_trained(data_dir):

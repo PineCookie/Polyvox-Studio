@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { listDatasets } from '../api'
-import type { CreateJob } from '../api'
+import type { FormEvent } from 'react'
+import { listDatasets, newDataset } from '../api'
 import { datasetName } from '../format'
 import { useT } from '../i18n'
 import { DatasetPage } from './DatasetPage'
-import { ImportForm } from './ImportForm'
 
 interface Props {
   onError: (message: string) => void
@@ -12,15 +11,18 @@ interface Props {
   onTrain: (datasetId: string) => void
 }
 
-const IMPORT = '\0import'
+// Matches importer.DATASET_NAME.
+const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 
-/** Raw recordings and lists in, checked datasets out: import (slice, transcribe, align), then review. */
+/** Datasets: pick one, or start a new one; each dataset's page adds sources and runs its steps. */
 export function PrepareView({ onError, onTrain }: Props) {
   const t = useT()
   const [datasets, setDatasets] = useState<string[] | null>(null)
-  const [selected, setSelected] = useState(IMPORT)
-  const [imported, setImported] = useState<CreateJob['result'] | null>(null)
-  const [formKey, setFormKey] = useState(0)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [created, setCreated] = useState<string | null>(null) // just made: Add source opens
+  const [naming, setNaming] = useState(false)
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -34,27 +36,39 @@ export function PrepareView({ onError, onTrain }: Props) {
     refresh()
   }, [refresh])
 
-  async function done(result: CreateJob['result']) {
-    await refresh()
-    setImported(result)
-    setSelected(result.id)
-    setFormKey((k) => k + 1) // a fresh form for the next import
+  const names = (datasets ?? []).map(datasetName)
+  const nameError = !name
+    ? null
+    : !NAME_PATTERN.test(name)
+      ? t.nameChars
+      : names.includes(name)
+        ? t.datasetExists
+        : null
+
+  async function create(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    try {
+      const id = await newDataset(name)
+      await refresh()
+      setCreated(id)
+      setSelected(id)
+      setNaming(false)
+      setName('')
+    } catch (err) {
+      setError((err as Error).message)
+    }
   }
 
   return (
     <main className="layout">
       <div className="main-col">
-        {/* Stays mounted while a dataset is open, so a running import keeps its progress. */}
-        <div hidden={selected !== IMPORT}>
-          <ImportForm key={formKey} datasetNames={(datasets ?? []).map(datasetName)} onImported={done} />
-        </div>
-        {selected !== IMPORT && (
-          <DatasetPage
-            key={selected}
-            id={selected}
-            imported={imported?.id === selected ? imported : null}
-            onTrain={onTrain}
-          />
+        {selected ? (
+          <DatasetPage key={selected} id={selected} isNew={selected === created} onTrain={onTrain} />
+        ) : (
+          <section className="panel">
+            <p className="muted empty">{datasets?.length ? t.pickDataset : t.noDatasets}</p>
+          </section>
         )}
       </div>
 
@@ -64,12 +78,27 @@ export function PrepareView({ onError, onTrain }: Props) {
             <h2>{t.datasets}</h2>
             <button
               type="button"
-              className={`small ${selected === IMPORT ? 'primary' : 'ghost'}`}
-              onClick={() => setSelected(IMPORT)}
+              className={`small ${naming ? 'primary' : 'ghost'}`}
+              onClick={() => setNaming((n) => !n)}
             >
-              {t.import}
+              {t.newDataset}
             </button>
           </header>
+          {naming && (
+            <form className="new-dataset" onSubmit={create}>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t.datasetName}
+                aria-label={t.datasetName}
+                autoFocus
+              />
+              <button type="submit" className="primary small" disabled={!name || !!nameError}>
+                {t.create}
+              </button>
+              {(nameError || error) && <span className="field-error">{nameError ?? error}</span>}
+            </form>
+          )}
           <div className="voice-list">
             {(datasets ?? []).map((id) => (
               <button
@@ -82,7 +111,6 @@ export function PrepareView({ onError, onTrain }: Props) {
                 <span className="voice-row-name">{datasetName(id)}</span>
               </button>
             ))}
-            {datasets?.length === 0 && <p className="muted empty">{t.noDatasets}</p>}
           </div>
         </section>
       </aside>

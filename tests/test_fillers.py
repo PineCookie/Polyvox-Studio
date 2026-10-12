@@ -3,7 +3,7 @@ import json
 import numpy as np
 import soundfile as sf
 from fastapi.testclient import TestClient
-from test_importer import wait_job, write_list
+from test_importer import create, wait_job, write_list
 
 from polyvox.prep import fillers
 from polyvox.server import create_app
@@ -40,7 +40,7 @@ def test_transcribe_step_tidies_fillers_even_with_every_text_there(service, trai
     client = TestClient(create_app(service.settings, service, training))
     manifest = data_dir / "a" / "train.jsonl"
 
-    job = wait_job(client, client.post("/api/datasets/create", json={"source": str(lst), "name": "a"}).json()["id"])
+    job = create(client, str(lst), "a")
     assert job["state"] == "done", job
     step = {"id": "a/train.jsonl", "step": "transcribe", "tidy_fillers": False}
     assert wait_job(client, client.post("/api/datasets/step", json=step).json()["id"])["result"]["tidied"] == 0

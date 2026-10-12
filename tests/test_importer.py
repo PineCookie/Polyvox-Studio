@@ -61,6 +61,13 @@ def wait_job(client, job_id, timeout=30):
     return job
 
 
+def create(client, source, name, **add):
+    """A new dataset with a source added (POST /api/datasets/new, then add-source): the add job, finished."""
+    dataset = client.post("/api/datasets/new", json={"name": name}).json()["id"]
+    job = client.post("/api/datasets/add-source", json={"id": dataset, "source": source, **add}).json()
+    return wait_job(client, job["id"])
+
+
 def test_gsv_list_with_stale_paths_relinks_by_file_name(tmp_path, data_dir, clips):
     lst = write_list(
         tmp_path / "lists" / "示例.list",  # a Unicode speaker name
@@ -220,12 +227,14 @@ def test_import_job_endpoints(service, training, asr_service, data_dir, tmp_path
     preview = client.post("/api/datasets/import/preview", json={"source": str(lst)}).json()
     assert (preview["found"], preview["untranscribed"], preview["suggested_name"]) == (2, 1, "speaker_a")
 
-    resp = client.post("/api/datasets/create", json={"source": str(lst), "name": "speaker_a"})
+    assert client.post("/api/datasets/new", json={"name": "speaker_a"}).json() == {"id": "speaker_a/train.jsonl"}
+    add = {"id": "speaker_a/train.jsonl", "source": str(lst)}
+    resp = client.post("/api/datasets/add-source", json=add)
     assert resp.status_code == 202 and resp.json()["kind"] == "import"
     job = wait_job(client, resp.json()["id"])
     assert job["state"] == "done", job
     job["result"].pop("timings")
-    assert job["result"] == {"id": "speaker_a/train.jsonl", "clips": 3, "recordings": 0, "steps": {}}
+    assert job["result"] == {"clips": 3, "recordings": 0, "steps": {}}
     body = {"id": "speaker_a/train.jsonl", "step": "transcribe", "language": "en"}
     job = wait_job(client, client.post("/api/datasets/step", json=body).json()["id"])
     assert job["state"] == "done", job
@@ -239,8 +248,13 @@ def test_import_job_endpoints(service, training, asr_service, data_dir, tmp_path
     assert list(asr_rows.values()) == [{"language": "en"}]
 
     assert "speaker_a/train.jsonl" in client.get("/api/datasets").json()
-    assert client.post("/api/datasets/create", json={"source": str(lst), "name": "speaker_a"}).status_code == 409
-    assert client.post("/api/datasets/create", json={"source": str(tmp_path / "x.mp4"), "name": "x"}).status_code == 422
+    assert client.post("/api/datasets/new", json={"name": "speaker_a"}).status_code == 409
+    assert client.post("/api/datasets/new", json={"name": "../x"}).status_code == 422
+    assert client.post("/api/datasets/add-source", json={**add, "source": str(tmp_path / "x.mp4")}).status_code == 422
+    # Adding the same source again finds nothing new.
+    assert (
+        "nothing was added" in wait_job(client, client.post("/api/datasets/add-source", json=add).json()["id"])["error"]
+    )
     assert client.post("/api/datasets/import/preview", json={"source": str(tmp_path / "x.mp4")}).status_code == 422
     assert client.get("/api/jobs/nope").status_code == 404
     bad_range = {"id": "speaker_a/train.jsonl", "step": "slice", "min_seconds": 9, "max_seconds": 5}
@@ -257,18 +271,19 @@ def test_transcribing_import_refused_while_training_shares_the_gpu(
     lst = write_list(tmp_path / "speaker_a.list", [f"{c}|clips|EN|" for c in clips])
     client = TestClient(create_app(service.settings, service, training, asr_service))
 
-    body = {"source": str(lst), "name": "speaker_a", "run_steps": True}
-    resp = client.post("/api/datasets/create", json=body)
+    dataset = client.post("/api/datasets/new", json={"name": "speaker_a"}).json()["id"]
+    body = {"id": dataset, "source": str(lst), "run_steps": True}
+    resp = client.post("/api/datasets/add-source", json=body)
     assert resp.status_code == 409 and "training" in resp.json()["detail"]
-    # Without running the steps the import does not need the GPU.
+    # Without running the steps adding a source does not need the GPU.
     body["run_steps"] = False
-    assert client.post("/api/datasets/create", json=body).status_code == 202
+    assert client.post("/api/datasets/add-source", json=body).status_code == 202
 
 
 def test_failed_import_job_reports_the_error(service, training, data_dir, tmp_path):
     lst = write_list(tmp_path / "no_audio.list", [rf"{STALE_WINDOWS}\a.wav|clips|EN|line"])
     client = TestClient(create_app(service.settings, service, training))
 
-    job = wait_job(client, client.post("/api/datasets/create", json={"source": str(lst), "name": "x"}).json()["id"])
+    job = create(client, str(lst), "x")
 
-    assert job["state"] == "failed" and "nothing to import" in job["error"]
+    assert job["state"] == "failed" and "nothing was added" in job["error"]

@@ -283,6 +283,9 @@ export interface DatasetReport {
   id: string
   samples: number
   dropped: number // dropped in review: not in training, nor in the numbers here
+  untranscribed: number // clips without text yet: not in training
+  short_clips: number // shorter than 0.3 s
+  long_clips: number // longer than 30 s
   valid: number
   total_seconds: number
   min_seconds: number | null
@@ -410,6 +413,8 @@ export interface Job<R = unknown> {
   seconds_left: number | null
   error: string | null
   result: R
+  subject: string // e.g. the dataset it works on
+  label: string // e.g. which dataset step ('add', 'remaining', 'slice', ...)
 }
 
 // Optional clean-up before import (src/polyvox/separation.py).
@@ -475,6 +480,7 @@ export interface StepStatus {
   check: { clips: number } // with text, not checked for it
   tidy: { trimmable: number }
   settings: { [K in StepName]?: Partial<StepSettings[K]> }
+  job: Job<Record<string, unknown>> | null // running on this dataset (started from a page closed since)
 }
 
 export type StepJob = Job<Record<string, unknown> & { timings?: Timings }>
@@ -498,36 +504,29 @@ export async function runRemaining(id: string, settings: StepSettings): Promise<
   return (await postJson('/api/datasets/run-remaining', { id, settings })).json()
 }
 
-export type AddSourceJob = Job<{ clips: number; recordings: number }>
+/** A new, empty dataset (sources are added on its page): its id. */
+export async function newDataset(name: string): Promise<string> {
+  return (await (await postJson('/api/datasets/new', { name })).json()).id
+}
 
+export type AddSourceJob = Job<{
+  clips: number
+  recordings: number
+  steps: Record<string, Record<string, unknown>> // the remaining steps' results, with `runSteps`
+  timings?: Timings
+}>
+
+/** Add a source's clips and recordings; with `runSteps`, the remaining steps run after with `settings`. */
 export async function addSource(
   id: string,
   source: string,
   audioDir: string,
   copyAudio: boolean,
-): Promise<AddSourceJob> {
-  const body = { id, source, audio_dir: audioDir || null, copy_audio: copyAudio }
-  return (await postJson('/api/datasets/add-source', body)).json()
-}
-
-export type CreateJob = Job<{
-  id: string
-  clips: number
-  recordings: number
-  steps: Record<string, Record<string, unknown>>
-  timings?: Timings
-}>
-
-/** A new dataset from a source; with `runSteps`, its remaining steps run right after. */
-export async function createDataset(
-  source: string,
-  audioDir: string,
-  name: string,
-  copyAudio: boolean,
   runSteps: boolean,
-): Promise<CreateJob> {
-  const body = { source, audio_dir: audioDir || null, name, copy_audio: copyAudio, run_steps: runSteps }
-  return (await postJson('/api/datasets/create', body)).json()
+  settings: StepSettings,
+): Promise<AddSourceJob> {
+  const body = { id, source, audio_dir: audioDir || null, copy_audio: copyAudio, run_steps: runSteps, settings }
+  return (await postJson('/api/datasets/add-source', body)).json()
 }
 
 // Loudness normalization (src/polyvox/loudness.py).

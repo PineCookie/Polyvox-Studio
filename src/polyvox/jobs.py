@@ -28,6 +28,8 @@ class Job:
     id: str
     kind: str
     title: str
+    subject: str = ""  # what it works on, e.g. a dataset id: a page opened later finds it (running_for)
+    label: str = ""  # which part of the work, e.g. a dataset step
     state: str = "running"  # running | done | failed | cancelled
     phase: str = ""  # e.g. "transcribing"
     done: int = 0
@@ -68,9 +70,9 @@ class JobRunner:
         self._lock = threading.Lock()
         self._jobs: dict[str, Job] = {}
 
-    def start(self, kind: str, title: str, fn: Callable[[Job], dict]) -> Job:
+    def start(self, kind: str, title: str, fn: Callable[[Job], dict], subject: str = "", label: str = "") -> Job:
         """Run ``fn(job)`` in a thread; its return value becomes ``job.result``."""
-        job = Job(id=uuid.uuid4().hex[:12], kind=kind, title=title)
+        job = Job(id=uuid.uuid4().hex[:12], kind=kind, title=title, subject=subject, label=label)
         with self._lock:
             self._jobs[job.id] = job
             self._prune()
@@ -85,6 +87,10 @@ class JobRunner:
 
     def running(self, kind: str) -> Job | None:
         return next((j for j in self._jobs.values() if j.kind == kind and j.state == "running"), None)
+
+    def running_for(self, subject: str) -> Job | None:
+        """The running job working on ``subject``, if any."""
+        return next((j for j in self._jobs.values() if j.subject == subject and j.state == "running"), None)
 
     def cancel(self, job_id: str) -> Job:
         job = self.get(job_id)

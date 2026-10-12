@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -18,13 +17,13 @@ from ..prep.steps import DEFAULTS as STEP_DEFAULTS
 from .context import Studio, checked, found, logged_timings
 from .schemas import (
     AddSourceIn,
-    CreateDatasetIn,
     DatasetReportOut,
     DropFlaggedIn,
     ExportIn,
     ImportPreviewOut,
     ImportSourceIn,
     JobOut,
+    NewDatasetIn,
     RunStepsIn,
     StepIn,
     StepStatusOut,
@@ -111,23 +110,51 @@ def router(s: Studio) -> APIRouter:
     def step_status(id: str) -> StepStatusOut:
         """What each processing step still has to do on a dataset, and its last settings."""
         manifest = found(manifests.resolve, settings.data_dir, id)
-        return StepStatusOut(**steps.status(manifest.parent))
+        job = jobs.running_for(id)
+        return StepStatusOut(**steps.status(manifest.parent), job=job.public() if job else None)
+
+    @api.post("/api/datasets/new")
+    def new_dataset(body: NewDatasetIn) -> dict:
+        """An empty dataset to add sources to: {"id"}."""
+        try:
+            folder = steps.create(settings.data_dir, body.name)
+        except FileExistsError as e:
+            raise HTTPException(409, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return {"id": f"{folder.name}/{steps.MANIFEST}"}
 
     @api.post("/api/datasets/add-source", status_code=202)
     def add_source(body: AddSourceIn) -> JobOut:
         """Add a source's clips and recordings to a dataset (a job: copying
-        takes a while). The job's result is {"clips", "recordings"} added."""
+        takes a while); with ``run_steps``, the steps with work left run after
+        (with ``settings``, as run-remaining). The job's result is {"clips",
+        "recordings"} added and {"steps": {step: its result}}."""
         manifest = found(manifests.resolve, settings.data_dir, body.id)
         checked(importer.detect, importer.clean_path(body.source))
-        s.refuse_if_busy(gpu=False)
+        s.refuse_if_busy(gpu=body.run_steps)
 
         def run(job: Job) -> dict:
-            added = steps.add_source(
-                manifest.parent, body.source, body.audio_dir, settings.data_dir, body.copy_audio, progress=job.progress
-            )
-            return {"clips": added.clips, "recordings": added.recordings}
+            with timing.collect() as times:
+                added = steps.add_source(
+                    manifest.parent,
+                    body.source,
+                    body.audio_dir,
+                    settings.data_dir,
+                    body.copy_audio,
+                    progress=job.progress,
+                )
+                if not added.clips and not added.recordings:
+                    raise ValueError("No new audio found in the source; nothing was added.")
+                done = run_remaining_steps(manifest.parent, body.settings, job) if body.run_steps else {}
+                return {
+                    "clips": added.clips,
+                    "recordings": added.recordings,
+                    "steps": done,
+                    "timings": logged_timings(f"Add to {body.id}", times),
+                }
 
-        return JobOut(**jobs.start("import", f"Add to {body.id}", run).public())
+        return JobOut(**jobs.start("import", f"Add to {body.id}", run, body.id, "add").public())
 
     @api.post("/api/datasets/step", status_code=202)
     def dataset_step(body: StepIn) -> JobOut:
@@ -152,7 +179,11 @@ def router(s: Studio) -> APIRouter:
                 result = run_step(manifest.parent, body.step, given, job)
                 return {**result, "timings": logged_timings(f"{body.step} {body.id}", times)}
 
-        return JobOut(**jobs.start("step", f"{body.step.replace('_', ' ').capitalize()} {body.id}", run).public())
+        return JobOut(
+            **jobs.start(
+                "step", f"{body.step.replace('_', ' ').capitalize()} {body.id}", run, body.id, body.step
+            ).public()
+        )
 
     def run_remaining_steps(folder: Path, given: dict[str, dict], job: Job) -> dict:
         """The steps with work left, in order: {step: its result}."""
@@ -171,44 +202,7 @@ def router(s: Studio) -> APIRouter:
                 out = run_remaining_steps(manifest.parent, body.settings, job)
                 return {**out, "timings": logged_timings(f"Steps {body.id}", times)}
 
-        return JobOut(**jobs.start("step", f"Steps {body.id}", run).public())
-
-    @api.post("/api/datasets/create", status_code=202)
-    def create_dataset(body: CreateDatasetIn) -> JobOut:
-        """A new dataset from a source (a job): its clips copied in, long
-        recordings listed to slice; with ``run_steps``, the steps with work left
-        run after. The job's result is {"id", "clips", "recordings", "steps"}."""
-        try:
-            importer.check_name(body.name, settings.data_dir)
-            importer.detect(importer.clean_path(body.source))
-        except FileExistsError as e:
-            raise HTTPException(409, str(e)) from e
-        except (ValueError, OSError) as e:
-            raise HTTPException(422, str(e)) from e
-        s.refuse_if_busy(gpu=body.run_steps)
-
-        def run(job: Job) -> dict:
-            with timing.collect() as times:
-                folder = steps.create(settings.data_dir, body.name)
-                try:
-                    added = steps.add_source(
-                        folder, body.source, body.audio_dir, settings.data_dir, body.copy_audio, progress=job.progress
-                    )
-                    if not added.clips and not added.recordings:
-                        raise ValueError("No audio found in the source; nothing to import.")
-                except BaseException:
-                    shutil.rmtree(folder, ignore_errors=True)
-                    raise
-                done = run_remaining_steps(folder, {}, job) if body.run_steps else {}
-                return {
-                    "id": f"{body.name}/{steps.MANIFEST}",
-                    "clips": added.clips,
-                    "recordings": added.recordings,
-                    "steps": done,
-                    "timings": logged_timings(f"Create {body.name}", times),
-                }
-
-        return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
+        return JobOut(**jobs.start("step", f"Steps {body.id}", run, body.id, "remaining").public())
 
     @api.post("/api/datasets/import/preview")
     def preview_import(body: ImportSourceIn) -> ImportPreviewOut:

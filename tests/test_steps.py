@@ -7,7 +7,7 @@ import numpy as np
 import soundfile as sf
 from fastapi.testclient import TestClient
 from test_aligner import tone
-from test_importer import wait_job
+from test_importer import create, wait_job
 
 from polyvox.data import manifests, record
 from polyvox.prep import checks, slicer, steps
@@ -86,7 +86,8 @@ def test_step_endpoints(service, training, asr_service, align_service, data_dir,
     ds = "speaker_a/train.jsonl"
 
     job = client.post("/api/datasets/add-source", json={"id": ds, "source": str(src)}).json()
-    assert wait_job(client, job["id"])["result"] == {"clips": 2, "recordings": 0}
+    result = wait_job(client, job["id"])["result"]
+    assert (result["clips"], result["recordings"], result["steps"]) == (2, 0, {})
     status = client.get("/api/datasets/steps", params={"id": ds}).json()
     assert status["transcribe"] == {"clips": 1} and status["slice"] == {"recordings": 0, "seconds": 0}
 
@@ -106,14 +107,15 @@ def test_step_endpoints(service, training, asr_service, align_service, data_dir,
     assert all(e["text"] for e in entries)
     assert np.isfinite(sf.info(str(folder / "wavs" / "b.flac")).duration)
 
-    # A new dataset from a source, its remaining steps run right after.
-    body = {"source": str(src), "name": "speaker_b", "run_steps": True}
-    done = wait_job(client, client.post("/api/datasets/create", json=body).json()["id"])
+    # A new dataset, a source added and its remaining steps run right after, with the page's settings.
+    done = create(client, str(src), "speaker_b", run_steps=True, settings={"transcribe": {"language": "zh"}})
     assert done["state"] == "done", done
-    assert (done["result"]["id"], done["result"]["clips"]) == ("speaker_b/train.jsonl", 2)
-    assert set(done["result"]["steps"]) == {"transcribe", "check"}
-    assert client.post("/api/datasets/create", json=body).status_code == 409  # the name is taken
+    assert done["result"]["clips"] == 2 and set(done["result"]["steps"]) == {"transcribe", "check"}
+    assert record.read_record(data_dir / "speaker_b").steps["transcribe"]["language"] == "zh"
+    assert client.post("/api/datasets/new", json={"name": "speaker_b"}).status_code == 409  # the name is taken
+    # A source with no audio adds nothing: the job fails, the (empty) dataset stays.
     empty = tmp_path / "empty"
     empty.mkdir()
-    done = wait_job(client, client.post("/api/datasets/create", json={"source": str(empty), "name": "x"}).json()["id"])
-    assert done["state"] == "failed" and not (data_dir / "x").exists()
+    done = create(client, str(empty), "x")
+    assert done["state"] == "failed" and (data_dir / "x" / "train.jsonl").is_file()
+    assert client.get("/api/datasets/steps", params={"id": "x/train.jsonl"}).json()["sources"]["clips"] == 0

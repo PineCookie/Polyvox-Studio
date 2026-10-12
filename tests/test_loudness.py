@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
-from test_importer import wait_job, write_list
+from test_importer import create, wait_job, write_list
 
 from polyvox.prep import importer, loudness
 from polyvox.server import create_app
@@ -91,8 +91,7 @@ def test_normalize_endpoints(service, training, data_dir, tmp_path):
     lst = write_list(tmp_path / "speaker_a.list", [f"{clip}|speaker_a|ZH|示例"])
     client = TestClient(create_app(service.settings, service, training))
 
-    body = {"source": str(lst), "name": "a"}
-    assert wait_job(client, client.post("/api/datasets/create", json=body).json()["id"])["state"] == "done"
+    assert create(client, str(lst), "a")["state"] == "done"
 
     for target in (-20, -26):
         step = {"id": "a/train.jsonl", "step": "tidy", "trim": False, "normalize_lufs": target}

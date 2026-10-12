@@ -8,7 +8,7 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 from test_aligner import tone
-from test_importer import wait_job, write_list
+from test_importer import create, wait_job, write_list
 
 from polyvox.data import manifests
 from polyvox.prep import checks, importer, loudness, slicer
@@ -414,8 +414,7 @@ def test_create_with_steps_then_tidy(service, training, asr_service, align_servi
     lst = write_list(tmp_path / "speaker_b.list", [f"{src / 'a.wav'}|speaker_b|ZH|示例"])
     client = TestClient(create_app(service.settings, service, training, asr_service, align=align_service))
 
-    body = {"source": str(lst), "name": "speaker_b", "run_steps": True}
-    job = wait_job(client, client.post("/api/datasets/create", json=body).json()["id"])
+    job = create(client, str(lst), "speaker_b", run_steps=True)
     assert job["state"] == "done", job
     assert job["result"]["steps"]["check"]["checked"] == 1
     assert (data_dir / "speaker_b" / manifests.ALIGN_FILE).is_file()

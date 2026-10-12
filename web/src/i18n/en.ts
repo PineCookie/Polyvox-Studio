@@ -199,10 +199,12 @@ export const en = {
 
   // Prepare: dataset list
   datasets: 'Datasets',
-  noDatasets: 'None yet. Import one.',
+  noDatasets: 'No datasets yet. Make one with New dataset.',
+  pickDataset: 'Choose a dataset on the right, or make one with New dataset.',
+  newDataset: 'New dataset',
+  create: 'Create',
 
   // Import form
-  importTitle: 'Import a dataset',
   kindLabel: {
     gsv: 'GPT-SoVITS list',
     csv: 'CSV (file|text)',
@@ -224,7 +226,6 @@ export const en = {
     denoise: ['Remove noise', 'For hiss, hum or fan noise'],
   } as Record<string, [string, string]>,
   noModel: 'No model installed; download it in Models.',
-  importFailed: 'Import failed.',
   required: 'Required',
   nameChars: 'Letters, digits, ".", "_" and "-" only.',
   datasetExists: 'A dataset with this name exists.',
@@ -262,18 +263,15 @@ export const en = {
   normalizeTo: 'Normalize loudness to',
   targetLufs: 'Target loudness (LUFS)',
   datasetName: 'Dataset name',
-  copyAudio: (name: string) =>
-    `Copy audio into data/${name}/wavs (self-contained; otherwise the files stay where they are)`,
   importBrings: (clips: number, recordings: number) =>
-    `The dataset gets ${clips.toLocaleString()} clips` +
+    `Adds ${clips.toLocaleString()} clips` +
     (recordings
       ? ` and ${recordings} long ${recordings === 1 ? 'recording' : 'recordings'} to slice (they stay where they are until sliced)`
       : '') +
-    '. Cleaning, slicing, transcribing and checking are steps on its page.',
-  runStepsAfter: 'Then run the remaining steps (slice, transcribe, check) with their defaults',
+    '.',
+  runStepsAfter: 'Then run the remaining steps (slice, transcribe, check) with the settings below',
   runStepsAfterHint:
-    'Leave this off to choose settings first, e.g. vocal separation for recordings with music, or a language and names for ASR.',
-  importButton: 'Import',
+    'Set the steps below first if needed, e.g. vocal separation for recordings with music, or a language and names for ASR.',
 
   // Job progress
   phase: {
@@ -292,15 +290,9 @@ export const en = {
   timeLeft: (left: string) => ` · ~${left} left`,
   jobCancelled: (what: string) => `${what} cancelled.`,
   jobFailed: (what: string) => `${what} failed.`,
-  importWhat: 'Import',
   stepWhat: 'The step',
 
   // Dataset steps (prep/steps.py)
-  importedNew: (clips: number, recordings: number, ran: boolean) =>
-    `Imported ${clips.toLocaleString()} clips` +
-    (recordings ? ` and ${recordings} long ${recordings === 1 ? 'recording' : 'recordings'}` : '') +
-    '.' +
-    (ran ? ' The remaining steps ran too.' : ' Run the steps below to slice, transcribe and check.'),
   stepsTitle: 'Steps',
   stepNames: {
     sources: 'Sources',
@@ -322,6 +314,10 @@ export const en = {
       : '') +
     (dropped ? ` · ${dropped.toLocaleString()} dropped in review` : ''),
   noTextYet: 'no text yet',
+  untranscribedClips: (n: number) =>
+    `${n} ${n === 1 ? 'clip' : 'clips'} without text: not used for training until transcribed`,
+  shortClips: (n: number) => `${n} ${n === 1 ? 'clip' : 'clips'} shorter than 0.3 s`,
+  longClips: (n: number) => `${n} ${n === 1 ? 'clip' : 'clips'} longer than 30 s (may run out of memory in training)`,
   addSource: 'Add source…',
   copyClips: 'Copy clips into the dataset',
   add: 'Add',
@@ -330,6 +326,7 @@ export const en = {
     (recordings ? '; recordings are cleaned while they are sliced' : ''),
   notNeeded: (reason: string) => `Not needed: ${reason}`,
   nothingToSlice: 'no long recordings',
+  emptyDataset: 'Nothing yet: add a source first',
   allSliced: 'every recording is sliced',
   sliceState: (n: number, duration: string) => `Needed: ${n} ${n === 1 ? 'recording' : 'recordings'} (${duration})`,
   sliceStepHint:
@@ -410,6 +407,17 @@ export const en = {
   checkButton: 'Check',
   dsExportTitle: 'Export for other TTS',
   dsExportHint: 'Write the training clips in another tool’s layout (GPT-SoVITS, F5-TTS, Kaldi …).',
+  // Export formats by id (exporter.FORMATS): name and what is written.
+  exportFormats: {
+    gpt_sovits: [
+      'GPT-SoVITS (.list)',
+      'path|speaker|language|text per line, absolute paths; language zh / ja / en / ko per clip (GPT-SoVITS’s zh covers Chinese mixed with English). It works best with short clips.',
+    ],
+    ljspeech: ['LJSpeech (metadata.csv)', 'id|text|text per line, audio in wavs/<id>.wav.'],
+    csv: ['CSV with header (F5-TTS)', 'metadata.csv with an audio_file|text header, paths relative to it (wavs/...).'],
+    kaldi: ['Kaldi (wav.scp, text, utt2spk)', 'Kaldi-style data folder, as CosyVoice-type recipes use.'],
+    lab: ['Folder with .lab files', 'Each wavs/<id>.wav with its transcript in wavs/<id>.lab.'],
+  } as Record<string, [string, string]>,
   dsExportFormat: 'Export format',
   dsExportButton: 'Export',
   dsExporting: 'Exporting…',

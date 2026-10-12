@@ -195,7 +195,8 @@ their configs record.
 ## Preparing datasets
 
 The Prepare tab turns raw recordings and transcript lists into datasets in the
-data dir, from a path on this computer:
+data dir. **New dataset** makes an empty one; on its page, **Add source** takes
+a path on this computer:
 
 - a GPT-SoVITS `.list` (`path|speaker|lang|text`),
 - a `file|text` CSV (LJSpeech style),
@@ -204,20 +205,21 @@ data dir, from a path on this computer:
 
 Lists often hold stale paths (another machine, a moved folder). Each clip is
 looked up as written, by file name next to the list and in its `wavs/` folder,
-and by file name in an optional audio folder. A preview shows what was found
-before anything is written; rows without audio are skipped. The import writes
-`data/<name>/train.jsonl` with paths relative to it and, by default, copies the
-clips into `data/<name>/wavs/` so the folder is self-contained. Long recordings
-(over 20 s) are listed in `data/<name>/dataset.json` and stay where they are
-until they are sliced.
+and by file name in an optional audio folder. **Scan** shows what was found
+before anything is written; rows without audio are skipped. Clips go into
+`data/<name>/train.jsonl` with paths relative to it and, by default, are copied
+into `data/<name>/wavs/` so the folder is self-contained. Long recordings (over
+20 s) are listed in `data/<name>/dataset.json` and stay where they are until
+they are sliced. Sources can be added at any time; audio already in the dataset
+is skipped.
 
-Everything else happens in steps on the dataset's page, in this order: **Sources**
-(**Add source** brings in more material later), **Clean up** (optional),
-**Slice recordings**, **Transcribe**, **Check clips** and **Tidy**. Each step
-shows what still needs it (a dataset may mix recordings and ready clips, or have
-stopped halfway), keeps its settings for the next run, works only on what is
-left, and saves as it goes, so a stopped step loses little. **Run the remaining
-steps** runs the needed ones in order; the import can start that right away.
+The page lists the dataset's steps in order: **Sources**, **Clean up**
+(optional), **Slice recordings**, **Transcribe**, **Check clips** and **Tidy**.
+Each step shows what still needs it (a dataset may mix recordings and ready
+clips, or have stopped halfway), keeps its settings for the next run, works only
+on what is left, and saves as it goes, so a stopped step loses little. **Run the
+remaining steps** runs the needed ones in order; Add source can start that right
+after adding, with the settings shown.
 
 Long recordings (WAV, FLAC, mp3, m4a, video files, ...) are read 10 minutes at a time,
 so hours of audio are fine. Voice activity detection (Silero VAD) groups the

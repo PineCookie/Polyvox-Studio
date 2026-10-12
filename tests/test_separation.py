@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
-from test_importer import wait_job, write_list
+from test_importer import create, wait_job, write_list
 
 from polyvox.prep import importer, separation
 from polyvox.prep.separation import Chain, SeparationService
@@ -107,7 +107,7 @@ def test_import_endpoint_refuses_clean_up_without_a_model(service, training, asr
     client = TestClient(create_app(service.settings, service, training, asr_service))
 
     assert client.get("/api/status").json()["cleanup"] == []
-    assert wait_job(client, client.post("/api/datasets/create", json={"source": str(lst), "name": "x"}).json()["id"])
+    assert create(client, str(lst), "x")["state"] == "done"
     resp = client.post("/api/datasets/step", json={"id": "x/train.jsonl", "step": "clean_up", "models": ["separate"]})
     assert resp.status_code == 422 and "not downloaded" in resp.json()["detail"]
 
@@ -127,7 +127,7 @@ def test_import_endpoint_separates_with_the_configured_chain(
     client = TestClient(create_app(settings, service, training, asr_service))
 
     assert client.get("/api/status").json()["cleanup"] == ["separate", "denoise"]
-    wait_job(client, client.post("/api/datasets/create", json={"source": str(lst), "name": "speaker_a"}).json()["id"])
+    create(client, str(lst), "speaker_a")
     step = {"id": "speaker_a/train.jsonl", "step": "clean_up", "models": ["separate", "denoise"]}
     job = wait_job(client, client.post("/api/datasets/step", json=step).json()["id"])
 

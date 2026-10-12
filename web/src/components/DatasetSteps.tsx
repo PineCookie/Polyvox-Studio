@@ -1,11 +1,30 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
-import { DEFAULT_LUFS, STEP_DEFAULTS, addSource, getStatus, getStepStatus, runRemaining, runStep } from '../api'
-import type { AddSourceJob, Aligner, CleanupOption, StepJob, StepName, StepSettings, StepStatus } from '../api'
+import type { FormEvent, ReactNode } from 'react'
+import {
+  DEFAULT_LUFS,
+  STEP_DEFAULTS,
+  addSource,
+  getStatus,
+  getStepStatus,
+  previewImport,
+  runRemaining,
+  runStep,
+} from '../api'
+import type {
+  AddSourceJob,
+  Aligner,
+  CleanupOption,
+  ImportPreview,
+  StepJob,
+  StepName,
+  StepSettings,
+  StepStatus,
+} from '../api'
 import { ALIGNER_LABEL, formatDuration, formatTimings } from '../format'
 import { useT } from '../i18n'
 import { useJob } from '../useJob'
 import { JobProgress } from './JobProgress'
+import { SourcePreview } from './SourcePreview'
 
 // ISO codes the ASR accepts (labels: t.languages); 'auto': detect until the clips agree, then force that.
 const LANGUAGES = ['auto', '', 'zh', 'yue', 'en', 'ja', 'ko']
@@ -15,6 +34,8 @@ interface Props {
   id: string
   // A step changed clips or their checks: the review reloads.
   onChanged: () => void
+  // Open Add source at once (a new, empty dataset).
+  startAdding?: boolean
 }
 
 type Need = 'needed' | 'optional' | 'done'
@@ -71,7 +92,7 @@ function Row(p: { n: number; need: Need; title: string; state: string; children?
 }
 
 /** The dataset's processing steps in order: what each still has to do, its settings, Run. */
-export function DatasetSteps({ id, onChanged }: Props) {
+export function DatasetSteps({ id, onChanged, startAdding = false }: Props) {
   const t = useT()
   const summary = useSummary()
   const [status, setStatus] = useState<StepStatus | null>(null)
@@ -80,22 +101,75 @@ export function DatasetSteps({ id, onChanged }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [what, setWhat] = useState('') // the running / last job: a step, 'add' or 'remaining'
   const [done, setDone] = useState<string | null>(null) // what the last job did
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState(startAdding)
   const [source, setSource] = useState('')
   const [audioDir, setAudioDir] = useState('')
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
+  const [scanning, setScanning] = useState(false)
   const [copyAudio, setCopyAudio] = useState(true)
+  const [runAfter, setRunAfter] = useState(true)
 
+  async function scan(e: FormEvent) {
+    e.preventDefault()
+    setScanning(true)
+    setError(null)
+    try {
+      setPreview(await previewImport(source, audioDir))
+    } catch (err) {
+      setPreview(null)
+      setError((err as Error).message)
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  // A changed path needs a new scan.
+  const edited = (setter: (v: string) => void) => (v: string) => {
+    setter(v)
+    setPreview(null)
+  }
+
+  const [job, setJob] = useJob<StepJob | AddSourceJob>((j) => {
+    refresh()
+    onChanged()
+    if (j.state === 'failed') setError(j.error ?? t.stepFailed)
+    if (j.state !== 'done') return
+    const result = j.result as Record<string, unknown>
+    const ran = (steps: Record<string, unknown>) =>
+      Object.entries(steps)
+        .filter(([k]) => k !== 'timings')
+        .map(([k, v]) => summary(k, v as Record<string, unknown>))
+    let lines = what === 'remaining' ? ran(result) : [summary(what, result)]
+    if (what === 'add') {
+      lines = [...lines, ...ran((result.steps as Record<string, unknown>) ?? {})]
+      setAdding(false)
+      setSource('')
+      setAudioDir('')
+      setPreview(null)
+    }
+    const timings = (result.timings as Record<string, number> | undefined) ?? {}
+    const times = Object.keys(timings).length ? ` ${formatTimings(timings)}.` : ''
+    setDone(lines.filter(Boolean).join(' ') + times)
+  })
+  const running = job?.state === 'running'
   const refresh = useCallback(
     async (fresh = false) => {
       try {
         const s = await getStepStatus(id)
         setStatus(s)
-        if (fresh) setSettings(savedSettings(s))
+        if (fresh) {
+          setSettings(savedSettings(s))
+          // A job started before this page was opened: follow it here.
+          if (s.job) {
+            setWhat(s.job.label)
+            setJob(s.job as StepJob)
+          }
+        }
       } catch (e) {
         setError((e as Error).message)
       }
     },
-    [id],
+    [id, setJob],
   )
   useEffect(() => {
     refresh(true)
@@ -104,24 +178,6 @@ export function DatasetSteps({ id, onChanged }: Props) {
       () => setAvailable([]),
     )
   }, [refresh])
-
-  const [job, setJob] = useJob<StepJob | AddSourceJob>((j) => {
-    refresh()
-    onChanged()
-    if (j.state === 'failed') setError(j.error ?? t.stepFailed)
-    if (j.state !== 'done') return
-    const result = j.result as Record<string, unknown>
-    const lines =
-      what === 'remaining'
-        ? Object.entries(result)
-            .filter(([k]) => k !== 'timings')
-            .map(([k, v]) => summary(k, v as Record<string, unknown>))
-        : [summary(what, result)]
-    const timings = (result.timings as Record<string, number> | undefined) ?? {}
-    const times = Object.keys(timings).length ? ` ${formatTimings(timings)}.` : ''
-    setDone(lines.filter(Boolean).join(' ') + times)
-  })
-  const running = job?.state === 'running'
 
   async function start(name: string, call: () => Promise<StepJob | AddSourceJob>) {
     setError(null)
@@ -153,6 +209,7 @@ export function DatasetSteps({ id, onChanged }: Props) {
     start(step, () => runStep(id, step, settings[step], everything))
 
   const clips = status.sources.clips
+  const empty = !clips && !status.sources.recordings
   return (
     <div className="steps">
       <div className="steps-head">
@@ -181,35 +238,65 @@ export function DatasetSteps({ id, onChanged }: Props) {
           }
         >
           {adding && (
-            <form
-              className="add-source"
-              onSubmit={(e) => {
-                e.preventDefault()
-                start('add', () => addSource(id, source, audioDir, copyAudio))
-              }}
-            >
-              <input
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                placeholder={t.sourcePlaceholder}
-                spellCheck={false}
-                aria-label={t.source}
-              />
-              <input
-                value={audioDir}
-                onChange={(e) => setAudioDir(e.target.value)}
-                placeholder={`${t.audioFolder} (${t.optional})`}
-                spellCheck={false}
-                aria-label={t.audioFolder}
-              />
-              <label className="check">
-                <input type="checkbox" checked={copyAudio} onChange={(e) => setCopyAudio(e.target.checked)} />{' '}
-                {t.copyClips}
-              </label>
-              <button type="submit" className="primary small" disabled={running || !source.trim()}>
-                {t.add}
-              </button>
-            </form>
+            <div className="add-source">
+              <form className="add-source-paths" onSubmit={scan}>
+                <input
+                  value={source}
+                  onChange={(e) => edited(setSource)(e.target.value)}
+                  placeholder={t.sourcePlaceholder}
+                  spellCheck={false}
+                  aria-label={t.source}
+                  disabled={running}
+                />
+                <input
+                  value={audioDir}
+                  onChange={(e) => edited(setAudioDir)(e.target.value)}
+                  placeholder={`${t.audioFolder} (${t.audioFolderHint})`}
+                  spellCheck={false}
+                  aria-label={t.audioFolder}
+                  disabled={running}
+                />
+                <button
+                  type="submit"
+                  className={preview ? 'ghost small' : 'primary small'}
+                  disabled={running || scanning || !source.trim()}
+                >
+                  {scanning ? t.scanning : t.scan}
+                </button>
+              </form>
+              <span className="muted hint">{t.sourceHint}</span>
+              {preview && <SourcePreview preview={preview} />}
+              {preview && preview.found + preview.untranscribed > 0 && (
+                <div className="add-source-options">
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={copyAudio}
+                      onChange={(e) => setCopyAudio(e.target.checked)}
+                      disabled={running}
+                    />{' '}
+                    {t.copyClips}
+                  </label>
+                  <label className="check" title={t.runStepsAfterHint}>
+                    <input
+                      type="checkbox"
+                      checked={runAfter}
+                      onChange={(e) => setRunAfter(e.target.checked)}
+                      disabled={running}
+                    />{' '}
+                    {t.runStepsAfter}
+                  </label>
+                  <button
+                    type="button"
+                    className="primary small"
+                    disabled={running || (runAfter && !sliceOk)}
+                    onClick={() => start('add', () => addSource(id, source, audioDir, copyAudio, runAfter, settings))}
+                  >
+                    {t.add}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </Row>
 
@@ -217,7 +304,7 @@ export function DatasetSteps({ id, onChanged }: Props) {
           n={2}
           need={need.clean_up}
           title={t.stepNames.clean_up}
-          state={t.cleanUpState(status.clean_up.clips, status.slice.recordings)}
+          state={empty ? t.emptyDataset : t.cleanUpState(status.clean_up.clips, status.slice.recordings)}
           actions={
             <button
               type="button"
@@ -261,7 +348,9 @@ export function DatasetSteps({ id, onChanged }: Props) {
           state={
             status.slice.recordings
               ? t.sliceState(status.slice.recordings, formatDuration(status.slice.seconds))
-              : t.notNeeded(status.sources.recordings ? t.allSliced : t.nothingToSlice)
+              : empty
+                ? t.emptyDataset
+                : t.notNeeded(status.sources.recordings ? t.allSliced : t.nothingToSlice)
           }
           actions={
             <button
@@ -303,7 +392,13 @@ export function DatasetSteps({ id, onChanged }: Props) {
           n={4}
           need={need.transcribe}
           title={t.stepNames.transcribe}
-          state={status.transcribe.clips ? t.transcribeState(status.transcribe.clips) : t.notNeeded(t.allHaveText)}
+          state={
+            status.transcribe.clips
+              ? t.transcribeState(status.transcribe.clips)
+              : empty
+                ? t.emptyDataset
+                : t.notNeeded(t.allHaveText)
+          }
           actions={
             <button
               type="button"
@@ -349,7 +444,9 @@ export function DatasetSteps({ id, onChanged }: Props) {
           n={5}
           need={need.check}
           title={t.stepNames.check}
-          state={status.check.clips ? t.checkState(status.check.clips) : t.notNeeded(t.allChecked)}
+          state={
+            status.check.clips ? t.checkState(status.check.clips) : empty ? t.emptyDataset : t.notNeeded(t.allChecked)
+          }
           actions={
             <>
               <button
@@ -411,7 +508,7 @@ export function DatasetSteps({ id, onChanged }: Props) {
           n={6}
           need={need.tidy}
           title={t.stepNames.tidy}
-          state={status.tidy.trimmable ? t.tidyState(status.tidy.trimmable) : t.tidyOptional}
+          state={status.tidy.trimmable ? t.tidyState(status.tidy.trimmable) : empty ? t.emptyDataset : t.tidyOptional}
           actions={
             <button
               type="button"

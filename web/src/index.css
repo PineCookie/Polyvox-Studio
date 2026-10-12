@@ -2031,18 +2031,41 @@ fieldset.params:disabled input[type='checkbox'] {
 
 .add-source {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   gap: 8px;
-  align-items: center;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
-.add-source button {
-  justify-self: end;
+.add-source-paths {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.add-source-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.add-source-options button {
+  margin-left: auto;
+}
+
+.new-dataset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.new-dataset .field-error {
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 700px) {
-  .add-source {
+  .add-source-paths {
     grid-template-columns: 1fr;
   }
 }

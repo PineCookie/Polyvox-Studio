@@ -519,6 +519,8 @@ class DatasetReport:
     samples: int = 0  # well-formed lines (dropped clips not counted)
     dropped: int = 0  # clips dropped in review: not in training, nor in the numbers below
     untranscribed: int = 0  # clips without text yet (not dropped): not in training, nor below
+    short_clips: int = 0  # shorter than SHORT_CLIP_S
+    long_clips: int = 0  # longer than LONG_CLIP_S: may run out of memory in training
     valid: int = 0  # well-formed lines whose audio is readable
     total_seconds: float = 0.0
     min_seconds: float | None = None
@@ -568,13 +570,7 @@ def inspect(path: Path, root: Path | None = None) -> DatasetReport:
     report.valid = len(durations)
     report.errors = _capped(errors, error_count, "errors")
     report.warnings = _capped([f"Skipped: {e}" for e in line_errors[:MAX_REPORTED]], len(line_errors), "skipped lines")
-    if untranscribed:
-        clips_word = "clip" if untranscribed == 1 else "clips"
-        report.warnings.append(f"{untranscribed} {clips_word} without text: not used for training until transcribed")
-    if short:
-        report.warnings.append(f"{short} clips shorter than {SHORT_CLIP_S} s")
-    if long:
-        report.warnings.append(f"{long} clips longer than {LONG_CLIP_S:.0f} s (may run out of memory)")
+    report.short_clips, report.long_clips = short, long
     if durations:
         report.total_seconds = sum(durations)
         report.min_seconds = min(durations)
