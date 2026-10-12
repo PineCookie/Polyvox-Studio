@@ -526,7 +526,6 @@ export const zh: Messages = {
   noRunMatches: (filter) => `没有与「${filter}」匹配的训练任务。`,
   runStatus: { running: '训练中', stopping: '正在停止', complete: '已完成', incomplete: '已暂停', failed: '失败' },
   runSteps: (step, total) => `${step} / ${total} 步`,
-  rankSuffix: (r) => ` · 秩 ${r}`,
 
   // 任务详情
   stopTitle: '先保存检查点，再停止',

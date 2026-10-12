@@ -564,7 +564,6 @@ export const en = {
     failed: 'Failed',
   },
   runSteps: (step: string, total: string) => `${step} / ${total} steps`,
-  rankSuffix: (r: number) => ` · rank ${r}`,
 
   // Run detail
   stopTitle: 'Saves a checkpoint, then stops',

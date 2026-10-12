@@ -472,33 +472,9 @@ button:focus-visible,
   gap: 8px;
 }
 
-.voice-card {
-  display: grid;
-  gap: 6px;
-  text-align: left;
-  background: var(--surface-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  font-size: 0.9rem;
-}
-
-button.voice-card:hover {
-  border-color: var(--border);
-}
-
-.voice-card.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
 .voice-name {
   font-weight: 600;
   word-break: break-word;
-}
-
-.voice-card .muted {
-  font-size: 0.8rem;
 }
 
 .chips {
@@ -626,13 +602,6 @@ button.voice-card:hover {
 }
 
 /* Training: runs */
-
-.run-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
 
 .pill {
   flex-shrink: 0;
@@ -1074,11 +1043,14 @@ select {
   }
 }
 
-/* Voice panel: selected voice on top, compact scrolling list below */
+/* Side lists (voices, datasets, runs): compact rows that scroll. The side column is sticky, so
+   the panel fits the window below the top bar, even before the page scrolls (a short main
+   column can't); only the list shrinks, whatever sits above it. */
 
 .voice-panel {
-  max-height: calc(100vh - 40px);
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 100px);
 }
 
 .voice-current {
@@ -1208,27 +1180,23 @@ input[type='search']:focus {
   margin-top: 4px;
 }
 
-/* The side column is sticky: the panel fits the window below the top bar, even before the
-   page scrolls (a short New run form can't), and its list scrolls. */
-.run-panel {
+.run-row {
+  position: relative;
+}
+
+.run-row .muted {
   display: flex;
-  flex-direction: column;
-  max-height: calc(100vh - 100px);
+  align-items: center;
+  gap: 6px;
 }
 
-.run-panel .voice-list {
-  overflow-y: auto;
-  min-height: 120px;
-  margin: 0 -8px;
-  padding: 0 8px 2px;
-}
-
-.run-group {
-  gap: 8px;
-}
-
-.run-group > .voice-group-head {
-  padding-bottom: 0;
+/* A live run's progress: a thin line along the bottom, so the row keeps its height. */
+.run-row .progress {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 3px;
+  height: 3px;
 }
 
 .voice-row:not(:disabled):hover {
@@ -1270,12 +1238,6 @@ input[type='search']:focus {
     max-height: none;
   }
   .voice-panel .voice-list {
-    max-height: 320px;
-  }
-  .run-panel {
-    max-height: none;
-  }
-  .run-panel .voice-list {
     max-height: 320px;
   }
 }

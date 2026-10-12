@@ -43,30 +43,33 @@ export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
     .map((id) => ({ id, runs: shown.filter((r) => r.engine === id) }))
     .filter((g) => g.runs.length > 0)
 
-  function card(run: RunSummary) {
+  // One line as in Synthesize's voice list; the status only when the run isn't complete.
+  function row(run: RunSummary) {
+    const complete = run.status === 'complete'
+    const steps = complete
+      ? t.stepsCount(formatStep(run.num_iters))
+      : `${run.step !== null ? formatStep(run.step) : '–'} / ${formatStep(run.num_iters)}`
     return (
       <button
         key={run.name}
         type="button"
-        className={`voice-card run-card ${run.name === selected ? 'active' : ''}`}
+        className={`voice-row run-row ${run.name === selected ? 'active' : ''}`}
         onClick={() => onSelect(run.name)}
         aria-current={run.name === selected}
+        title={t.runSteps(run.step !== null ? formatStep(run.step) : '–', formatStep(run.num_iters))}
       >
-        <span className="run-card-head">
-          <span className="voice-name">{run.name}</span>
-          <StatusPill status={run.status} />
-        </span>
-        <ProgressBar value={run.step ?? 0} max={run.num_iters} />
+        <span className="voice-row-name">{run.name}</span>
         <span className="muted">
-          {t.runSteps(run.step !== null ? formatStep(run.step) : '–', formatStep(run.num_iters))}
-          {run.lora_rank !== null && t.rankSuffix(run.lora_rank)}
+          {!complete && <StatusPill status={run.status} />}
+          {[run.lora_rank !== null && t.rank(run.lora_rank), steps].filter(Boolean).join(' · ')}
         </span>
+        {isLive(run) && <ProgressBar value={run.step ?? 0} max={run.num_iters} />}
       </button>
     )
   }
 
   return (
-    <section className="panel run-panel">
+    <section className="panel voice-panel">
       <header className="panel-head">
         <h2>{t.runs}</h2>
         <button type="button" className={`small ${selected === NEW_RUN ? 'primary' : 'ghost'}`} onClick={onNew}>
@@ -104,7 +107,7 @@ export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
                 <span>{engineName(group.id)}</span>
                 <span className="muted">{group.runs.length}</span>
               </button>
-              {group.runs.filter(visible).map(card)}
+              {group.runs.filter(visible).map(row)}
             </div>
           )
         })}
