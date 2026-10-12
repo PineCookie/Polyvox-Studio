@@ -36,4 +36,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           name="polyvox-${GITHUB_REF_NAME}"
-          gh release create "$GITHUB_REF_NAME" "$name.zip" "$name.tar.gz" --title "$GITHUB_REF_NAME" --generate-notes
+          # Hand-written notes for the tag when there are some, else GitHub's generated ones.
+          notes=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
+          gh release create "$GITHUB_REF_NAME" "$name.zip" "$name.tar.gz" --title "$GITHUB_REF_NAME" "$@"
