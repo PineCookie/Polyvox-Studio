@@ -205,7 +205,7 @@ MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         "speaker_model",
         "CAM++ speaker embeddings",
-        "Training: how much samples sound like the dataset's speaker",
+        "Speaker similarity: training samples vs the dataset's voice, and the Other voice? check",
         "iic/speech_campplus_sv_zh-cn_16k-common",
         "iic__speech_campplus_sv_zh-cn_16k-common",
         ("campplus_cn_common.bin",),
@@ -216,7 +216,7 @@ MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         "vocals_model",
         "Mel-Band RoFormer vocals (Kim FT2 bleedless)",
-        "Import: keep only the voice (remove music)",
+        "Clean up: keep only the voice (remove music)",
         "pcunwa/Kim-Mel-Band-Roformer-FT",
         "pcunwa__Kim-Mel-Band-Roformer-FT",
         ("kimmel_unwa_ft2_bleedless.ckpt", "config_kimmel_unwa_ft.yaml"),
@@ -226,7 +226,7 @@ MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         "dereverb_model",
         "Mel-Band RoFormer de-reverb",
-        "Import: remove room reverb",
+        "Clean up: remove room reverb",
         "anvuew/dereverb_mel_band_roformer",
         "anvuew__dereverb_mel_band_roformer",
         ("dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt", "dereverb_mel_band_roformer_anvuew.yaml"),
@@ -237,7 +237,7 @@ MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         "denoise_model",
         "Mel-Band RoFormer denoise",
-        "Import: remove background noise",
+        "Clean up: remove background noise",
         "poiqazwsx/melband-roformer-denoise",
         "aufr33__melband-roformer-denoise",
         ("denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt", "model_mel_band_roformer_denoise.yaml"),
@@ -256,6 +256,86 @@ def _partial_bytes(folder: Path) -> int:
     """Bytes of files being downloaded into ``folder`` (huggingface_hub's .incomplete files)."""
     cache = folder / ".cache" / "huggingface" / "download"
     return sum(p.stat().st_size for p in cache.rglob("*.incomplete")) if cache.is_dir() else 0
+
+
+class _Received:
+    """Bytes the hubs report as they download a file (their progress hooks count here)."""
+
+    def __init__(self) -> None:
+        self.written = 0
+        self.transferred = 0
+        self._lock = threading.Lock()
+
+    @property
+    def bytes(self) -> int:
+        return max(self.written, self.transferred)
+
+    def reset(self) -> None:
+        with self._lock:
+            self.written = self.transferred = 0
+
+    def add(self, n: int, transfer: bool = False) -> None:
+        with self._lock:
+            if transfer:
+                self.transferred += n
+            else:
+                self.written += n
+
+    def hf_bar(self) -> type:
+        """A progress bar class for huggingface_hub that counts into this. A Xet download
+        (also through a mirror) reports through one such bar the bytes received
+        (``update_transfer``, steadily) and written (``update``, in a few large steps
+        as the file is put together); progress follows whichever is further."""
+        from huggingface_hub.utils import tqdm
+
+        received = self
+
+        class Bar(tqdm):
+            def update(self, n=1):
+                if n:
+                    received.add(int(n))
+                return super().update(n)
+
+            def update_transfer(self, n=1) -> None:
+                if n:
+                    received.add(int(n), transfer=True)
+
+            def set_transfer_postfix_str(self, *args, **kwargs) -> None:
+                pass
+
+        return Bar
+
+    def modelscope_callback(self) -> type:
+        """A ModelScope download callback class that counts into this."""
+        from modelscope.hub.callback import ProgressCallback
+
+        received = self
+
+        class Callback(ProgressCallback):
+            def update(self, size: int) -> None:
+                received.add(int(size))
+
+        return Callback
+
+
+def _polled(fn: Callable[[], None], report: Callable[[], None], name: str) -> None:
+    """Run ``fn`` on a thread, calling ``report`` meanwhile (it may raise to cancel:
+    ``fn`` then finishes in the background); re-raise what ``fn`` raised."""
+    failure: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            fn()
+        except BaseException as e:  # re-raised on the caller's thread
+            failure.append(e)
+
+    worker = threading.Thread(target=run, daemon=True, name=name)
+    worker.start()
+    while worker.is_alive():
+        report()
+        worker.join(POLL_S)
+    if failure:
+        raise failure[0]
 
 
 def unpack(archive: Path, folder: Path, files: tuple[str, ...]) -> None:
@@ -285,17 +365,26 @@ def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, pro
     endpoint = endpoint or None
     folder = models_dir / spec.folder
     folder.mkdir(parents=True, exist_ok=True)
-    if spec.hub == "modelscope":  # one call, no byte progress
+    mb = 1 << 20
+    received = _Received()
+    if spec.hub == "modelscope":  # one call; its callback counts the bytes (total: the listed size)
         from modelscope import snapshot_download
 
-        progress(0, spec.size_mb)
+        callbacks = [received.modelscope_callback()]
+        target = folder / ".download" if spec.archive else folder
+        patterns = [spec.archive] if spec.archive else list(spec.files)
+
+        def fetch_all() -> None:
+            snapshot_download(spec.repo, local_dir=str(target), allow_patterns=patterns, progress_callbacks=callbacks)
+
+        _polled(
+            fetch_all,
+            lambda: progress(min(received.bytes // mb, spec.size_mb), spec.size_mb),
+            f"download-{spec.folder}",
+        )
         if spec.archive:
-            staging = folder / ".download"
-            snapshot_download(spec.repo, local_dir=str(staging), allow_patterns=[spec.archive])
-            unpack(staging / spec.archive, folder, spec.files)
-            shutil.rmtree(staging, ignore_errors=True)
-        else:
-            snapshot_download(spec.repo, local_dir=str(folder), allow_patterns=list(spec.files))
+            unpack(target / spec.archive, folder, spec.files)
+            shutil.rmtree(target, ignore_errors=True)
         progress(spec.size_mb, spec.size_mb)
         return
     info = HfApi(endpoint=endpoint).model_info(spec.repo, files_metadata=True)
@@ -305,25 +394,21 @@ def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, pro
         raise FileNotFoundError(f"{spec.repo} has no {', '.join(missing)}.")
     total = sum(sizes[f] for f in spec.files)
     done = sum(sizes[f] for f in spec.files if (folder / f).is_file())
-    mb = 1 << 20
+    bar = received.hf_bar()
     for name in spec.files:
         if (folder / name).is_file():
             continue
-        # Downloaded on a thread so progress (and cancelling) can be polled meanwhile.
-        failure: list[BaseException] = []
+        # Downloaded on a thread so progress (and cancelling) can be polled meanwhile:
+        # the bytes the hub reports, or what is on disk (a resumed file starts there).
+        received.reset()
 
-        def fetch(name: str = name, failure: list[BaseException] = failure) -> None:
-            try:
-                hf_hub_download(spec.repo, name, local_dir=folder, endpoint=endpoint)
-            except BaseException as e:  # re-raised on the job's thread
-                failure.append(e)
+        def fetch(name: str = name) -> None:
+            hf_hub_download(spec.repo, name, local_dir=folder, endpoint=endpoint, tqdm_class=bar)
 
-        worker = threading.Thread(target=fetch, daemon=True, name=f"download-{spec.folder}")
-        worker.start()
-        while worker.is_alive():
-            progress((done + _partial_bytes(folder)) // mb, total // mb)
-            worker.join(POLL_S)
-        if failure:
-            raise failure[0]
+        def report(name: str = name, done: int = done) -> None:
+            in_flight = min(max(received.bytes, _partial_bytes(folder)), sizes[name])
+            progress((done + in_flight) // mb, total // mb)
+
+        _polled(fetch, report, f"download-{spec.folder}")
         done += sizes[name]
         progress(done // mb, total // mb)

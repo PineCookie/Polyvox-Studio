@@ -11,12 +11,14 @@ import logging
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
 MAX_FINISHED = 20  # finished jobs kept for the UI to read
+RATE_WINDOW_S = 5.0  # Job.rate: progress over about this long
 
 
 class JobCancelled(Exception):
@@ -39,20 +41,29 @@ class Job:
     started: float = field(default_factory=time.time)
     finished: float | None = None
     seconds_left: float | None = None  # of the current phase, from its rate so far
+    rate: float | None = None  # done per second over the last few seconds (downloads: MB/s)
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     _phase_start: tuple[float, int] = (0.0, 0)  # (time, done) when the phase began
+    _recent: deque = field(default_factory=deque, repr=False)  # (time, done) of this phase's last RATE_WINDOW_S
 
     def progress(self, phase: str, done: int, total: int) -> None:
         """Report progress; raises JobCancelled if cancellation was requested."""
         now = time.time()
         if phase != self.phase:
-            self._phase_start, self.seconds_left = (now, done), None
+            self._phase_start, self.seconds_left, self.rate = (now, done), None, None
+            self._recent.clear()
         else:
             since, done0 = self._phase_start
             if done > done0 and total > done:
                 self.seconds_left = (now - since) / (done - done0) * (total - done)
             elif total <= done:
                 self.seconds_left = 0.0
+        self._recent.append((now, done))
+        while len(self._recent) > 2 and now - self._recent[1][0] >= RATE_WINDOW_S:
+            self._recent.popleft()
+        t0, d0 = self._recent[0]
+        if now - t0 >= 1.0:
+            self.rate = max(0.0, (done - d0) / (now - t0))
         self.phase, self.done, self.total = phase, done, total
         if self._cancel.is_set():
             raise JobCancelled()

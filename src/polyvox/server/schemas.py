@@ -266,6 +266,7 @@ class JobOut(BaseModel):
     started: float
     finished: float | None
     seconds_left: float | None = None  # of the current phase, from its rate so far
+    rate: float | None = None  # done per second over the last few seconds (downloads: MB/s)
     subject: str = ""  # e.g. the dataset it works on
     label: str = ""  # e.g. which dataset step
 

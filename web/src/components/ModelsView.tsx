@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { cancelJob, downloadModels, listModels } from '../api'
 import type { DownloadJob, ModelInfo, ModelList } from '../api'
+import { formatDuration } from '../format'
 import { useT } from '../i18n'
 import type { Messages } from '../i18n'
 import { useJob } from '../useJob'
@@ -25,6 +26,7 @@ function storedSource(): string | null {
 }
 
 const formatSize = (mb: number) => (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`)
+const formatSpeed = (mbPerS: number) => (mbPerS >= 10 ? `${Math.round(mbPerS)} MB/s` : `${mbPerS.toFixed(1)} MB/s`)
 
 function stateText(m: ModelInfo, t: Messages): [string, string] {
   if (m.state === 'downloaded') return [t.downloaded, 'ok']
@@ -132,7 +134,7 @@ export function ModelsView({ onError, onChanged }: Props) {
                       {m.repo}
                     </a>
                     {m.hub === 'modelscope' && ' (ModelScope)'}
-                    {m.license && ` · ${m.license}`}
+                    {` · ${m.license || t.licenseNotStated}`}
                   </td>
                 </tr>
               )
@@ -189,6 +191,8 @@ export function ModelsView({ onError, onChanged }: Props) {
               <span className="muted">
                 {' '}
                 {formatSize(job.done)} / {formatSize(job.total)}
+                {job.rate != null && job.rate > 0 && ` · ${t.downloadSpeed(formatSpeed(job.rate))}`}
+                {job.seconds_left != null && job.seconds_left > 0 && t.timeLeft(formatDuration(job.seconds_left))}
               </span>
             )}
           </span>

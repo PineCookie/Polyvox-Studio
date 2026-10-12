@@ -46,6 +46,26 @@ def test_seconds_left_from_the_phase_rate(monkeypatch):
     assert job.seconds_left == 0
 
 
+def test_rate_over_the_last_seconds(monkeypatch):
+    from polyvox import jobs
+
+    now = [1000.0]
+    monkeypatch.setattr(jobs.time, "time", lambda: now[0])
+    job = jobs.Job(id="x", kind="download", title="Download")
+    job.progress("model", 0, 1000)
+    assert job.rate is None  # under a second of samples
+    for _ in range(10):  # 10 MB/s for 10 s
+        now[0] += 1
+        job.progress("model", job.done + 10, 1000)
+    assert job.rate == pytest.approx(10)
+    for _ in range(6):  # then 50 MB/s: the rate follows within the window
+        now[0] += 1
+        job.progress("model", job.done + 50, 1000)
+    assert job.rate == pytest.approx(50)
+    job.progress("other", 0, 10)  # a new phase starts over
+    assert job.rate is None
+
+
 def test_job_failure_and_cancel():
     runner = JobRunner()
     failed = wait(runner.start("demo", "Fails", lambda job: 1 / 0))

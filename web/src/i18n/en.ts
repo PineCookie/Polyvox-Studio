@@ -765,6 +765,8 @@ export const en = {
   downloadSelected: (n: number, size: string) => `Download ${n} (${size})`,
   nothingSelected: 'Nothing selected',
   downloadingModel: (name: string) => `Downloading ${name}`,
+  downloadSpeed: (speed: string) => speed,
+  licenseNotStated: 'no license stated',
   downloadCancelled: 'Cancelled; a file in flight finishes in the background, and the rest resumes.',
   downloadedDone: 'Downloaded.',
 }

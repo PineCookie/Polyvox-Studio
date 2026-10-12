@@ -417,6 +417,7 @@ export interface Job<R = unknown> {
   total: number
   /** Estimate for the current phase, from its rate so far; null until it has one. */
   seconds_left: number | null
+  rate: number | null // done per second over the last few seconds (downloads: MB/s)
   error: string | null
   result: R
   subject: string // e.g. the dataset it works on

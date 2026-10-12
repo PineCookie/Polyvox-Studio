@@ -22,6 +22,41 @@ def fake_download(spec, models_dir, endpoint=None, progress=None):
 fake_download.calls = []
 
 
+def test_download_progress_counts_received_bytes_once():
+    """huggingface_hub's Xet reporter, given our bar class, sends bytes received and
+    bytes written through that one bar (not two bars counted twice)."""
+    import logging
+    from types import SimpleNamespace
+
+    from huggingface_hub.utils._xet_progress_reporting import XetDownloadProgressReporter
+
+    received = models._Received()
+    reporter = XetDownloadProgressReporter(
+        reconstruction_desc="model.safetensors", total=100, log_level=logging.WARNING, tqdm_class=received.hf_bar()
+    )
+
+    def report(written, transferred):
+        reporter.update_progress(
+            SimpleNamespace(
+                total_bytes_completed=written,
+                total_transfer_bytes_completed=transferred,
+                total_bytes_completion_rate=None,
+                total_transfer_bytes_completion_rate=None,
+                total_bytes=100,
+            )
+        )
+
+    report(0, 30)  # received, not yet written
+    assert (received.written, received.transferred, received.bytes) == (0, 30, 30)
+    report(60, 55)  # written catches up (compressed transfers can stay below the size)
+    assert (received.written, received.transferred, received.bytes) == (60, 55, 60)
+
+    callback = received.modelscope_callback()("g2pw.zip", 100)  # ModelScope's per-file callback
+    received.reset()
+    callback.update(25)
+    assert received.bytes == 25
+
+
 def test_a_setting_uses_the_downloaded_copy_once_complete(settings):
     spec = models.BY_SETTING["asr_model"]
     assert settings.model_path("asr_model") == "Qwen/Qwen3-ASR-1.7B-hf"  # not downloaded: the hub id
