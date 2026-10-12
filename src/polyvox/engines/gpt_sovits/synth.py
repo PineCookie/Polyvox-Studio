@@ -163,15 +163,9 @@ class Pipeline:
         hps = Config(saved["config"])
         model = {**hps["model"], "semantic_frame_rate": "25hz", "version": model_version}
         sizes = (hps.data.filter_length // 2 + 1, hps.train.segment_size // hps.data.hop_length)
-        if model_version == V4:
-            sovits = SynthesizerTrnV3(*sizes, n_speakers=hps.data.n_speakers, **model)
-            weights = saved["weight"]
-            if lora:  # the webui's v4 voices: the trained parts over the base, with the DiT's LoRA merged
-                weights = {**load_sovits_new(self.base_weights(V4)[0])["weight"], **weights}
-                weights = merge_lora(weights)
-        else:
-            sovits = SynthesizerTrn(*sizes, n_speakers=hps.data.n_speakers, **model)
-            weights = saved["weight"]
+        model_class = SynthesizerTrnV3 if model_version == V4 else SynthesizerTrn
+        sovits = model_class(*sizes, n_speakers=hps.data.n_speakers, **model)
+        weights = self.plain_weights(saved, lora)
         if hasattr(sovits, "enc_q"):
             del sovits.enc_q  # training only
         missing, _ = sovits.load_state_dict(weights, strict=False)
@@ -193,6 +187,16 @@ class Pipeline:
             hps=hps,
             max_sec=float(gpt_saved["config"]["data"]["max_sec"]),
         )
+
+    def plain_weights(self, saved: dict, lora: bool) -> dict[str, torch.Tensor]:
+        """A loaded SoVITS file's weights as a full state dict: v4 LoRA voices
+        (the webui's and ours) hold only their trained parts and the DiT's LoRA,
+        laid over the v4 base and merged."""
+        from ...vendor.gpt_sovits.process_ckpt import load_sovits_new
+
+        if not lora:
+            return saved["weight"]
+        return merge_lora({**load_sovits_new(self.base_weights(V4)[0])["weight"], **saved["weight"]})
 
     def _ensure_vocoder(self) -> torch.nn.Module:
         """v4's vocoder (mel -> 48 kHz), shared by all v4 voices."""

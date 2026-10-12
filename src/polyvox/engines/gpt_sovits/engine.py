@@ -223,7 +223,11 @@ class GptSovitsEngine(Engine):
             raise ValueError(f"GPT-SoVITS can't train yet: {reason}")
         if not params.sovits_epochs and not params.gpt_epochs:
             raise ValueError("Train SoVITS, the GPT or both: set their epochs.")
+        v4 = params.gsv_version == V4
+        if v4 and not self.settings.model_path("gsv_v4_model"):
+            raise ValueError("GPT-SoVITS v4 isn't downloaded yet (Models: GPT-SoVITS v4).")
         from ...data import manifests
+        from .features import feature_version
         from .worker import plan_steps
 
         dataset = manifests.resolve(self.settings.data_dir, params.dataset)
@@ -232,7 +236,7 @@ class GptSovitsEngine(Engine):
         sovits_steps, gpt_steps = plan_steps(
             clips, params.batch_size, params.sovits_epochs, clips, params.gpt_batch_size, params.gpt_epochs
         )
-        return {
+        config = {
             "version": params.gsv_version,
             "pretrained_path": self.settings.model_path("gsv_model"),
             "g2pw_path": self.settings.model_path("gsv_g2pw_model"),
@@ -247,6 +251,9 @@ class GptSovitsEngine(Engine):
             "gpt_batch_size": params.gpt_batch_size,
             "log_interval": params.log_interval,
             "reference": {"audio": str(audio), "text": text, "source": f"{params.dataset}: {audio.name}"},
-            # Clip features, shared by the dataset's runs (hidden folders aren't datasets).
-            "feature_cache": str(dataset.parent / ".cache" / f"gpt_sovits_{params.gsv_version}.pt"),
+            # Clip features, shared by the dataset's runs (hidden folders aren't datasets; v4 uses v2ProPlus's).
+            "feature_cache": str(dataset.parent / ".cache" / f"gpt_sovits_{feature_version(params.gsv_version)}.pt"),
         }
+        if v4:  # SoVITS as a LoRA on the mel DiT
+            config |= {"v4_path": self.settings.model_path("gsv_v4_model"), "lora_rank": params.lora_rank}
+        return config

@@ -29,8 +29,8 @@ const checkpointId = (runPath: string, step: number) => `${runPath}/checkpoints/
 
 // The losses a run's worker logs, in order (the first two charted up front);
 // before its first step, the ones its engine will log.
-// GPT-SoVITS: each stage's main loss up front (SoVITS mel, then the GPT's).
-const FIRST_LOSSES: Record<string, string[]> = { gpt_sovits: ['loss/mel', 'loss/gpt'] }
+// GPT-SoVITS: each stage's main loss up front (SoVITS mel, or v4's flow matching, then the GPT's).
+const FIRST_LOSSES: Record<string, string[]> = { gpt_sovits: ['loss/mel', 'loss/cfm', 'loss/gpt'] }
 const DEFAULT_LOSSES = ['loss/diff', 'loss/stop']
 
 function lossKeys(run: Run): string[] {

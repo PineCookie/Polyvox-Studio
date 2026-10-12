@@ -66,8 +66,13 @@ export function fullSteps(clips: number, params: Params): { sovits: number; gpt:
 /** The batch that fits the GPU (its profile's micro-batch for the params' engine),
  * accumulated to the same effective batch: smaller cards train slower, not differently.
  * `full`: a full fine-tuning engine, whose batch is not accumulated. */
+// GPT-SoVITS v4's SoVITS stage (a LoRA on its mel DiT): the batch it was tuned at
+// (on smaller GPUs the worker recomputes activations instead of shrinking it).
+export const V4_BATCH = 4
+
 export function forGpu(params: Params, gpu: GpuProfile, full = false): Params {
   const batch = Math.max(1, Math.min(gpu.train_batches?.[params.engine] ?? gpu.train_batch, EFFECTIVE_BATCH))
+  if (full && params.gsv_version === 'v4') return { ...params, batch_size: V4_BATCH, gpt_batch_size: batch }
   if (full) return { ...params, batch_size: batch, grad_accum_steps: 1, gpt_batch_size: batch } // both stages, as the webui
   return { ...params, batch_size: batch, grad_accum_steps: Math.max(1, Math.round(EFFECTIVE_BATCH / batch)) }
 }
@@ -127,7 +132,7 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     valid_interval: num(config.valid_interval, d.valid_interval),
     save_interval: num(config.save_interval, d.save_interval),
     num_workers: num(config.num_workers, d.num_workers),
-    lora_rank: num(lora.r, d.lora_rank),
+    lora_rank: num(lora.r ?? config.lora_rank, d.lora_rank), // GPT-SoVITS v4: its DiT LoRA's rank
     lora_alpha: num(lora.alpha, d.lora_alpha),
     lora_dropout: num(lora.dropout, d.lora_dropout),
     enable_lm: flag(lora.enable_lm, d.enable_lm),

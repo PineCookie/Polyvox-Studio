@@ -43,6 +43,9 @@ class Profile:
     dots_plain_batch: int = 0
     # GPT-SoVITS training batch of both stages (as the webui: no accumulation for SoVITS, a GAN)
     gsv_train_batch: int = 1
+    # GPT-SoVITS v4's SoVITS stage (a LoRA on its mel DiT): the largest batch that
+    # trains without gradient checkpointing (larger ones checkpoint: engines.gpt_sovits.worker)
+    gsv_v4_plain_batch: int = 0
 
     def public(self) -> dict:
         train_batches = {
@@ -68,11 +71,25 @@ PROFILES = (  # (at least this many GB, profile), largest first
             dots_train_batch=4,
             dots_plain_batch=4,
             gsv_train_batch=8,
+            gsv_v4_plain_batch=4,
         ),
     ),
     (
         11.0,
-        Profile("12 GB", 200, 160, 2, True, False, False, 2, dots_train_batch=8, dots_plain_batch=2, gsv_train_batch=8),
+        Profile(
+            "12 GB",
+            200,
+            160,
+            2,
+            True,
+            False,
+            False,
+            2,
+            dots_train_batch=8,
+            dots_plain_batch=2,
+            gsv_train_batch=8,
+            gsv_v4_plain_batch=2,
+        ),
     ),
     (7.0, Profile("8 GB", 60, 80, 1, True, True, True, 1, True, dots_train_batch=4, gsv_train_batch=4)),
     (
@@ -102,6 +119,7 @@ CPU = Profile(
     1,
     note="No CUDA GPU: everything runs on the CPU (slow).",
     dots_plain_batch=64,
+    gsv_v4_plain_batch=64,
 )
 
 

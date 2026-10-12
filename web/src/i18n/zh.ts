@@ -491,6 +491,7 @@ export const zh: Messages = {
     'loss/fm': '特征匹配损失（SoVITS）',
     'loss/gen': '生成器损失（SoVITS）',
     'loss/disc': '判别器损失（SoVITS）',
+    'loss/cfm': '流匹配损失（SoVITS v4）',
     'loss/gpt': 'GPT 损失（每个 token）',
   },
   lossShort: {
@@ -501,6 +502,7 @@ export const zh: Messages = {
     'loss/fm': '特征匹配',
     'loss/gen': '生成器',
     'loss/disc': '判别器',
+    'loss/cfm': '流匹配',
     'loss/gpt': 'GPT',
   },
   moreLosses: '更多损失',
@@ -582,6 +584,7 @@ export const zh: Messages = {
   stepsTimesClips: (steps, per) => `${steps} 步 × 每步 ${per} 条`,
   rankAlpha: (r, alpha) => `秩 ${r} · alpha ${alpha}`,
   fullFinetune: '全量微调',
+  v4Lora: (rank: number) => `SoVITS：梅尔 DiT 上的 LoRA（秩 ${rank}）；GPT：全量微调`,
   progressDisabled: '开始训练后才会显示损失和样本',
   datasetLabel: '数据集',
   noDatasetsYet: '还没有数据集。请在「数据集」页从原始录音或标注列表准备一个。',

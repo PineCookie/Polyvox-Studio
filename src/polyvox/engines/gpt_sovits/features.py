@@ -8,7 +8,7 @@ run and cached in ``<run>/cache/``:
     bert      RoBERTa features per phoneme [1024, phones] (zeros for English; float16)
     wav       the 32 kHz audio SoVITS learns to produce (int16)
     ssl       HuBERT features of that audio [768, frames at 50 Hz] (float16)
-    sv        speaker embedding (ERes2NetV2) [20480] (float16)
+    sv        speaker embedding (ERes2NetV2) [20480] (float16; v2Pro only, but cheap)
     semantic  the base model's semantic tokens (25 Hz; int16): the GPT stage's targets
 
 Two differences from upstream: text goes through the Chinese / English front
@@ -107,8 +107,15 @@ def clip_key(record: dict) -> str:
     return hashlib.sha1(f"{path.resolve()}|{stamp}|{record['text']}".encode()).hexdigest()
 
 
+def feature_version(version: str) -> str:
+    """The version whose features a run trains on: v4's quantizer is
+    v2ProPlus's (byte-identical) and the front ends are shared, so v4 runs use
+    that version's features and cache."""
+    return "v2ProPlus" if version == "v4" else version
+
+
 def cache_meta(base_dir: Path, version: str) -> dict:
-    return {"version": CACHE_VERSION, "models": str(base_dir), "model_version": version}
+    return {"version": CACHE_VERSION, "models": str(base_dir), "model_version": feature_version(version)}
 
 
 def extract(

@@ -115,6 +115,14 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
       })
       return
     }
+    if (key === 'gsv_version') {
+      // v4's SoVITS stage trains at its own batch; the others at the GPU's.
+      setBase((p) => {
+        const next = { ...p, gsv_version: value as string }
+        return gpu ? forGpu(next, gpu, true) : next
+      })
+      return
+    }
     setBase((p) => ({ ...p, [key]: value }))
   }
 
@@ -219,7 +227,11 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
               </span>
               <span className="muted">
                 {engines.length > 1 && `${engineName} · `}
-                {full ? t.fullFinetune : t.rankAlpha(params.lora_rank, params.lora_alpha)}
+                {full && params.gsv_version === 'v4'
+                  ? t.v4Lora(params.lora_rank)
+                  : full
+                    ? t.fullFinetune
+                    : t.rankAlpha(params.lora_rank, params.lora_alpha)}
               </span>
             </>
           )}

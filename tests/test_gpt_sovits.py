@@ -358,6 +358,11 @@ def test_trained_sovits_weights_are_saved_as_the_webui_saves_them(lora_dir, tmp_
     _, gpt = webui_weights(tmp_path / "webui")
     voices.import_webui(lora_dir, "trained", path, gpt, None)  # the same checks a webui voice passes
 
+    v4 = tmp_path / "v4.pth"  # v4: the LoRA's rank too, which tells the webui it holds only the trained parts
+    save_sovits(v4, {"wns1.w": torch.ones(2)}, {"model": {}}, "1epoch_10iteration", "v4", lora_rank=32)
+    assert get_sovits_version_from_path_fast(str(v4)) == ["v2", "v4", True]
+    assert load_sovits_new(v4)["lora_rank"] == 32
+
 
 def test_a_checkpoint_without_gpt_weights_speaks_with_the_base_gpt(engine, pipeline, lora_dir, tmp_path):
     folder = make_voice(lora_dir, tmp=tmp_path)
@@ -614,6 +619,75 @@ def test_training_can_start_from_v2pro(engine, data_dir, tmp_path):
     params = TrainParams(name="run_v", engine="gpt_sovits", dataset="speaker_a/train.jsonl", gsv_version="v2Pro")
     config = engine.training_config(params, tmp_path / "run_v", run_manifest, None)
     assert config["version"] == "v2Pro" and config["feature_cache"].endswith("gpt_sovits_v2Pro.pt")
+
+
+def test_v4_training_is_a_lora_on_v2proplus_features(engine, data_dir, tmp_path):
+    import dataclasses
+
+    from polyvox.training import TrainParams
+
+    dataset(data_dir, [("good", 6.0, "我们今天就先说到这里，下次再见吧。", None)])
+    run_manifest = tmp_path / "train.jsonl"
+    manifests.write_manifest([{"audio": "wavs/0.wav", "text": "示例。"}], run_manifest)
+    params = TrainParams(
+        name="run_v4", engine="gpt_sovits", dataset="speaker_a/train.jsonl", gsv_version="v4", lora_rank=16
+    )
+    with pytest.raises(ValueError, match="v4 isn't downloaded"):
+        engine.training_config(params, tmp_path / "run_v4", run_manifest, None)
+    engine.settings = dataclasses.replace(engine.settings, gsv_v4_model=str(tmp_path / "v4"))
+    config = engine.training_config(params, tmp_path / "run_v4", run_manifest, None)
+    assert (config["version"], config["lora_rank"], config["v4_path"]) == ("v4", 16, str(tmp_path / "v4"))
+    assert config["feature_cache"].endswith("gpt_sovits_v2ProPlus.pt")  # v4 shares v2ProPlus's quantizer
+
+
+def test_v4s_dit_lora_learns_the_same_with_gradient_checkpointing():
+    from polyvox.engines.gpt_sovits.lora import DitLora
+    from polyvox.vendor.gpt_sovits.f5_tts.model import DiT
+
+    torch.manual_seed(0)
+    cfm = torch.nn.Module()
+    cfm.estimator = DiT(dim=64, depth=2, heads=2, dim_head=32, ff_mult=2, mel_dim=100, text_dim=16, conv_layers=1)
+    cfm.estimator.requires_grad_(False)
+    lora = DitLora(cfm, rank=4)
+    for b in lora.b:
+        torch.nn.init.normal_(b)
+    inputs = (torch.randn(2, 100, 30), torch.randn(2, 100, 30), torch.tensor([30, 24]), torch.tensor([0.3, 0.7]),
+              torch.tensor([0.0, 0.0]), torch.randn(2, 16, 30))  # fmt: skip
+    grads = []
+    for checkpointing in (False, True):
+        lora.zero_grad()
+        torch.manual_seed(1)  # the same dropout masks (checkpointing replays the RNG state)
+        cfm.estimator(*inputs, use_grad_ckpt=checkpointing).square().mean().backward()
+        grads.append(torch.cat([p.grad.flatten() for p in lora.parameters()]))
+    assert grads[0].abs().sum() > 0 and torch.allclose(grads[0], grads[1], atol=1e-6)
+
+
+def test_v4s_dit_lora_starts_as_no_change_and_merges_into_the_weights():
+    from polyvox.engines.gpt_sovits.lora import DitLora
+    from polyvox.vendor.gpt_sovits.f5_tts.model import DiT
+
+    torch.manual_seed(0)
+    cfm = torch.nn.Module()
+    cfm.estimator = DiT(
+        dim=64, depth=2, heads=2, dim_head=32, ff_mult=2, mel_dim=100, text_dim=16, conv_layers=1
+    ).eval()
+    inputs = (torch.randn(1, 100, 30), torch.randn(1, 100, 30), torch.tensor([30]), torch.tensor([0.3]),
+              torch.tensor([0.0]), torch.randn(1, 16, 30))  # fmt: skip
+    with torch.no_grad():
+        plain = cfm.estimator(*inputs)
+        lora = DitLora(cfm, rank=4)
+        assert len(lora.names) == 2 * 4 and torch.equal(cfm.estimator(*inputs), plain)  # B starts at zero
+        for b in lora.b:
+            b.normal_()
+        hooked = cfm.estimator(*inputs)
+        assert not torch.allclose(hooked, plain)
+        merged = lora.merged_into({f"cfm.{k}": v for k, v in cfm.state_dict().items()})
+        lora.remove()
+        cfm.load_state_dict({k.removeprefix("cfm."): v for k, v in merged.items()})
+        assert torch.allclose(cfm.estimator(*inputs), hooked, atol=1e-4)
+    assert sorted(lora.peft_state())[0] == (
+        "cfm.base_model.model.estimator.transformer_blocks.0.attn.to_k.lora_A.default.weight"
+    )
 
 
 # --------------------------------------------------------------------------- packages

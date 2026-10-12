@@ -519,6 +519,7 @@ export const en = {
     'loss/fm': 'Feature matching loss (SoVITS)',
     'loss/gen': 'Generator loss (SoVITS)',
     'loss/disc': 'Discriminator loss (SoVITS)',
+    'loss/cfm': 'Flow-matching loss (SoVITS v4)',
     'loss/gpt': 'GPT loss (per token)',
   } as Record<string, string>,
   lossShort: {
@@ -529,6 +530,7 @@ export const en = {
     'loss/fm': 'Feature matching',
     'loss/gen': 'Generator',
     'loss/disc': 'Discriminator',
+    'loss/cfm': 'Flow matching',
     'loss/gpt': 'GPT',
   } as Record<string, string>,
   moreLosses: 'More losses',
@@ -611,6 +613,7 @@ export const en = {
   stepsTimesClips: (steps: string, per: number) => `${steps} steps × ${per} clips`,
   rankAlpha: (r: number, alpha: number) => `rank ${r} · alpha ${alpha}`,
   fullFinetune: 'full fine-tuning',
+  v4Lora: (rank: number) => `SoVITS: LoRA r${rank} on the mel DiT; GPT: full fine-tuning`,
   progressDisabled: 'Loss and samples appear once training starts',
   datasetLabel: 'Dataset',
   noDatasetsYet: 'No datasets yet. Prepare one from raw recordings or lists in the Prepare tab.',

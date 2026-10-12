@@ -6,7 +6,7 @@ import { OPTIMIZER_LR, type Params } from '../trainParams'
 type NumericKey = { [K in keyof Params]: Params[K] extends number ? K : never }[keyof Params]
 type FlagKey = 'enable_lm' | 'enable_dit' | 'enable_proj'
 // GPT-SoVITS base models a run can start from (TrainParams.gsv_version), the default first.
-const GSV_VERSIONS = ['v2ProPlus', 'v2Pro']
+const GSV_VERSIONS = ['v2ProPlus', 'v2Pro', 'v4']
 
 interface Props {
   params: Params
@@ -108,7 +108,7 @@ export function ParamsFields({
         ) : (
           numberField('num_iters', { min: 1, step: 100 })
         )}
-        {lora && numberField('lora_rank', { min: 1, max: 512 })}
+        {(lora || params.gsv_version === 'v4') && numberField('lora_rank', { min: 1, max: 512 })}
         {lora && numberField('lora_alpha', { min: 0.1, step: 'any' })}
         {lora && (
           <label className="field">

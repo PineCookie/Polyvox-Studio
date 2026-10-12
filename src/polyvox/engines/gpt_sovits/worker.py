@@ -1,4 +1,4 @@
-"""Training subprocess for GPT-SoVITS v2Pro / v2ProPlus voices.
+"""Training subprocess for GPT-SoVITS v2Pro / v2ProPlus / v4 voices.
 
 ``python -m polyvox.engines.gpt_sovits.worker <train_config.yaml> --samples-dir
 <dir> --stop-file <path> [--parent-pid <pid>]``
@@ -24,6 +24,11 @@ Full fine-tuning, as the GPT-SoVITS webui trains voices:
    warmup-cosine schedule is pinned to that in its code); float16 autocast with
    a gradient scaler. Clips as upstream keeps them: up to 54 s, 3-25 phonemes
    per second.
+
+v4 (train_sovits_v4) replaces stage 2 with upstream's s2_train_v3_lora.py: a
+LoRA on the mel DiT plus the parts around it, flow-matching loss, no
+discriminator; it trains on the same features (v4 shares v2ProPlus's
+quantizer) and its GPT stage is the same.
 
 Batches are grouped by length like upstream's bucket samplers, but each epoch
 is exactly ceil(clips / batch) batches, so the steps are known once the
@@ -68,6 +73,14 @@ C_MEL, C_KL = 45.0, 1.0
 # Upstream keeps clips of 0.6-54 s, and its bucket sampler only 32 < frames <= 1900 (50 Hz).
 MIN_FRAMES, MAX_FRAMES = 33, 1900
 BUCKETS = (32, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900)
+# v4 (s2_train_v3_lora.py): its bucket sampler keeps 32 < frames <= 1000 (20 s); LoRA rank as the webui's default.
+V4 = "v4"
+V4_MAX_FRAMES = 1000
+V4_BUCKETS = (32, 300, 400, 500, 600, 700, 800, 900, 1000)
+V4_RANK = 32
+# v4's mel target: 32 kHz, n_fft / window 1280, hop 320, 100 bands, scaled from [-12, 2] to [-1, 1].
+V4_MEL = (1280, 320, 100)
+V4_SPEC_MIN, V4_SPEC_MAX = -12.0, 2.0
 # Logged SoVITS losses (the quantizer's commitment loss is in the total too, but stays 0 with it frozen).
 NAMES = ("loss/mel", "loss/kl", "loss/fm", "loss/gen", "loss/disc")
 # Upstream's GPT training (s1_train.py, configs/s1longer-v2.yaml).
@@ -124,8 +137,26 @@ class LengthBatches:
         return self.epoch(e)[i]
 
 
-def sovits_keeps(clip: dict) -> bool:
-    return MIN_FRAMES <= len(clip["wav"]) // 640 <= MAX_FRAMES
+def sovits_keeps(clip: dict, version: str = "v2ProPlus") -> bool:
+    return MIN_FRAMES <= len(clip["wav"]) // 640 <= (V4_MAX_FRAMES if version == V4 else MAX_FRAMES)
+
+
+def v4_checkpointing(batch_size: int) -> bool:
+    """Recompute the DiT's activations in the backward pass when the batch is
+    larger than what trains without it on this GPU (vram.Profile.
+    gsv_v4_plain_batch); POLYVOX_TRAIN_CHECKPOINT 1 / 0 forces it on / off."""
+    from ... import vram
+
+    forced = os.environ.get("POLYVOX_TRAIN_CHECKPOINT")
+    if forced in ("0", "1"):
+        return forced == "1"
+    return batch_size > vram.detect("cuda")[1].gsv_v4_plain_batch
+
+
+def v4_bucket(frames: int) -> int:
+    import bisect
+
+    return bisect.bisect_left(V4_BUCKETS, frames)
 
 
 def gpt_keeps(clip: dict) -> bool:
@@ -170,12 +201,15 @@ def format_metrics(values: dict[str, float]) -> str:
     return ", ".join(fmt(k, v) for k, v in values.items())
 
 
-def save_sovits(path: Path, weights: dict, config: dict, info: str, version: str) -> None:
+def save_sovits(path: Path, weights: dict, config: dict, info: str, version: str, lora_rank: int = 0) -> None:
     """Weights as the webui saves a voice (process_ckpt.savee): float16, no
-    posterior encoder, the version tag over the zip signature."""
+    posterior encoder, the version tag over the zip signature (v4: with its
+    LoRA rank)."""
     from ...vendor.gpt_sovits.process_ckpt import my_save2
 
     opt = {"weight": {k: v.half() for k, v in weights.items() if "enc_q" not in k}, "config": config, "info": info}
+    if lora_rank:
+        opt["lora_rank"] = lora_rank
     tmp = path.with_name(f".{path.name}.tmp")
     my_save2(opt, str(tmp), version)
     tmp.replace(path)
@@ -229,6 +263,8 @@ class Run:
 
         t0 = time.time()
         self.pipeline = Pipeline(self.base_dir, Path(config["g2pw_path"]), "cuda")
+        if config.get("v4_path"):
+            self.pipeline.v4_dir = Path(config["v4_path"])
         self.voice = self.pipeline.load_voice(*self.pipeline.base_weights(self.version))
         log(f"GPT-SoVITS {self.version} front ends loaded in {time.time() - t0:.0f} s.")
         if voices.read_reference(self.run_dir) is None:  # copied into the run once
@@ -533,6 +569,181 @@ def train_sovits(run: Run, clips: list[dict], val_records: list[dict], step: int
     return step
 
 
+def train_sovits_v4(
+    run: Run, clips: list[dict], val_records: list[dict], step: int, end: int, state: dict | None
+) -> int:
+    """v4's SoVITS steps ``step + 1 .. end``, as upstream's s2_train_v3_lora.py:
+    the text side (HuBERT projection, quantizer, text encoder) frozen, the base
+    DiT frozen with a LoRA on its attention, the rest (reference encoder,
+    bridge, WaveNet) trained in full; flow-matching loss on the mel (no
+    discriminator); AdamW over all of it, lr x 0.999875 per epoch, float16
+    autocast with a gradient scaler. Returns the last step done."""
+    import torch
+    import torch.nn.functional as F
+
+    from ...vendor.gpt_sovits.module.mel_processing import spec_to_mel_torch, spectrogram_torch
+    from ...vendor.gpt_sovits.module.models import SynthesizerTrnV3
+    from ...vendor.gpt_sovits.process_ckpt import load_sovits_new
+    from . import voices
+    from .lora import PEFT_PREFIX, DitLora
+    from .synth import Config
+
+    dev, config = run.dev, run.config
+    pretrained = load_sovits_new(run.pipeline.base_weights(V4)[0])
+    hps = Config(pretrained["config"])
+    data = hps.data
+    model_cfg = {
+        **pretrained["config"]["model"],
+        "version": V4,
+        "semantic_frame_rate": "25hz",
+        "freeze_quantizer": True,
+    }
+    hop = int(data.hop_length)
+    net_g = SynthesizerTrnV3(
+        data.filter_length // 2 + 1, int(hps.train.segment_size) // hop, n_speakers=data.n_speakers, **model_cfg
+    ).to(dev)
+    net_g.load_state_dict(pretrained["weight"], strict=False)
+    net_g.cfm.requires_grad_(False)  # the base DiT stays as it is; its LoRA learns
+    rank = int(config.get("lora_rank") or V4_RANK)
+    lora = DitLora(net_g.cfm, rank)
+    frozen = {n for n, p in net_g.named_parameters() if not p.requires_grad}
+    params = [p for p in net_g.parameters() if p.requires_grad] + list(lora.parameters())
+    lr = float(config["learning_rate"])
+    optim = torch.optim.AdamW(params, lr, betas=BETAS, eps=EPS)
+    scaler = torch.amp.GradScaler("cuda")
+    checkpointing = v4_checkpointing(int(config["batch_size"]))
+
+    def trained() -> dict[str, torch.Tensor]:
+        """What training changes (frozen parameters left out; buffers kept, as upstream's savee)."""
+        return {k: v for k, v in net_g.state_dict().items() if k not in frozen}
+
+    if state is not None:
+        net_g.load_state_dict(state["net_g"], strict=False)
+        lora.load_state_dict(state["lora"])
+        optim.load_state_dict(state["optim"])
+        scaler.load_state_dict(state["scaler"])
+
+    batch_size = int(config["batch_size"])
+    batches = LengthBatches(
+        [len(c["wav"]) // hop for c in clips], batch_size, seed=int(config.get("seed") or 0), bucket=v4_bucket
+    )
+    per_epoch = batches.per_epoch
+    log(f"SoVITS (v4, LoRA rank {rank}): {len(clips)} clips, batch {batch_size}, {per_epoch} steps per epoch, "
+        f"steps {step + 1}-{end}{', gradient checkpointing' if checkpointing else ''}.")  # fmt: skip
+    saved_config = {
+        **pretrained_config_without_paths(hps),
+        "train": {
+            **dict(hps["train"]),
+            "epochs": math.ceil(end / per_epoch),
+            "learning_rate": lr,
+            "batch_size": batch_size,
+            "fp16_run": True,
+            "grad_ckpt": checkpointing,
+            "lora_rank": str(rank),  # as the webui records it
+        },
+        "model": model_cfg,
+        "version": V4,
+        "name": run.run_dir.name,
+    }
+
+    def to_voice() -> None:
+        run.voice.sovits.load_state_dict(lora.merged_into(net_g.state_dict()), strict=False)
+
+    def save(at: int) -> None:
+        folder = run.checkpoint(at, "sovits", at / per_epoch)
+        info = f"{math.ceil(at / per_epoch)}epoch_{at}iteration"
+        # As the webui's peft-wrapped model names them: the DiT's keys under the peft prefix, plus the LoRA.
+        weights = {(PEFT_PREFIX + k[4:] if k.startswith("cfm.") else k): v for k, v in trained().items()}
+        save_sovits(folder / voices.SOVITS_FILE, weights | lora.peft_state(), saved_config, info, V4, rank)
+        (folder / voices.GPT_FILE).unlink(missing_ok=True)  # this stage's voices speak with the base GPT
+        run.save_state(
+            at,
+            {
+                "stage": "sovits",
+                "net_g": trained(),
+                "lora": lora.state_dict(),
+                "optim": optim.state_dict(),
+                "scaler": scaler.state_dict(),
+            },
+        )
+
+    n_fft, mel_hop, bands = V4_MEL
+
+    def collate(items: list[dict]) -> dict:
+        """A batch on the GPU as upstream's TextAudioSpeakerCollateV4 pads it,
+        spectrogram and normalized mel computed here (upstream: in its loader)."""
+        specs, mels, ssls = [], [], []
+        for c in items:
+            y = c["wav"].to(dev, non_blocking=True).float()[None] / 32768
+            spec = spectrogram_torch(y, data.filter_length, data.sampling_rate, hop, data.win_length)[0]
+            mel = spec_to_mel_torch(spectrogram_torch(y, n_fft, 32000, mel_hop, n_fft), n_fft, bands, 32000, 0, None)
+            mel = (mel[0] - V4_SPEC_MIN) / (V4_SPEC_MAX - V4_SPEC_MIN) * 2 - 1
+            ssl = c["ssl"].to(dev).float()
+            n = spec.shape[-1]
+            ssl = F.pad(ssl[None], (0, n - ssl.shape[-1]), mode="replicate")[0] if ssl.shape[-1] < n else ssl[:, :n]
+            specs.append(spec)
+            mels.append(mel)
+            ssls.append(ssl)
+        b = len(items)
+        max_spec = 2 * (max(s.shape[-1] for s in specs) // 2 + 1)
+        max_text = max(len(c["phones"]) for c in items)
+        out = {
+            "ssl": torch.zeros(b, ssls[0].shape[0], max_spec, device=dev),
+            "spec": torch.zeros(b, specs[0].shape[0], max_spec, device=dev),
+            "mel": torch.zeros(b, bands, max_spec * 2, device=dev),
+            "text": torch.zeros(b, max_text, dtype=torch.long, device=dev),
+        }
+        for i, c in enumerate(items):
+            out["ssl"][i, :, : ssls[i].shape[-1]] = ssls[i]
+            out["spec"][i, :, : specs[i].shape[-1]] = specs[i]
+            out["mel"][i, :, : mels[i].shape[-1]] = mels[i]
+            out["text"][i, : len(c["phones"])] = c["phones"].to(dev).long()
+        out["ssl_lengths"] = torch.tensor([s.shape[-1] for s in ssls], device=dev)
+        out["spec_lengths"] = torch.tensor([s.shape[-1] for s in specs], device=dev)
+        out["mel_lengths"] = torch.tensor([m.shape[-1] for m in mels], device=dev)
+        out["text_lengths"] = torch.tensor([len(c["phones"]) for c in items], device=dev)
+        return out
+
+    def train_step(b: dict) -> dict[str, torch.Tensor]:
+        with torch.autocast("cuda", dtype=torch.float16):
+            loss = net_g(
+                b["ssl"], b["spec"], b["mel"], b["ssl_lengths"], b["spec_lengths"],
+                b["text"], b["text_lengths"], b["mel_lengths"], use_grad_ckpt=checkpointing,
+            )  # fmt: skip
+        optim.zero_grad(set_to_none=True)
+        scaler.scale(loss).backward()
+        scaler.unscale_(optim)
+        norm = grad_norm(params)
+        scaler.step(optim)
+        scaler.update()
+        return {"loss/cfm": loss.detach(), "grad_norm": norm}
+
+    if step == 0:
+        run.samples(0, val_records)  # the base model, for comparison
+    net_g.train()
+    run.reset_log()
+    sample_every, save_every = per_epoch * SAMPLE_EPOCHS, per_epoch * SAVE_EPOCHS["sovits"]
+    while step < end and not run.stop.is_set():
+        epoch = step // per_epoch
+        for g in optim.param_groups:
+            g["lr"] = lr * LR_DECAY ** (epoch + 1)  # upstream's ExponentialLR, stepped once before epoch 1
+        values = train_step(collate([clips[i] for i in batches.batch(step)]))
+        step += 1
+        run.record(step, values, {"lr": optim.param_groups[0]["lr"], "epoch": step / per_epoch}, last=step == end)
+        if step < end and step % sample_every == 0:
+            to_voice()
+            run.samples(step, val_records)
+        if step < end and step % save_every == 0:
+            save(step)
+    if step == end:
+        to_voice()
+        run.samples(step, val_records)
+    if step > 0 and not (run.save_dir / f"step_{step:07d}" / voices.SOVITS_FILE).is_file():
+        save(step)
+    lora.remove()
+    return step
+
+
 def train_gpt(
     run: Run, clips: list[dict], val_records: list[dict], start: int, step: int, end: int, state: dict | None
 ) -> int:
@@ -545,13 +756,16 @@ def train_gpt(
     from ...vendor.gpt_sovits.AR.modules.optim import ScaledAdam
     from ...vendor.gpt_sovits.process_ckpt import load_sovits_new, load_weights
     from . import voices
+    from .synth import sovits_version
 
     dev, config = run.dev, run.config
     # The SoVITS weights this stage's voices speak with.
     sovits_file = run.save_dir / f"step_{start:07d}" / voices.SOVITS_FILE if start else None
     if sovits_file is None or not sovits_file.is_file():
         sovits_file = run.pipeline.base_weights(run.version)[0]
-    run.voice.sovits.load_state_dict(load_sovits_new(sovits_file)["weight"], strict=False)
+    weights = run.pipeline.plain_weights(load_sovits_new(sovits_file), sovits_version(sovits_file)[1])
+    run.voice.sovits.load_state_dict(weights, strict=False)
+    del weights
 
     base = load_weights(run.pipeline.base_weights(run.version)[1])
     gpt_config = {**base["config"], "data": {**base["config"]["data"], "max_sec": GPT_MAX_SEC}}
@@ -681,7 +895,9 @@ def main() -> None:
     val_records = [dict(e) for e in manifests.read_manifest(val_path)[0]] if val_path and val_path.is_file() else []
 
     # The dataset's cache (shared by its runs); runs from before that: their own folder.
-    cache = config.get("feature_cache") or run.run_dir / "cache" / f"gpt_sovits_{run.version}.pt"
+    cache = (
+        config.get("feature_cache") or run.run_dir / "cache" / f"gpt_sovits_{features.feature_version(run.version)}.pt"
+    )
     meta = features.cache_meta(run.base_dir, run.version)
     result = features.extract(run.pipeline, run.voice, records, run.stop, Path(cache), meta)
     if result is None:
@@ -690,10 +906,10 @@ def main() -> None:
     clips, skipped = result
     if skipped:
         log(f"Left out {sum(skipped.values())} clips: " + ", ".join(f"{k} {n}" for k, n in skipped.items()))
-    sovits_clips = [c for c in clips if sovits_keeps(c)]
+    sovits_clips = [c for c in clips if sovits_keeps(c, run.version)]
     gpt_clips = [c for c in clips if gpt_keeps(c)]
     for stage, kept, rule in (
-        ("SoVITS", sovits_clips, "0.66-38 s"),
+        ("SoVITS", sovits_clips, "0.66-20 s" if run.version == V4 else "0.66-38 s"),
         ("GPT", gpt_clips, f"up to {GPT_MAX_SEC} s and {PHONES_PER_SEC[0]}-{PHONES_PER_SEC[1]} phonemes per second"),
     ):
         if len(kept) < len(clips):
@@ -724,7 +940,8 @@ def main() -> None:
         log(f"Resumed at step {step} ({state.get('stage', 'sovits')}).")
     if step < sovits_steps:
         sovits_state = state if state and state.get("stage", "sovits") == "sovits" else None
-        step = train_sovits(run, sovits_clips, val_records, step, sovits_steps, sovits_state)
+        train = train_sovits_v4 if run.version == V4 else train_sovits
+        step = train(run, sovits_clips, val_records, step, sovits_steps, sovits_state)
         state = None
         torch.cuda.empty_cache()
     if step >= sovits_steps and step < num_iters and not run.stop.is_set():
