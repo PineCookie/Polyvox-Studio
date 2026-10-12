@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { DEFAULT_ENGINE, getStatus, listEngines } from '../api'
+import { getStatus, listEngines } from '../api'
 import type { DatasetReport, Engine, GpuProfile, TrainParams } from '../api'
 import { datasetName, formatStep } from '../format'
 import { useT } from '../i18n'
@@ -32,14 +32,25 @@ const SCHEDULE_KEYS: (keyof Schedule)[] = [
   'log_interval',
 ]
 
-function suggestName(dataset: string, engine: string, rank: number | null, taken: string[], variant = ''): string {
-  // e.g. voice_r32 (VoxCPM, as before engines), voice_dots_r32, voice_gsv (full fine-tuning: no rank)
-  const tag = engine === 'gpt_sovits' ? 'gsv' : engine.split('_')[0]
-  const model = engine === DEFAULT_ENGINE ? '' : `_${tag}`
-  const suffix = (rank === null ? '' : `_r${rank}`) + (variant ? `_${variant}` : '')
-  const base = `${datasetName(dataset).split('/').at(-1)}${model}${suffix}`.replace(/[^\p{L}\p{N}_.-]/gu, '_')
-  let name = base
-  for (let i = 2; taken.includes(name); i++) name = `${base}_${i}`
+// The model part of a run name; GPT-SoVITS names its version (as imported webui voices do).
+const MODEL_TAGS: Record<string, string> = { voxcpm: 'voxcpm2', dots_tts: 'dots' }
+const GSV_TAGS: Record<string, string> = { v2ProPlus: 'v2pp', v2Pro: 'v2pro', v4: 'v4' }
+
+/** dataset-model[-rank], e.g. voice-voxcpm2-r32, voice-dots-r32, voice-v2pp, voice-v4-r32;
+ * a repeat adds the month and day (voice-dots-r32-1012), then a counter (-1012-2). */
+function suggestName(dataset: string, params: Params, taken: string[], now = new Date()): string {
+  const model =
+    params.engine === 'gpt_sovits'
+      ? (GSV_TAGS[params.gsv_version] ?? params.gsv_version.toLowerCase())
+      : (MODEL_TAGS[params.engine] ?? params.engine.split('_')[0])
+  // Full fine-tuning has no rank, except GPT-SoVITS v4 (a LoRA on its DiT).
+  const lora = params.engine !== 'gpt_sovits' || params.gsv_version === 'v4'
+  const parts = [datasetName(dataset).split('/').at(-1), model, ...(lora ? [`r${params.lora_rank}`] : [])]
+  const base = parts.join('-').replace(/[^\p{L}\p{N}_.-]/gu, '_')
+  if (!taken.includes(base)) return base
+  const day = `${base}-${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+  let name = day
+  for (let i = 2; taken.includes(name); i++) name = `${day}-${i}`
   return name
 }
 
@@ -88,17 +99,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
         ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base) : {}),
         ...overrides,
       }
-  const name =
-    customName ??
-    (dataset
-      ? suggestName(
-          dataset,
-          params.engine,
-          full ? null : params.lora_rank,
-          runNames,
-          full && params.gsv_version !== 'v2ProPlus' ? params.gsv_version.toLowerCase() : '',
-        )
-      : '')
+  const name = customName ?? (dataset ? suggestName(dataset, params, runNames) : '')
   const engineName = engines.find((e) => e.id === params.engine)?.name ?? params.engine
   const set = <K extends keyof Params>(key: K, value: Params[K]) => {
     if (SCHEDULE_KEYS.includes(key as keyof Schedule)) {
