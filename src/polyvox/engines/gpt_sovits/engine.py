@@ -24,7 +24,7 @@ from ... import lora_library
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
 from . import voices
-from .synth import V4, VERSIONS, Options, split_text
+from .synth import BASE_VERSIONS, V4, Options, split_text
 
 if TYPE_CHECKING:
     from ...training import TrainParams
@@ -80,7 +80,7 @@ class GptSovitsEngine(Engine):
         # v4 only: flow-matching steps per mel window.
         Param("sample_steps", "int", 8, 4, 32, 4, versions=(V4,)),
         # The base model's version (a voice has its own, from its weights).
-        Param("base_version", "choice", BASE_VERSION, choices=VERSIONS, base_only=True),
+        Param("base_version", "choice", BASE_VERSION, choices=BASE_VERSIONS, base_only=True),
     )
     model_setting = "gsv_model"
     worker_module = "polyvox.engines.gpt_sovits.worker"

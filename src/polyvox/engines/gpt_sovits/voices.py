@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from ...data import audio_io, manifests
-from .synth import REF_MAX_S, REF_MIN_S, V4, VERSIONS
+from .synth import REF_MAX_S, REF_MIN_S, V4, VERSIONS, sovits_version
 
 ENGINE = "gpt_sovits"
 BASE_REPO = "lj1995/GPT-SoVITS"
@@ -136,7 +136,7 @@ def import_webui(
     Without a reference it synthesizes only with a clip given each time, until
     one is set (write_reference). Without ``gpt`` it speaks with the base GPT
     (a package of a checkpoint from before training's GPT stage)."""
-    from ...vendor.gpt_sovits.process_ckpt import get_sovits_version_from_path_fast, load_sovits_new, load_weights
+    from ...vendor.gpt_sovits.process_ckpt import load_sovits_new, load_weights
 
     if not re.fullmatch(VOICE_NAME, name):
         raise ValueError("Voice name may contain letters (any language), digits, '.', '_' and '-' only.")
@@ -144,7 +144,10 @@ def import_webui(
     for path, kind in ((sovits, "SoVITS"), (gpt, "GPT")):
         if path is not None and not path.is_file():
             raise ValueError(f"No {kind} weights at {path}.")
-    _, version, lora = get_sovits_version_from_path_fast(str(sovits))
+    try:
+        version, lora = sovits_version(sovits)
+    except Exception as e:
+        raise ValueError(f"Unreadable weights: {e}") from e
     if version not in VERSIONS or (lora and version != V4):
         raise ValueError(f"{sovits.name} is GPT-SoVITS {version}; only {' / '.join(VERSIONS)} voices are supported.")
     try:  # both readable (and holding no pickled code) before anything is copied
@@ -204,15 +207,10 @@ def package_files(voice_dir: Path, name: str) -> dict[str, bytes]:
 
     import torch
 
-    from ...vendor.gpt_sovits.process_ckpt import (
-        get_sovits_version_from_path_fast,
-        load_sovits_new,
-        load_weights,
-        model_version2byte,
-    )
+    from ...vendor.gpt_sovits.process_ckpt import load_sovits_new, load_weights, model_version2byte
 
     sovits_path = voice_dir / SOVITS_FILE
-    _, version, _ = get_sovits_version_from_path_fast(str(sovits_path))
+    version, _ = sovits_version(sovits_path)
     if version not in VERSIONS:
         raise ValueError(f"Only {' / '.join(VERSIONS)} voices can be exported, not {version}.")
 
@@ -229,7 +227,7 @@ def package_files(voice_dir: Path, name: str) -> dict[str, bytes]:
     files = {
         SOVITS_FILE: saved(
             {"weight": sovits["weight"], "config": config, "info": sovits.get("info", ""), **lora},
-            model_version2byte[version],
+            model_version2byte.get(version, b""),  # v2: no tag (recognized by size), as the webui saves it
         ),
         CONFIG_FILE: (
             json.dumps({"engine": ENGINE, "version": version, "base_model": BASE_REPO}, indent=2) + "\n"

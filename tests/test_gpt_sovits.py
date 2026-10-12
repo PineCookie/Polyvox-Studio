@@ -216,6 +216,18 @@ def test_webui_weights_import_as_a_voice(lora_dir, tmp_path):
     assert voices.read_reference(lora_dir / "no_reference") is None
 
 
+def test_untagged_webui_weights_are_v2_unless_their_symbols_are_v1s(lora_dir, tmp_path):
+    _, gpt = webui_weights(tmp_path / "webui")
+    clip = tone(tmp_path / "ref.wav", 5.0)
+    for name, symbols in (("old_v2", 732), ("old_v1", 322)):  # small, untagged files: "v1" by size alone
+        torch.save({"weight": {"enc_p.text_embedding.weight": torch.zeros(symbols, 2)}, "config": {}},
+                   tmp_path / f"{name}.pth")  # fmt: skip
+    voices.import_webui(lora_dir, "old_v2", tmp_path / "old_v2.pth", gpt, (clip, "示例。"))
+    assert lora_library.resolve(lora_dir, "old_v2").version == "v2"
+    with pytest.raises(ValueError, match="v1"):
+        voices.import_webui(lora_dir, "old_v1", tmp_path / "old_v1.pth", gpt, (clip, "示例。"))
+
+
 def test_unsupported_or_unsafe_weights_are_not_imported(lora_dir, tmp_path):
     v3, gpt = webui_weights(tmp_path / "v3", tag=b"03")
     clip = tone(tmp_path / "ref.wav", 5.0)

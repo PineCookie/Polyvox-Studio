@@ -1,8 +1,9 @@
-"""GPT-SoVITS v2Pro / v2ProPlus / v4 synthesis on the vendored modules (vendor/gpt_sovits).
+"""GPT-SoVITS v2Pro / v2ProPlus / v4 (and the webui's v2 voices) synthesis on the
+vendored modules (vendor/gpt_sovits).
 
 What upstream's inference_webui.get_tts_wav does for these versions, without the
 webui: text -> phonemes + RoBERTa features; the reference clip -> semantic tokens
-(HuBERT through the voice's quantizer), a spectrogram and a speaker embedding;
+(HuBERT through the voice's quantizer), a spectrogram and a speaker embedding (v2Pro);
 the GPT continues the reference's tokens with the text's; SoVITS decodes them
 to 32 kHz audio in the reference's timbre. v4 instead turns them into a mel
 spectrogram with a flow-matching DiT (continuing the reference's mel, in
@@ -30,13 +31,29 @@ PAUSE_S = 0.3  # between chunks, and after the reference's semantic prompt
 SPLITS = set("，。？！,.?!~:：—…")
 SEMANTIC_HZ = 50  # upstream's early stop: max_sec x 50 tokens
 BERT_DIM = 1024
-VERSIONS = ("v2ProPlus", "v2Pro", "v4")
+BASE_VERSIONS = ("v2ProPlus", "v2Pro", "v4")  # base models offered (models\)
+VERSIONS = (*BASE_VERSIONS, "v2")  # voices that load (v2: the webui's older voices, no base model here)
 V4 = "v4"
 V4_RATE = 48_000  # the vocoder's output
 # v4's mel: 32 kHz audio, 100 bands, 100 frames/s; values scaled from [-12, 2] to [-1, 1].
 V4_MEL = {"n_fft": 1280, "num_mels": 100, "sampling_rate": 32000, "hop_size": 320, "win_size": 1280}
 V4_SPEC_MIN, V4_SPEC_MAX = -12.0, 2.0
 V4_REF_FRAMES, V4_WINDOW = 500, 1000  # mel frames of reference prompt / per DiT window (prompt included)
+
+
+def sovits_version(path: Path) -> tuple[str, bool]:
+    """(model version, LoRA weights?) of a SoVITS file. Untagged webui files
+    are told apart by size, and v1 / v2 sizes overlap (v2 files of 81 MB pass
+    as v1): there, as the webui does, the text embedding decides (322 symbols
+    = v1)."""
+    from ...vendor.gpt_sovits.process_ckpt import get_sovits_version_from_path_fast, load_sovits_new
+
+    _, version, lora = get_sovits_version_from_path_fast(str(path))
+    if version == "v1":
+        embedding = load_sovits_new(path)["weight"].get("enc_p.text_embedding.weight")
+        if embedding is not None and embedding.shape[0] != 322:
+            version = "v2"
+    return version, lora
 
 
 @dataclass(frozen=True)
@@ -135,9 +152,9 @@ class Pipeline:
     def load_voice(self, sovits_path: Path, gpt_path: Path, key: object = None) -> Voice:
         from ...vendor.gpt_sovits.AR.models.t2s_model import Text2SemanticDecoder
         from ...vendor.gpt_sovits.module.models import SynthesizerTrn, SynthesizerTrnV3
-        from ...vendor.gpt_sovits.process_ckpt import get_sovits_version_from_path_fast, load_sovits_new, load_weights
+        from ...vendor.gpt_sovits.process_ckpt import load_sovits_new, load_weights
 
-        _, model_version, lora = get_sovits_version_from_path_fast(str(sovits_path))
+        model_version, lora = sovits_version(sovits_path)
         if model_version not in VERSIONS or (lora and model_version != V4):
             raise ValueError(
                 f"{Path(sovits_path).name} is GPT-SoVITS {model_version}; only {' / '.join(VERSIONS)} run here."
@@ -272,8 +289,10 @@ class Pipeline:
             if v4:
                 mel, fea, ge = self._v4_prompt(voice, wav, spec, prompt, phones)
                 return Reference(key, prompt, phones, bert, spec, sv_emb=None, mel=mel, fea=fea, ge=ge)
-            audio16k = librosa.resample(audio, orig_sr=sr, target_sr=16000)
-            sv_emb = self.sv.compute_embedding3(torch.from_numpy(audio16k).to(self.device, self.dtype)[None])
+            sv_emb = None  # v2: no speaker embedding
+            if voice.sovits.is_v2pro:
+                audio16k = librosa.resample(audio, orig_sr=sr, target_sr=16000)
+                sv_emb = self.sv.compute_embedding3(torch.from_numpy(audio16k).to(self.device, self.dtype)[None])
         return Reference(key=key, prompt=prompt, phones=phones or [], bert=bert, spec=spec, sv_emb=sv_emb)
 
     def _v4_prompt(self, voice: Voice, wav: Path, spec: torch.Tensor, prompt: torch.Tensor, phones: list[int]):
