@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { getSimilarity, sampleUrl } from '../api'
 import type { Lora, RunDetail as Run, Similarity } from '../api'
+import { useFolded } from '../folded'
 import { formatDuration, formatStep, formatValue } from '../format'
 import { useT } from '../i18n'
 import { usePeaks } from '../peaks'
@@ -57,6 +59,8 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
   const otherJob = activeRun !== null && activeRun !== run.name
   const similarity = useSimilarity(run)
   const losses = useMemo(() => lossKeys(run), [run])
+  // Progress sections (loss, similarity, samples) folded, for every run.
+  const [folded, toggle] = useFolded('polyvox.runSections')
 
   return (
     <>
@@ -133,10 +137,7 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
 
       {tab === 'progress' && (
         <>
-          <section className="panel">
-            <header className="panel-head">
-              <h2>{t.loss}</h2>
-            </header>
+          <FoldPanel title={t.loss} open={!folded.has('loss')} onToggle={() => toggle('loss')}>
             {losses.slice(0, 2).map((key) => (
               <LossChart key={key} title={t.lossTitles[key] ?? key} metric={key} train={run.train} val={run.val} />
             ))}
@@ -153,9 +154,23 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
               <LrChart train={run.train} />
             </details>
             <MetricsTable run={run} losses={losses.slice(0, 2)} />
-          </section>
-          {run.samples.length > 0 && <SimilarityPanel run={run} similarity={similarity} />}
-          <Samples run={run} loras={loras} scores={similarity.data?.scores} onTryCheckpoint={onTryCheckpoint} />
+          </FoldPanel>
+          {run.samples.length > 0 && (
+            <SimilarityPanel
+              run={run}
+              similarity={similarity}
+              open={!folded.has('similarity')}
+              onToggle={() => toggle('similarity')}
+            />
+          )}
+          <Samples
+            run={run}
+            loras={loras}
+            scores={similarity.data?.scores}
+            onTryCheckpoint={onTryCheckpoint}
+            open={!folded.has('samples')}
+            onToggle={() => toggle('samples')}
+          />
           <Console lines={run.log} open={run.status === 'failed'} follow={live} />
         </>
       )}
@@ -225,7 +240,38 @@ function useSimilarity(run: Run): SimilarityState {
   }
 }
 
-function SimilarityPanel({ run, similarity }: { run: Run; similarity: SimilarityState }) {
+interface Fold {
+  open: boolean
+  onToggle: () => void
+}
+
+/** A panel whose heading folds it; `extra` stays in the header either way. */
+function FoldPanel({
+  title,
+  extra,
+  open,
+  onToggle,
+  children,
+}: Fold & { title: string; extra?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="panel">
+      <header className="panel-head">
+        <h2>
+          <button type="button" className="fold-head" aria-expanded={open} onClick={onToggle}>
+            <span className="chevron" aria-hidden>
+              {open ? '▾' : '▸'}
+            </span>
+            {title}
+          </button>
+        </h2>
+        {extra}
+      </header>
+      {open && children}
+    </section>
+  )
+}
+
+function SimilarityPanel({ run, similarity, open, onToggle }: Fold & { run: Run; similarity: SimilarityState }) {
   const t = useT()
   const points = useMemo<SimilarityPoint[]>(() => {
     const scores = similarity.data?.scores ?? {}
@@ -241,18 +287,19 @@ function SimilarityPanel({ run, similarity }: { run: Run; similarity: Similarity
   }, [run.samples, similarity.data])
 
   return (
-    <section className="panel">
-      <header className="panel-head">
-        <h2>{t.similarityHeading}</h2>
-        {similarity.loading && <span className="muted">{t.similarityScoring}</span>}
-      </header>
+    <FoldPanel
+      title={t.similarityHeading}
+      extra={similarity.loading && <span className="muted">{t.similarityScoring}</span>}
+      open={open}
+      onToggle={onToggle}
+    >
       <p className="muted hint">{t.similarityHint}</p>
       {similarity.error ? (
         <p className="muted empty">{similarity.error}</p>
       ) : (
         points.length > 0 && <SimilarityChart points={points} target={similarity.data?.target ?? null} />
       )}
-    </section>
+    </FoldPanel>
   )
 }
 
@@ -308,7 +355,9 @@ function Samples({
   loras,
   scores,
   onTryCheckpoint,
-}: {
+  open,
+  onToggle,
+}: Fold & {
   run: Run
   loras: Lora[]
   scores?: Record<string, number>
@@ -360,12 +409,12 @@ function Samples({
     )
 
   return (
-    <section className="panel">
-      <header className="panel-head">
-        <h2>{t.samples}</h2>
-        {byStep.length > 0 && <span className="muted">{t.validations(byStep.length)}</span>}
-      </header>
-
+    <FoldPanel
+      title={t.samples}
+      extra={byStep.length > 0 && <span className="muted">{t.validations(byStep.length)}</span>}
+      open={open}
+      onToggle={onToggle}
+    >
       {byStep.length === 0 ? (
         <p className="muted empty">
           {run.val_manifest ? t.samplesEvery(String(run.config.valid_interval ?? '')) : t.noSamples}
@@ -420,7 +469,7 @@ function Samples({
         </div>
       )}
       <audio ref={audio} onPause={() => setPlaying(null)} onEnded={() => setPlaying(null)} hidden />
-    </section>
+    </FoldPanel>
   )
 }
 

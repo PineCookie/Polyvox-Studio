@@ -171,6 +171,27 @@ h2 {
   font-size: 0.95rem;
 }
 
+/* A panel heading that folds its panel. */
+.fold-head {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  font-weight: inherit;
+}
+
+.fold-head .chevron {
+  width: 1em;
+  font-size: 1.1em;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.fold-head:hover .chevron {
+  color: var(--text);
+}
+
 .empty {
   margin: 0;
   font-size: 0.9rem;
