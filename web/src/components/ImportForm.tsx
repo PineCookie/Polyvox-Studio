@@ -1,29 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { DEFAULT_LUFS, getStatus, importDataset, previewImport } from '../api'
-import type { Aligner, CleanupOption, ImportJob, ImportPreview } from '../api'
-import { ALIGNER_LABEL, formatDuration, formatRates } from '../format'
+import { createDataset, previewImport } from '../api'
+import type { CreateJob, ImportPreview } from '../api'
+import { formatDuration, formatRates } from '../format'
 import { useT } from '../i18n'
 import { useJob } from '../useJob'
 import { JobProgress } from './JobProgress'
 
 interface Props {
   datasetNames: string[]
-  onImported: (result: ImportJob['result']) => void
+  onImported: (result: CreateJob['result']) => void
 }
-
-// ISO codes the ASR accepts (Qwen3-ASR supports ~30; these cover the usual data).
-// 'auto': detect until the first clips agree, then force that language (much faster).
-const LANGUAGES = ['auto', '', 'zh', 'yue', 'en', 'ja', 'ko'] // labels: t.languages
-
-// Clean-up options in the order they run (labels and hints: t.cleanupLabel).
-const CLEANUP: CleanupOption[] = ['separate', 'dereverb', 'denoise']
 
 // Matches importer.DATASET_NAME.
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 
 const fileName = (path: string) => path.split(/[\\/]/).at(-1) ?? path
 
+/** Bring material in: a list or folder becomes a dataset; its processing steps run on the dataset page. */
 export function ImportForm({ datasetNames, onImported }: Props) {
   const t = useT()
   const [source, setSource] = useState('')
@@ -31,31 +25,10 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [name, setName] = useState('')
   const [copyAudio, setCopyAudio] = useState(true)
-  const [transcribe, setTranscribe] = useState(true)
-  const [language, setLanguage] = useState('auto')
-  const [prompt, setPrompt] = useState('')
-  const [slice, setSlice] = useState(true)
-  const [sliceMin, setSliceMin] = useState(2)
-  const [sliceMax, setSliceMax] = useState(15)
-  const [check, setCheck] = useState(true)
-  const [aligner, setAligner] = useState<Aligner>('qwen3')
-  const [trim, setTrim] = useState(true)
-  const [tidy, setTidy] = useState(true)
-  const [normalize, setNormalize] = useState(true)
-  const [lufs, setLufs] = useState(DEFAULT_LUFS)
-  const [detectSinging, setDetectSinging] = useState(false)
-  // Optional clean-up, off by default; which ones have a model installed.
-  const [cleanup, setCleanup] = useState<CleanupOption[]>([])
-  const [available, setAvailable] = useState<CleanupOption[]>([])
-  useEffect(() => {
-    getStatus().then(
-      (s) => setAvailable(s.cleanup),
-      () => setAvailable([]),
-    )
-  }, [])
+  const [runSteps, setRunSteps] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [job, setJob] = useJob<ImportJob>((j) => {
+  const [job, setJob] = useJob<CreateJob>((j) => {
     if (j.state === 'done') onImported(j.result)
     else if (j.state === 'failed') setError(j.error ?? t.importFailed)
   })
@@ -83,29 +56,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
   async function runImport() {
     setError(null)
     try {
-      // Slices are new files without text: they need copying and transcription.
-      setJob(
-        await importDataset({
-          source,
-          audioDir,
-          name,
-          copyAudio: copyAudio || willSlice,
-          transcribe: transcribe || willSlice,
-          language,
-          prompt,
-          slice: willSlice,
-          sliceMin,
-          sliceMax,
-          check,
-          aligner,
-          // Trimming rewrites the copies; files imported in place stay as they are.
-          trim: check && trim && (copyAudio || willSlice),
-          cleanup: copyAudio || willSlice ? cleanup : [],
-          tidyFillers: tidy,
-          detectSinging: check && detectSinging,
-          normalizeLufs: normalize && (copyAudio || willSlice) && Number.isFinite(lufs) ? lufs : null,
-        }),
-      )
+      setJob(await createDataset(source, audioDir, name, copyAudio, runSteps))
     } catch (err) {
       setError((err as Error).message)
     }
@@ -127,11 +78,9 @@ export function ImportForm({ datasetNames, onImported }: Props) {
       : datasetNames.includes(name)
         ? t.datasetExists
         : null
-  const willSlice = !!preview && slice && preview.long_recordings > 0
-  const willTranscribe = !!preview && (willSlice || (transcribe && preview.untranscribed > 0))
-  const importCount = preview ? preview.found + (willTranscribe ? preview.untranscribed : 0) : 0
   const withAudio = preview ? preview.found + preview.untranscribed : 0
-  const sliceRangeOk = sliceMin > 0 && sliceMax > sliceMin
+  const recordings = preview?.long_recordings ?? 0
+  const clips = withAudio - recordings
 
   return (
     <section className="panel">
@@ -233,178 +182,7 @@ export function ImportForm({ datasetNames, onImported }: Props) {
                 </table>
               )}
 
-              <fieldset className="field asr-options" disabled={running || !(copyAudio || willSlice)}>
-                <span className="check-title">
-                  {t.cleanupTitle} <span className="muted">{t.cleanupOptional}</span>
-                </span>
-                {CLEANUP.map((option) => (
-                  <label
-                    key={option}
-                    className="check"
-                    title={available.includes(option) ? t.cleanupLabel[option][1] : t.noModel}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={cleanup.includes(option)}
-                      disabled={!available.includes(option)}
-                      onChange={(e) =>
-                        setCleanup((c) => (e.target.checked ? [...c, option] : c.filter((x) => x !== option)))
-                      }
-                    />{' '}
-                    {t.cleanupLabel[option][0]}
-                    {!available.includes(option) && <span className="muted">{t.noModelInstalled}</span>}
-                  </label>
-                ))}
-                <p className="muted hint">{t.cleanupHint}</p>
-              </fieldset>
-
-              {preview.long_recordings > 0 && (
-                <fieldset className="field asr-options" disabled={running}>
-                  <label className="check">
-                    <input type="checkbox" checked={slice} onChange={(e) => setSlice(e.target.checked)} />{' '}
-                    {t.sliceLong(preview.long_recordings)}
-                  </label>
-                  {slice ? (
-                    <>
-                      <div className="inline-field">
-                        <span className="muted hint">{t.clipsFrom}</span>
-                        <input
-                          type="number"
-                          min={0.5}
-                          step={0.5}
-                          value={sliceMin}
-                          onChange={(e) => setSliceMin(e.target.valueAsNumber)}
-                          aria-label={t.minClipLength}
-                        />
-                        <span className="muted hint">{t.to}</span>
-                        <input
-                          type="number"
-                          min={3}
-                          step={1}
-                          value={sliceMax}
-                          onChange={(e) => setSliceMax(e.target.valueAsNumber)}
-                          aria-label={t.maxClipLength}
-                        />
-                        <span className="muted hint">{t.secondsUnit}</span>
-                        {!sliceRangeOk && <span className="field-error">{t.minBelowMax}</span>}
-                      </div>
-                      <p className="muted hint">{t.sliceHint}</p>
-                    </>
-                  ) : (
-                    <p className="muted hint">{t.noSliceHint}</p>
-                  )}
-                </fieldset>
-              )}
-
-              {(preview.untranscribed > 0 || willSlice) && (
-                <fieldset className="field asr-options" disabled={running}>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={transcribe || willSlice}
-                      disabled={willSlice}
-                      onChange={(e) => setTranscribe(e.target.checked)}
-                    />{' '}
-                    {willSlice ? t.transcribeSlices : t.transcribeClips(preview.untranscribed)}
-                  </label>
-                  {(transcribe || willSlice) && (
-                    <div className="form-grid">
-                      <label className="field">
-                        <span>{t.language}</span>
-                        <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-                          {LANGUAGES.map((code) => (
-                            <option key={code} value={code}>
-                              {t.languages[code]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="field">
-                        <span>
-                          {t.namesAndTerms} <span className="muted">{t.optional}</span>
-                        </span>
-                        <input
-                          value={prompt}
-                          onChange={(e) => setPrompt(e.target.value)}
-                          placeholder={t.namesPlaceholder}
-                        />
-                      </label>
-                    </div>
-                  )}
-                  {!transcribe && !willSlice && <p className="muted hint">{t.leftOut}</p>}
-                </fieldset>
-              )}
-
-              <fieldset className="field asr-options" disabled={running}>
-                <label className="check">
-                  <input type="checkbox" checked={check} onChange={(e) => setCheck(e.target.checked)} />{' '}
-                  {t.checkEachClip}
-                </label>
-                {check && (
-                  <>
-                    <div className="inline-field">
-                      <span className="muted hint">{t.aligner}</span>
-                      <select
-                        value={aligner}
-                        onChange={(e) => setAligner(e.target.value as Aligner)}
-                        aria-label={t.aligner}
-                      >
-                        {(Object.keys(ALIGNER_LABEL) as Aligner[]).map((a) => (
-                          <option key={a} value={a}>
-                            {ALIGNER_LABEL[a]}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={trim && (copyAudio || willSlice)}
-                        disabled={!(copyAudio || willSlice)}
-                        onChange={(e) => setTrim(e.target.checked)}
-                      />{' '}
-                      {t.trimEdges}
-                    </label>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={detectSinging}
-                        onChange={(e) => setDetectSinging(e.target.checked)}
-                      />{' '}
-                      {t.flagSung}
-                    </label>
-                    <p className="muted hint">{t.checkHint}</p>
-                  </>
-                )}
-              </fieldset>
-
-              <label className="check">
-                <input type="checkbox" checked={tidy} onChange={(e) => setTidy(e.target.checked)} disabled={running} />{' '}
-                {t.tidyOption}
-              </label>
-
-              <div className="inline-field">
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={normalize && (copyAudio || willSlice)}
-                    disabled={running || !(copyAudio || willSlice)}
-                    onChange={(e) => setNormalize(e.target.checked)}
-                  />{' '}
-                  {t.normalizeTo}
-                </label>
-                <input
-                  type="number"
-                  min={-40}
-                  max={-10}
-                  step={1}
-                  value={lufs}
-                  onChange={(e) => setLufs(e.target.valueAsNumber)}
-                  disabled={running || !normalize || !(copyAudio || willSlice)}
-                  aria-label={t.targetLufs}
-                />
-                <span className="muted hint">{t.lufsHint}</span>
-              </div>
+              <p className="muted hint">{t.importBrings(clips, recordings)}</p>
 
               <label className="field">
                 <span>
@@ -415,23 +193,28 @@ export function ImportForm({ datasetNames, onImported }: Props) {
               <label className="check">
                 <input
                   type="checkbox"
-                  checked={copyAudio || willSlice}
+                  checked={copyAudio}
                   onChange={(e) => setCopyAudio(e.target.checked)}
-                  disabled={running || willSlice}
+                  disabled={running}
                 />{' '}
                 {t.copyAudio(name || '…')}
               </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={runSteps}
+                  onChange={(e) => setRunSteps(e.target.checked)}
+                  disabled={running}
+                />{' '}
+                {t.runStepsAfter}
+              </label>
+              <p className="muted hint">{t.runStepsAfterHint}</p>
 
               {job && <JobProgress job={job} what={t.importWhat} />}
 
               <div className="actions">
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={runImport}
-                  disabled={!!nameError || running || (importCount === 0 && !willSlice) || (willSlice && !sliceRangeOk)}
-                >
-                  {running ? t.importing : willSlice ? t.sliceAndImport : t.importClips(importCount)}
+                <button type="button" className="primary" onClick={runImport} disabled={!!nameError || running}>
+                  {running ? t.importing : t.importButton}
                 </button>
               </div>
             </>

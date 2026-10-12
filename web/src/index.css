@@ -1964,6 +1964,89 @@ fieldset.params:disabled input[type='checkbox'] {
   margin: 6px 0 0;
 }
 
+/* Dataset steps: numbered rows, each with what it still has to do. */
+.steps {
+  display: grid;
+  gap: 8px;
+}
+
+.steps-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.steps-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.step-number {
+  display: inline-grid;
+  place-items: center;
+  width: 1.4em;
+  height: 1.4em;
+  margin-right: 4px;
+  border-radius: 50%;
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.step-done .step-number {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.step-state {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.step-state.needed {
+  color: var(--warn);
+}
+
+.step-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 4px;
+}
+
+.step-settings select {
+  width: auto;
+}
+
+.step-settings input:not([type]) {
+  flex: 1 1 220px;
+}
+
+.step-settings input[type='number'] {
+  width: 72px;
+}
+
+.add-source {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.add-source button {
+  justify-self: end;
+}
+
+@media (max-width: 700px) {
+  .add-source {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 900px) {
   .tool-row {
     grid-template-columns: 1fr;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { listDatasets } from '../api'
-import type { ImportJob } from '../api'
+import type { CreateJob } from '../api'
 import { datasetName } from '../format'
 import { useT } from '../i18n'
 import { DatasetPage } from './DatasetPage'
@@ -19,7 +19,7 @@ export function PrepareView({ onError, onTrain }: Props) {
   const t = useT()
   const [datasets, setDatasets] = useState<string[] | null>(null)
   const [selected, setSelected] = useState(IMPORT)
-  const [imported, setImported] = useState<ImportJob['result'] | null>(null)
+  const [imported, setImported] = useState<CreateJob['result'] | null>(null)
   const [formKey, setFormKey] = useState(0)
 
   const refresh = useCallback(async () => {
@@ -34,7 +34,7 @@ export function PrepareView({ onError, onTrain }: Props) {
     refresh()
   }, [refresh])
 
-  async function done(result: ImportJob['result']) {
+  async function done(result: CreateJob['result']) {
     await refresh()
     setImported(result)
     setSelected(result.id)

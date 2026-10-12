@@ -105,3 +105,15 @@ def test_step_endpoints(service, training, asr_service, align_service, data_dir,
     entries = [json.loads(line) for line in (folder / "train.jsonl").read_text(encoding="utf-8").splitlines()]
     assert all(e["text"] for e in entries)
     assert np.isfinite(sf.info(str(folder / "wavs" / "b.flac")).duration)
+
+    # A new dataset from a source, its remaining steps run right after.
+    body = {"source": str(src), "name": "speaker_b", "run_steps": True}
+    done = wait_job(client, client.post("/api/datasets/create", json=body).json()["id"])
+    assert done["state"] == "done", done
+    assert (done["result"]["id"], done["result"]["clips"]) == ("speaker_b/train.jsonl", 2)
+    assert set(done["result"]["steps"]) == {"transcribe", "check"}
+    assert client.post("/api/datasets/create", json=body).status_code == 409  # the name is taken
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    done = wait_job(client, client.post("/api/datasets/create", json={"source": str(empty), "name": "x"}).json()["id"])
+    assert done["state"] == "failed" and not (data_dir / "x").exists()

@@ -203,7 +203,7 @@ export function DatasetClips({ source }: Props) {
                       )}
                     </td>
                     <td className="clip-text" onClick={() => toggle(row.index)}>
-                      {row.text}
+                      {row.text || <span className="muted">{t.noTextYet}</span>}
                       {row.dropped && <span className="tag subtle">{t.dropped}</span>}
                       {row.asr && <span className="tag subtle">ASR</span>}
                       {row.flags.map((f) => (

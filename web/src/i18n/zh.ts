@@ -269,6 +269,13 @@ export const zh: Messages = {
   lufsHint: 'LUFS（EBU R128；峰值保持在 -1 dBFS 以下）',
   datasetName: '数据集名称',
   copyAudio: (name) => `把音频复制到 data/${name}/wavs（自成一体；否则音频留在原处）`,
+  importBrings: (clips, recordings) =>
+    `数据集将包含 ${clips.toLocaleString()} 个片段` +
+    (recordings ? `和 ${recordings} 段待切分的长录音（切分前保留在原位置）` : '') +
+    '。清理、切分、转写和检查都是数据集页面上的步骤。',
+  runStepsAfter: '导入后用默认设置运行剩余的步骤（切分、转写、检查）',
+  runStepsAfterHint: '如需先调整设置（例如为带音乐的录音分离人声，或为语音识别设置语言和名称），请不要勾选。',
+  importButton: '导入',
   sliceAndImport: '切分并导入',
   importClips: (n) => `导入 ${n} 条`,
 
@@ -282,6 +289,7 @@ export const zh: Messages = {
     aligning: '正在检查音频与文本',
     copying: '正在复制音频',
     normalizing: '正在响度归一化',
+    trimming: '正在裁剪片段边缘',
   },
   starting: '启动中',
   audioProgress: (done, total) => `已处理 ${done} / 共 ${total} 音频`,
@@ -291,6 +299,69 @@ export const zh: Messages = {
   importWhat: '导入',
   checkWhat: '检查',
   normalizeWhat: '响度归一化',
+  stepWhat: '该步骤',
+
+  // 数据集步骤
+  importedNew: (clips, recordings, ran) =>
+    `导入了 ${clips.toLocaleString()} 个片段${recordings ? `和 ${recordings} 段长录音` : ''}。` +
+    (ran ? '剩余的步骤也已运行。' : '运行下面的步骤来切分、转写和检查。'),
+  stepsTitle: '步骤',
+  stepNames: {
+    sources: '来源',
+    clean_up: '清理',
+    slice: '切分录音',
+    transcribe: '转写',
+    check: '检查片段',
+    tidy: '整理',
+  },
+  runRemaining: (n) => (n === 1 ? '运行剩余的 1 个步骤' : `运行剩余的 ${n} 个步骤`),
+  nothingRemaining: '没有待办的步骤',
+  run: '运行',
+  stepFailed: '步骤运行失败。',
+  sourcesState: (clips, recordings, unsliced, dropped) =>
+    `${clips.toLocaleString()} 个片段` +
+    (recordings
+      ? ` · ${recordings} 段长录音` +
+        (unsliced === recordings ? '' : unsliced ? `（已切分 ${recordings - unsliced} 段）` : '（已切分）')
+      : '') +
+    (dropped ? ` · 审阅中排除了 ${dropped.toLocaleString()} 个` : ''),
+  noTextYet: '尚无文本',
+  addSource: '添加来源…',
+  copyClips: '把片段复制到数据集中',
+  add: '添加',
+  cleanUpState: (clips, recordings) =>
+    `可选 · ${clips.toLocaleString()} 个片段未清理` + (recordings ? '；长录音在切分时清理' : ''),
+  notNeeded: (reason) => `不需要：${reason}`,
+  nothingToSlice: '没有长录音',
+  allSliced: '所有录音都已切分',
+  sliceState: (n, duration) => `需要：${n} 段录音（${duration}）`,
+  sliceStepHint: '每段录音先转写并对齐，再在词与词之间切开，尽量切在句末；每个片段保留对应的文本。',
+  transcribeState: (n) => `需要：${n.toLocaleString()} 个片段没有文本`,
+  allHaveText: '所有片段都有文本',
+  tidyOnlyTitle: '所有片段都有文本：运行只会整理语气词',
+  tidyFillersShort: '整理语气词（哈哈哈哈 → 哈哈）',
+  checkState: (n) => `需要：${n.toLocaleString()} 个片段未检查（新片段或文本已改）`,
+  allChecked: '所有片段都已检查',
+  checkAll: '全部重新检查',
+  checkAllTitle: '重新检查所有片段，例如换一个对齐模型',
+  tidyState: (n) => `可选 · ${n.toLocaleString()} 个片段可以裁剪`,
+  tidyOptional: '可选 · 没有需要裁剪的部分',
+  trimEdgesShort: '裁剪边缘（静音、未转写的声音）',
+  stepAdded: (clips, recordings) =>
+    `添加了 ${clips.toLocaleString()} 个片段${recordings ? `和 ${recordings} 段录音` : ''}。`,
+  stepCleaned: (cleaned, skipped) =>
+    `清理了 ${cleaned.toLocaleString()} 个片段${skipped ? `（${skipped} 个无法原地改写）` : ''}。`,
+  stepSliced: (sliced, clips, missing) =>
+    `把 ${sliced} 段录音切成了 ${clips.toLocaleString()} 个片段${missing ? `；${missing} 段录音找不到` : ''}。`,
+  stepTranscribed: (n, dropped, tidied) =>
+    `转写了 ${n.toLocaleString()} 个片段` +
+    (dropped ? `；${dropped} 个听不到内容，已排除` : '') +
+    (tidied ? `；整理了 ${tidied} 条文本的语气词` : '') +
+    '。',
+  stepChecked: (checked, flagged) =>
+    `检查了 ${checked.toLocaleString()} 个片段，标记了 ${flagged.toLocaleString()} 个。`,
+  stepTidied: (trimmed, normalized) =>
+    `裁剪了 ${trimmed.toLocaleString()} 个片段${normalized ? `，归一化了 ${normalized.toLocaleString()} 个` : ''}。`,
 
   // 检查标记
   flags: {

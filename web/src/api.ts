@@ -499,6 +499,92 @@ export async function importDataset(o: ImportOptions): Promise<ImportJob> {
   return (await postJson('/api/datasets/import', body)).json()
 }
 
+// Processing steps of a dataset (src/polyvox/prep/steps.py), in order after its sources.
+export type StepName = 'clean_up' | 'slice' | 'transcribe' | 'check' | 'tidy'
+export const STEP_NAMES: StepName[] = ['clean_up', 'slice', 'transcribe', 'check', 'tidy']
+
+export interface StepSettings {
+  clean_up: { models: CleanupOption[] }
+  slice: { min_seconds: number; max_seconds: number }
+  // language: 'auto' = estimate from the dataset, '' = detect per clip, else a code
+  transcribe: { language: string; prompt: string; tidy_fillers: boolean }
+  check: { aligner: Aligner; compare_asr: boolean; detect_singing: boolean }
+  tidy: { trim: boolean; normalize_lufs: number | null }
+}
+
+// Until a step has run on a dataset (steps.DEFAULTS).
+export const STEP_DEFAULTS: StepSettings = {
+  clean_up: { models: [] },
+  slice: { min_seconds: 2, max_seconds: 15 },
+  transcribe: { language: 'auto', prompt: '', tidy_fillers: true },
+  check: { aligner: 'qwen3', compare_asr: false, detect_singing: false },
+  tidy: { trim: true, normalize_lufs: null },
+}
+
+// What each step still has to do (dropped clips don't count), and the settings it last ran with.
+export interface StepStatus {
+  sources: { clips: number; recordings: number; dropped: number }
+  clean_up: { clips: number } // not cleaned yet
+  slice: { recordings: number; seconds: number } // not sliced yet
+  transcribe: { clips: number } // without text
+  check: { clips: number } // with text, not checked for it
+  tidy: { trimmable: number }
+  settings: { [K in StepName]?: Partial<StepSettings[K]> }
+}
+
+export type StepJob = Job<Record<string, unknown> & { timings?: Timings }>
+
+export async function getStepStatus(id: string): Promise<StepStatus> {
+  return (await request(`/api/datasets/steps?id=${encodeURIComponent(id)}`)).json()
+}
+
+/** Run one step on what still needs it (`everything`: check every clip again). */
+export async function runStep<S extends StepName>(
+  id: string,
+  step: S,
+  settings: StepSettings[S],
+  everything = false,
+): Promise<StepJob> {
+  return (await postJson('/api/datasets/step', { id, step, ...settings, everything })).json()
+}
+
+/** Run the steps with work left, in order, with these settings. */
+export async function runRemaining(id: string, settings: StepSettings): Promise<StepJob> {
+  return (await postJson('/api/datasets/run-remaining', { id, settings })).json()
+}
+
+export type AddSourceJob = Job<{ clips: number; recordings: number }>
+
+export async function addSource(
+  id: string,
+  source: string,
+  audioDir: string,
+  copyAudio: boolean,
+): Promise<AddSourceJob> {
+  const body = { id, source, audio_dir: audioDir || null, copy_audio: copyAudio }
+  return (await postJson('/api/datasets/add-source', body)).json()
+}
+
+export type CreateJob = Job<{
+  id: string
+  clips: number
+  recordings: number
+  steps: Record<string, Record<string, unknown>>
+  timings?: Timings
+}>
+
+/** A new dataset from a source; with `runSteps`, its remaining steps run right after. */
+export async function createDataset(
+  source: string,
+  audioDir: string,
+  name: string,
+  copyAudio: boolean,
+  runSteps: boolean,
+): Promise<CreateJob> {
+  const body = { source, audio_dir: audioDir || null, name, copy_audio: copyAudio, run_steps: runSteps }
+  return (await postJson('/api/datasets/create', body)).json()
+}
+
 export type CheckJob = Job<CheckSummary & { timings?: Timings }>
 
 /** Shorten runs of fillers in a dataset's transcripts, in place (the original manifest is kept). */

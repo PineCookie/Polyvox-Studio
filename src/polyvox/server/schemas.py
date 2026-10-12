@@ -110,6 +110,19 @@ class AddSourceIn(ImportSourceIn):
     copy_audio: bool = True
 
 
+class CreateDatasetIn(ImportSourceIn):
+    name: str
+    copy_audio: bool = True
+    # Then run the steps with work left (slice, transcribe, check), with their defaults.
+    run_steps: bool = False
+
+
+class RunStepsIn(BaseModel):
+    id: str  # dataset manifest id
+    # Per step (StepIn's fields): settings to use instead of the step's last ones.
+    settings: dict[str, dict] = {}
+
+
 class StepIn(BaseModel):
     """One processing step on a dataset (prep/steps.py). Settings left out
     come from the step's last run on this dataset (its record), else defaults."""

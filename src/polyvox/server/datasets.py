@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -18,6 +19,7 @@ from .context import Studio, checked, found, logged_timings
 from .schemas import (
     AddSourceIn,
     CheckIn,
+    CreateDatasetIn,
     DatasetIn,
     DatasetReportOut,
     DropFlaggedIn,
@@ -27,6 +29,7 @@ from .schemas import (
     ImportSourceIn,
     JobOut,
     NormalizeIn,
+    RunStepsIn,
     StepIn,
     StepStatusOut,
 )
@@ -71,7 +74,10 @@ def router(s: Studio) -> APIRouter:
             **{k: v for k, v in given.items() if k in defaults and v is not None},
         }
 
-    def run_step(folder: Path, step: str, given: dict, job: Job) -> dict:
+    def run_step(folder: Path, step: str, given: dict, job: Job, others: dict[str, dict] | None = None) -> dict:
+        """``others``: settings given for the other steps (slicing uses clean-up's
+        models, transcription's language and prompt and the check's aligner)."""
+        others = others or {}
         opts = step_settings(folder, step, given)
         if step == "clean_up":
             available = s.cleanup_models()
@@ -80,11 +86,11 @@ def router(s: Studio) -> APIRouter:
             chain = s.separated(s.separation.chain([available[m] for m in opts["models"]]))
             return steps.clean_up(folder, chain, opts["models"], job.progress)
         if step == "slice":
-            text = step_settings(folder, "transcribe", given)
-            aligner = step_settings(folder, "check", {})["aligner"]
+            text = step_settings(folder, "transcribe", {**given, **others.get("transcribe", {})})
+            aligner = step_settings(folder, "check", others.get("check", {}))["aligner"]
             heard, _ = asr_tools(text["language"], text["prompt"])
             guide = slicer.Guide(transcribe=heard, align=lambda wavs, texts: s.aligned(wavs, texts, aligner))
-            models = step_settings(folder, "clean_up", {})["models"]
+            models = step_settings(folder, "clean_up", others.get("clean_up", {}))["models"]
             available = s.cleanup_models()
             chain = (
                 s.separated(s.separation.chain([available[m] for m in models]))
@@ -141,21 +147,61 @@ def router(s: Studio) -> APIRouter:
 
         return JobOut(**jobs.start("step", f"{body.step.replace('_', ' ').capitalize()} {body.id}", run).public())
 
+    def run_remaining_steps(folder: Path, given: dict[str, dict], job: Job) -> dict:
+        """The steps with work left, in order: {step: its result}."""
+        return {step: run_step(folder, step, given.get(step, {}), job, given) for step in steps.remaining(folder)}
+
     @api.post("/api/datasets/run-remaining", status_code=202)
-    def run_remaining(body: DatasetIn) -> JobOut:
+    def run_remaining(body: RunStepsIn) -> JobOut:
         """Run the steps with work left (slice, transcribe, check), in order,
-        each with its last settings. The job's result is {step: its result}."""
+        each with the settings given, else its last ones. The job's result is
+        {step: its result}."""
         manifest = found(manifests.resolve, settings.data_dir, body.id)
         s.refuse_if_busy(gpu=True)
 
         def run(job: Job) -> dict:
-            out = {}
             with timing.collect() as times:
-                for step in steps.remaining(manifest.parent):
-                    out[step] = run_step(manifest.parent, step, {}, job)
+                out = run_remaining_steps(manifest.parent, body.settings, job)
                 return {**out, "timings": logged_timings(f"Steps {body.id}", times)}
 
         return JobOut(**jobs.start("step", f"Steps {body.id}", run).public())
+
+    @api.post("/api/datasets/create", status_code=202)
+    def create_dataset(body: CreateDatasetIn) -> JobOut:
+        """A new dataset from a source (a job): its clips copied in, long
+        recordings listed to slice; with ``run_steps``, the steps with work left
+        run after. The job's result is {"id", "clips", "recordings", "steps"}."""
+        try:
+            importer.check_name(body.name, settings.data_dir)
+            importer.detect(importer.clean_path(body.source))
+        except FileExistsError as e:
+            raise HTTPException(409, str(e)) from e
+        except (ValueError, OSError) as e:
+            raise HTTPException(422, str(e)) from e
+        s.refuse_if_busy(gpu=body.run_steps)
+
+        def run(job: Job) -> dict:
+            with timing.collect() as times:
+                folder = steps.create(settings.data_dir, body.name)
+                try:
+                    added = steps.add_source(
+                        folder, body.source, body.audio_dir, settings.data_dir, body.copy_audio, progress=job.progress
+                    )
+                    if not added.clips and not added.recordings:
+                        raise ValueError("No audio found in the source; nothing to import.")
+                except BaseException:
+                    shutil.rmtree(folder, ignore_errors=True)
+                    raise
+                done = run_remaining_steps(folder, {}, job) if body.run_steps else {}
+                return {
+                    "id": f"{body.name}/{steps.MANIFEST}",
+                    "clips": added.clips,
+                    "recordings": added.recordings,
+                    "steps": done,
+                    "timings": logged_timings(f"Create {body.name}", times),
+                }
+
+        return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
 
     @api.post("/api/datasets/import/preview")
     def preview_import(body: ImportSourceIn) -> ImportPreviewOut:

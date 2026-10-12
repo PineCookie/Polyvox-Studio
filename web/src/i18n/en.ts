@@ -280,6 +280,16 @@ export const en = {
   datasetName: 'Dataset name',
   copyAudio: (name: string) =>
     `Copy audio into data/${name}/wavs (self-contained; otherwise the files stay where they are)`,
+  importBrings: (clips: number, recordings: number) =>
+    `The dataset gets ${clips.toLocaleString()} clips` +
+    (recordings
+      ? ` and ${recordings} long ${recordings === 1 ? 'recording' : 'recordings'} to slice (they stay where they are until sliced)`
+      : '') +
+    '. Cleaning, slicing, transcribing and checking are steps on its page.',
+  runStepsAfter: 'Then run the remaining steps (slice, transcribe, check) with their defaults',
+  runStepsAfterHint:
+    'Leave this off to choose settings first, e.g. vocal separation for recordings with music, or a language and names for ASR.',
+  importButton: 'Import',
   sliceAndImport: 'Slice and import',
   importClips: (n: number) => `Import ${n} clips`,
 
@@ -293,6 +303,7 @@ export const en = {
     aligning: 'Checking clips against their text',
     copying: 'Copying audio',
     normalizing: 'Normalizing loudness',
+    trimming: 'Trimming clip edges',
   } as Record<string, string>,
   starting: 'Starting',
   audioProgress: (done: string, total: string) => `${done} of ${total} audio`,
@@ -302,6 +313,78 @@ export const en = {
   importWhat: 'Import',
   checkWhat: 'Check',
   normalizeWhat: 'Normalizing',
+  stepWhat: 'The step',
+
+  // Dataset steps (prep/steps.py)
+  importedNew: (clips: number, recordings: number, ran: boolean) =>
+    `Imported ${clips.toLocaleString()} clips` +
+    (recordings ? ` and ${recordings} long ${recordings === 1 ? 'recording' : 'recordings'}` : '') +
+    '.' +
+    (ran ? ' The remaining steps ran too.' : ' Run the steps below to slice, transcribe and check.'),
+  stepsTitle: 'Steps',
+  stepNames: {
+    sources: 'Sources',
+    clean_up: 'Clean up',
+    slice: 'Slice recordings',
+    transcribe: 'Transcribe',
+    check: 'Check clips',
+    tidy: 'Tidy',
+  } as Record<string, string>,
+  runRemaining: (n: number) => `Run the remaining ${n === 1 ? 'step' : `${n} steps`}`,
+  nothingRemaining: 'Nothing left to do',
+  run: 'Run',
+  stepFailed: 'The step failed.',
+  sourcesState: (clips: number, recordings: number, unsliced: number, dropped: number) =>
+    `${clips.toLocaleString()} clips` +
+    (recordings
+      ? ` · ${recordings} long ${recordings === 1 ? 'recording' : 'recordings'}` +
+        (unsliced === recordings ? '' : unsliced ? ` (${recordings - unsliced} sliced)` : ' (sliced)')
+      : '') +
+    (dropped ? ` · ${dropped.toLocaleString()} dropped in review` : ''),
+  noTextYet: 'no text yet',
+  addSource: 'Add source…',
+  copyClips: 'Copy clips into the dataset',
+  add: 'Add',
+  cleanUpState: (clips: number, recordings: number) =>
+    `Optional · ${clips.toLocaleString()} clips not cleaned` +
+    (recordings ? '; recordings are cleaned while they are sliced' : ''),
+  notNeeded: (reason: string) => `Not needed: ${reason}`,
+  nothingToSlice: 'no long recordings',
+  allSliced: 'every recording is sliced',
+  sliceState: (n: number, duration: string) => `Needed: ${n} ${n === 1 ? 'recording' : 'recordings'} (${duration})`,
+  sliceStepHint:
+    'Each recording is transcribed and aligned, then cut between words, preferably at sentence ends; each clip keeps its part of the text.',
+  transcribeState: (n: number) => `Needed: ${n.toLocaleString()} ${n === 1 ? 'clip' : 'clips'} without text`,
+  allHaveText: 'every clip has text',
+  tidyOnlyTitle: 'Every clip has text: Run only tidies fillers',
+  tidyFillersShort: 'Tidy fillers (哈哈哈哈 → 哈哈)',
+  checkState: (n: number) =>
+    `Needed: ${n.toLocaleString()} ${n === 1 ? 'clip' : 'clips'} not checked (new, or text changed)`,
+  allChecked: 'every clip is checked',
+  checkAll: 'Check all again',
+  checkAllTitle: 'Check every clip again, e.g. with another aligner',
+  tidyState: (n: number) => `Optional · ${n.toLocaleString()} clips can be trimmed`,
+  tidyOptional: 'Optional · trimming has nothing left to cut',
+  trimEdgesShort: 'Trim edges (silence, untranscribed sounds)',
+  stepAdded: (clips: number, recordings: number) =>
+    `Added ${clips.toLocaleString()} clips` +
+    (recordings ? ` and ${recordings} ${recordings === 1 ? 'recording' : 'recordings'}` : '') +
+    '.',
+  stepCleaned: (cleaned: number, skipped: number) =>
+    `Cleaned ${cleaned.toLocaleString()} clips${skipped ? ` (${skipped} can't be rewritten in place)` : ''}.`,
+  stepSliced: (sliced: number, clips: number, missing: number) =>
+    `Sliced ${sliced} ${sliced === 1 ? 'recording' : 'recordings'} into ${clips.toLocaleString()} clips` +
+    (missing ? `; ${missing} recordings were not found` : '') +
+    '.',
+  stepTranscribed: (n: number, dropped: number, tidied: number) =>
+    `Transcribed ${n.toLocaleString()} clips` +
+    (dropped ? `; ${dropped} with nothing heard were dropped` : '') +
+    (tidied ? `; tidied fillers in ${tidied}` : '') +
+    '.',
+  stepChecked: (checked: number, flagged: number) =>
+    `${checked.toLocaleString()} clips checked, ${flagged.toLocaleString()} flagged.`,
+  stepTidied: (trimmed: number, normalized: number) =>
+    `Trimmed ${trimmed.toLocaleString()} clips${normalized ? `, normalized ${normalized.toLocaleString()}` : ''}.`,
 
   // Alignment check flags (checks.py): short tag, and what it means.
   flags: {
