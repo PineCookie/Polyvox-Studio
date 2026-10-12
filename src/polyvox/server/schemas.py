@@ -6,8 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from ..prep import loudness
-
 
 class LoraConfigOut(BaseModel):
     r: int
@@ -73,38 +71,6 @@ class ImportSourceIn(BaseModel):
     audio_dir: str | None = None
 
 
-class ImportIn(ImportSourceIn):
-    name: str
-    copy_audio: bool = True
-    # Fill in missing transcripts with ASR (otherwise those clips are left out).
-    transcribe: bool = False
-    # e.g. "zh"; None = detect per clip; "auto" = detect until the clips agree, then force that (faster)
-    language: str | None = "auto"
-    prompt: str | None = None  # names / terms the recognizer should prefer
-    # Cut long recordings into clips at pauses (needs copy_audio and transcribe).
-    slice: bool = False
-    slice_min_seconds: float = Field(2.0, ge=0.5, le=30)
-    slice_max_seconds: float = Field(15.0, ge=3, le=60)
-    # Check each clip against its text by forced alignment (align.json).
-    check: bool = False
-    aligner: Literal["qwen3", "ctc"] = "qwen3"
-    # Cut long silent edges from the copied clips (needs copy_audio and check).
-    trim: bool = False
-    detect_singing: bool = False  # with check: flag sung clips (slow; few datasets have songs)
-    # Clean-up before anything else (needs copy_audio and the model configured):
-    separate: bool = False  # keep only the voice (remove music / background)
-    dereverb: bool = False
-    denoise: bool = False
-    # Shorten runs of fillers / laughs (哈哈哈哈 -> 哈哈) in every transcript.
-    tidy_fillers: bool = True
-    # Bring each copied clip to this loudness in LUFS (needs copy_audio); None = as recorded.
-    normalize_lufs: float | None = Field(None, ge=-40, le=-10)
-
-
-class DatasetIn(BaseModel):
-    id: str  # dataset manifest id
-
-
 class AddSourceIn(ImportSourceIn):
     id: str  # dataset manifest id
     copy_audio: bool = True
@@ -160,11 +126,6 @@ class StepStatusOut(BaseModel):
     settings: dict
 
 
-class NormalizeIn(BaseModel):
-    id: str  # dataset manifest id
-    target_lufs: float = Field(loudness.TARGET_LUFS, ge=-40, le=-10)
-
-
 class ExportIn(BaseModel):
     id: str  # dataset manifest id
     format: str  # exporter.FORMATS id
@@ -174,15 +135,6 @@ class ExportIn(BaseModel):
     max_seconds: float | None = Field(None, gt=0)
     sample_rate: int | None = Field(None, ge=8000, le=96000)  # None: keep each clip's rate
     language: str | None = None  # GPT-SoVITS code; None: per clip from the text
-
-
-class CheckIn(BaseModel):
-    id: str  # dataset manifest id
-    aligner: Literal["qwen3", "ctc"] = "qwen3"
-    # Also transcribe each clip and flag those where ASR hears words the text lacks.
-    compare_asr: bool = False
-    # Flag sung clips (karaoke, covers): not wanted in TTS training data. Slow; few datasets have songs.
-    detect_singing: bool = False
 
 
 class ClipTextIn(BaseModel):

@@ -373,8 +373,8 @@ def test_check_job_endpoint(service, training, asr_service, align_service, align
     write_dataset(data_dir, ["第一句", "错错错句"])
     client = TestClient(create_app(service.settings, service, training, asr_service, align=align_service))
 
-    resp = client.post("/api/datasets/check", json={"id": "speaker_a/train.jsonl", "aligner": "qwen3"})
-    assert resp.status_code == 202 and resp.json()["kind"] == "check"
+    resp = client.post("/api/datasets/step", json={"id": "speaker_a/train.jsonl", "step": "check", "aligner": "qwen3"})
+    assert resp.status_code == 202 and resp.json()["kind"] == "step"
     job = wait_job(client, resp.json()["id"])
     assert job["state"] == "done" and job["result"]["flagged"] == 1, job
     assert align_loader.loaded == ["qwen3"]
@@ -397,11 +397,16 @@ def test_check_job_endpoint(service, training, asr_service, align_service, align
     assert client.get("/api/status").json()["aligner_loaded"] is True
     assert client.post("/api/model/unload").json()["aligner_loaded"] is False
 
-    assert client.post("/api/datasets/check", json={"id": "nope/train.jsonl"}).status_code == 404
-    assert client.post("/api/datasets/check", json={"id": "speaker_a/train.jsonl", "aligner": "x"}).status_code == 422
+    assert client.post("/api/datasets/step", json={"id": "nope/train.jsonl", "step": "check"}).status_code == 404
+    assert (
+        client.post(
+            "/api/datasets/step", json={"id": "speaker_a/train.jsonl", "step": "check", "aligner": "x"}
+        ).status_code
+        == 422
+    )
 
 
-def test_import_endpoint_with_checks(service, training, asr_service, align_service, data_dir, tmp_path, monkeypatch):
+def test_create_with_steps_then_tidy(service, training, asr_service, align_service, data_dir, tmp_path, monkeypatch):
     monkeypatch.setattr(slicer, "silero_vad_many", lambda wavs: [[] for _ in wavs])
     src = tmp_path / "speaker_b"
     src.mkdir()
@@ -409,11 +414,12 @@ def test_import_endpoint_with_checks(service, training, asr_service, align_servi
     lst = write_list(tmp_path / "speaker_b.list", [f"{src / 'a.wav'}|speaker_b|ZH|示例"])
     client = TestClient(create_app(service.settings, service, training, asr_service, align=align_service))
 
-    body = {"source": str(lst), "name": "speaker_b", "check": True, "trim": True}
-    job = wait_job(client, client.post("/api/datasets/import", json=body).json()["id"])
-
+    body = {"source": str(lst), "name": "speaker_b", "run_steps": True}
+    job = wait_job(client, client.post("/api/datasets/create", json=body).json()["id"])
     assert job["state"] == "done", job
-    assert job["result"]["checks"]["checked"] == 1 and job["result"]["trimmed"] == 1  # 0.3 s silent edges
+    assert job["result"]["steps"]["check"]["checked"] == 1
     assert (data_dir / "speaker_b" / manifests.ALIGN_FILE).is_file()
-    no_check = {**body, "name": "other", "check": False}
-    assert client.post("/api/datasets/import", json=no_check).status_code == 422
+
+    tidy = {"id": "speaker_b/train.jsonl", "step": "tidy"}
+    job = wait_job(client, client.post("/api/datasets/step", json=tidy).json()["id"])
+    assert job["result"]["trimmed"] == 1  # 0.3 s silent edges

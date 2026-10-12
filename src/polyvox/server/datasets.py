@@ -11,24 +11,20 @@ from fastapi import APIRouter, HTTPException
 from .. import timing
 from ..data import manifests, record
 from ..jobs import Job
-from ..prep import checks, exporter, fillers, importer, loudness, slicer, steps
+from ..prep import checks, exporter, importer, slicer, steps
 from ..prep.asr import LanguageLock, load_audio
 from ..prep.slicer import SliceOptions
 from ..prep.steps import DEFAULTS as STEP_DEFAULTS
 from .context import Studio, checked, found, logged_timings
 from .schemas import (
     AddSourceIn,
-    CheckIn,
     CreateDatasetIn,
-    DatasetIn,
     DatasetReportOut,
     DropFlaggedIn,
     ExportIn,
-    ImportIn,
     ImportPreviewOut,
     ImportSourceIn,
     JobOut,
-    NormalizeIn,
     RunStepsIn,
     StepIn,
     StepStatusOut,
@@ -137,8 +133,19 @@ def router(s: Studio) -> APIRouter:
     def dataset_step(body: StepIn) -> JobOut:
         """Run one processing step on what still needs it (a job)."""
         manifest = found(manifests.resolve, settings.data_dir, body.id)
-        s.refuse_if_busy(gpu=body.step != "tidy")
         given = body.model_dump(exclude={"id", "step"})
+        if body.step == "slice":
+            cut = step_settings(manifest.parent, "slice", given)
+            if cut["min_seconds"] >= cut["max_seconds"]:
+                raise HTTPException(422, "The minimum clip length must be below the maximum.")
+        if body.step == "clean_up":
+            available = s.cleanup_models()
+            models = step_settings(manifest.parent, "clean_up", given)["models"]
+            if not models:
+                raise HTTPException(422, "Choose what to clean up: separation, de-reverb or denoise.")
+            if missing := [m for m in models if not available.get(m)]:
+                raise HTTPException(422, f"The model for '{missing[0]}' is not downloaded (see Models).")
+        s.refuse_if_busy(gpu=body.step != "tidy")
 
         def run(job: Job) -> dict:
             with timing.collect() as times:
@@ -207,147 +214,6 @@ def router(s: Studio) -> APIRouter:
     def preview_import(body: ImportSourceIn) -> ImportPreviewOut:
         preview = checked(importer.preview_import, body.source, body.audio_dir, settings.data_dir)
         return ImportPreviewOut(**dataclasses.asdict(preview))
-
-    @api.post("/api/datasets/import", status_code=202)
-    def import_dataset(body: ImportIn) -> JobOut:
-        """Start an import job; poll /api/jobs/{id}. The job's result is
-        {"id", "imported", "transcribed", "sliced"}."""
-        available = s.cleanup_models()
-        cleanup = [k for k in available if getattr(body, k)]
-        # Fail fast on what can be checked now.
-        try:
-            if body.slice and body.slice_min_seconds >= body.slice_max_seconds:
-                raise ValueError("The minimum clip length must be below the maximum.")
-            if body.trim and not (body.copy_audio and body.check):
-                raise ValueError("Trimming rewrites the copied clips: it needs copying and checking.")
-            for option in cleanup:
-                if not available[option]:
-                    raise ValueError(f"The model for '{option}' is not downloaded (see Models).")
-            if cleanup and not body.copy_audio:
-                raise ValueError("Clean-up writes new audio: it needs copying.")
-            if body.normalize_lufs is not None and not body.copy_audio:
-                raise ValueError("Normalizing loudness rewrites the clips: it needs copying.")
-            importer.check_name(body.name, settings.data_dir)
-            importer.detect(importer.clean_path(body.source))
-        except FileExistsError as e:
-            raise HTTPException(409, str(e)) from e
-        except (ValueError, OSError) as e:
-            raise HTTPException(422, str(e)) from e
-        s.refuse_if_busy(gpu=body.transcribe or body.check or body.slice or bool(cleanup))
-        heard, transcriber = asr_tools(body.language, body.prompt)
-
-        def run(job: Job) -> dict:
-            with timing.collect() as times:
-                return {**import_(job), "timings": logged_timings(f"Import {body.name}", times)}
-
-        # The settings each step ran with, for the dataset's record (later runs start from them).
-        noted: dict[str, dict] = {}
-        if cleanup:
-            noted["clean_up"] = {"models": cleanup}
-        if body.slice:
-            noted["slice"] = {"min_seconds": body.slice_min_seconds, "max_seconds": body.slice_max_seconds}
-        if body.transcribe or body.slice:
-            noted["transcribe"] = {"language": body.language, "prompt": body.prompt, "tidy_fillers": body.tidy_fillers}
-        if body.check:
-            noted["check"] = {"aligner": body.aligner, "compare_asr": False, "detect_singing": body.detect_singing}
-        if body.trim or body.normalize_lufs is not None:
-            noted["tidy"] = {"trim": body.trim, "normalize_lufs": body.normalize_lufs}
-
-        def import_(job: Job) -> dict:
-            result = importer.import_dataset(
-                body.source,
-                body.audio_dir,
-                body.name,
-                settings.data_dir,
-                copy=body.copy_audio,
-                transcriber=transcriber if body.transcribe else None,
-                progress=job.progress,
-                slicing=(
-                    SliceOptions(
-                        min_seconds=body.slice_min_seconds,
-                        max_seconds=body.slice_max_seconds,
-                        target_seconds=(body.slice_min_seconds + body.slice_max_seconds) / 2,
-                    )
-                    if body.slice
-                    else None
-                ),
-                checker=s.checker(body.aligner, detect_singing=body.detect_singing) if body.check else None,
-                aligner=body.aligner,
-                trim=body.trim,
-                guide=slicer.Guide(transcribe=heard, align=lambda wavs, texts: s.aligned(wavs, texts, body.aligner))
-                if body.slice
-                else None,
-                separation=s.separated(s.separation.chain([available[k] for k in cleanup])) if cleanup else None,
-                tidy_fillers=body.tidy_fillers,
-                normalize=body.normalize_lufs,
-                embed=s.voices,
-                steps=noted,
-                cleanup_models=cleanup,
-            )
-            return {
-                "id": result.id,
-                "imported": result.imported,
-                "transcribed": result.transcribed,
-                "sliced": result.sliced,
-                "trimmed": result.trimmed,
-                "checks": result.checks,
-            }
-
-        return JobOut(**jobs.start("import", f"Import {body.name}", run).public())
-
-    @api.post("/api/datasets/tidy-fillers")
-    def tidy_fillers(body: DatasetIn) -> dict:
-        """Shorten runs of fillers in a dataset's transcripts (fillers.tidy), in
-        place; the first time, the original manifest is kept as <name>.orig.
-        Checks made for the old texts become stale."""
-        manifest = found(manifests.resolve, settings.data_dir, body.id)
-        changed = checked(fillers.tidy_manifest, manifest)
-        record.remember(manifest.parent, "transcribe", {"tidy_fillers": True})
-        return {"changed": changed}
-
-    @api.post("/api/datasets/check", status_code=202)
-    def check_dataset(body: CheckIn) -> JobOut:
-        """Check every clip of a dataset against its text (forced alignment) and
-        save the results as align.json. The job's result is the summary
-        {"aligner", "checked", "flagged", "flags": {flag: count}}."""
-        manifest = found(manifests.resolve, settings.data_dir, body.id)
-        s.refuse_if_busy(gpu=True)
-
-        def run(job: Job) -> dict:
-            with timing.collect() as times:
-                summary = checks.check_dataset(
-                    manifest,
-                    manifests.legacy_root(settings.data_dir),
-                    s.checker(body.aligner, body.compare_asr, body.detect_singing),
-                    body.aligner,
-                    load_audio,
-                    job.progress,
-                    s.voices,
-                )
-                record.remember(
-                    manifest.parent,
-                    "check",
-                    {"aligner": body.aligner, "compare_asr": body.compare_asr, "detect_singing": body.detect_singing},
-                )
-                return {**summary, "timings": logged_timings(f"Check {body.id}", times)}
-
-        return JobOut(**jobs.start("check", f"Check {body.id}", run).public())
-
-    @api.post("/api/datasets/normalize", status_code=202)
-    def normalize_dataset(body: NormalizeIn) -> JobOut:
-        """Bring every clip of a dataset to ``target_lufs`` in place (originals
-        kept in originals/; checks stay valid). The job's result is
-        loudness.normalize_dataset's summary."""
-        manifest = found(manifests.resolve, settings.data_dir, body.id)
-        s.refuse_if_busy(gpu=False)
-
-        def run(job: Job) -> dict:
-            root = manifests.legacy_root(settings.data_dir)
-            result = loudness.normalize_dataset(manifest, root, body.target_lufs, job.progress)
-            record.remember(manifest.parent, "tidy", {"normalize_lufs": body.target_lufs})
-            return result
-
-        return JobOut(**jobs.start("normalize", f"Normalize {body.id}", run).public())
 
     @api.get("/api/export-formats")
     def export_formats() -> list[dict]:

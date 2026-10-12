@@ -207,10 +207,19 @@ looked up as written, by file name next to the list and in its `wavs/` folder,
 and by file name in an optional audio folder. A preview shows what was found
 before anything is written; rows without audio are skipped. The import writes
 `data/<name>/train.jsonl` with paths relative to it and, by default, copies the
-audio into `data/<name>/wavs/` so the folder is self-contained.
+clips into `data/<name>/wavs/` so the folder is self-contained. Long recordings
+(over 20 s) are listed in `data/<name>/dataset.json` and stay where they are
+until they are sliced.
 
-Long recordings (over 20 s; WAV, FLAC, mp3, m4a, video files, ...)
-can be sliced into clips during the import. They are read 10 minutes at a time,
+Everything else happens in steps on the dataset's page, in this order: **Sources**
+(**Add source** brings in more material later), **Clean up** (optional),
+**Slice recordings**, **Transcribe**, **Check clips** and **Tidy**. Each step
+shows what still needs it (a dataset may mix recordings and ready clips, or have
+stopped halfway), keeps its settings for the next run, works only on what is
+left, and saves as it goes, so a stopped step loses little. **Run the remaining
+steps** runs the needed ones in order; the import can start that right away.
+
+Long recordings (WAV, FLAC, mp3, m4a, video files, ...) are read 10 minutes at a time,
 so hours of audio are fine. Voice activity detection (Silero VAD) groups the
 speech into pieces of up to 28 s, Qwen3-ASR transcribes them, and the forced
 aligner places every word. Cuts then fall only between words, at pauses
@@ -218,20 +227,21 @@ measured on the waveform, preferring sentence ends and keeping clips within a
 length range (2-15 s by default); each clip keeps its exact part of the
 transcript, punctuation included.
 
-Clips that have audio but no transcript (a folder of bare recordings, slices,
-or empty text in a list) can be transcribed with Qwen3-ASR during the import, optionally
-with a fixed language and names / terms to spell right. Imports run in the
-background with progress and can be cancelled. Transcribed clips are listed in
-`data/<name>/asr.json` so they can be reviewed.
+Clips that have audio but no transcript (a folder of bare recordings, or empty
+text in a list) are kept, and the Transcribe step fills them in with Qwen3-ASR,
+optionally with a fixed language and names / terms to spell right; until then
+they are left out of training. Steps run in the background with progress and
+can be cancelled. Transcribed clips are listed in `data/<name>/asr.json` so they
+can be reviewed.
 
 ### Optional clean-up: separation, de-reverb, denoise
 
-The import can first clean the audio with the RoFormer models UVR5 and
+The Clean up step cleans the audio with the RoFormer models UVR5 and
 MSST-WebUI use (architectures vendored from ZFTurbo's Music-Source-Separation-
 Training, MIT): **separate** the voice from music and background, **remove
-reverb**, **remove noise**. Each is an import option, off by default, and
-available once its model is downloaded (Models tab). The de-reverb weights are
-GPL-3.0.
+reverb**, **remove noise**. Each is off by default and available once its model
+is downloaded (Models tab). Clips are cleaned in place; recordings are cleaned
+while they are sliced. The de-reverb weights are GPL-3.0.
 
 Any MSST-style checkpoint works: set `POLYVOX_VOCALS_MODEL`,
 `POLYVOX_DEREVERB_MODEL` or `POLYVOX_DENOISE_MODEL` to `model.ckpt`
@@ -244,8 +254,9 @@ Separation does not remove singing.
 
 ### Checking clips against their text
 
-Forced alignment places each word of a transcript in its audio. The import (and
-**Check clips** on any dataset) uses it to flag clips for review:
+Forced alignment places each word of a transcript in its audio. The **Check
+clips** step uses it to flag clips for review (new clips and edited texts only;
+**Check all again** redoes every clip):
 
 | Flag | Meaning |
 |---|---|
@@ -262,9 +273,11 @@ Forced alignment places each word of a transcript in its audio. The import (and
 Two aligners, both running in this environment: **Qwen3-ForcedAligner** (11
 languages, mixed scripts) and a **wav2vec2 CTC** model with a character
 vocabulary (sharper on single wrong words; Chinese by default, set
-`POLYVOX_CTC_ALIGN_MODEL` for another language). The import can also trim
-the copied clips' edges: long silence, and sound before the first or after the
-last transcribed word (a laugh, 嗯) when a pause separates it, keeping 0.15 s.
+`POLYVOX_CTC_ALIGN_MODEL` for another language). The **Tidy** step trims the
+checked clips' edges (long silence, and sound before the first or after the
+last transcribed word, a laugh or 嗯, when a pause separates it, keeping 0.15 s;
+clips flagged Mismatch or Missing words are left for review) and can bring every
+clip to one loudness.
 
 For an existing dataset, the clip view trims one clip (**Trim…**: drag the handles on the waveform; letting go plays the new edge) or
 transcribes just its edge sound (**Add to text**), and **Trim all** trims every
@@ -275,9 +288,9 @@ the dataset folder); the originals are kept in `originals/` next to the manifest
 
 **Fillers and laughs.** ASR and aligners are unsure of them (is it 呵呵呵 or
 呵呵呵呵?), and for TTS training the count does not matter, only consistency. By
-default the import shortens runs of one filler to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 →
-嗯嗯); **Tidy fillers** does the same for an existing dataset (keeping the
-original manifest as `train.jsonl.orig`). Different fillers stay different: 哈哈
+default the Transcribe step shortens runs of one filler to two in every text
+(哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯), also when no clip needs transcribing (keeping
+the original manifest as `train.jsonl.orig`). Different fillers stay different: 哈哈
 is a laugh, 呵呵 a "he he". VoxCPM2's non-verbal tags (`[laughing]`, `[Uhm]`, ...)
 sound much the same in Chinese text but can add stray fillers, so transcripts
 keep plain characters. Results are saved in
@@ -292,7 +305,7 @@ usually not what was said, are marked in orange on both.
 
 A transcript that leaves out a few words is mostly not caught by alignment (the
 aligner spreads the remaining words over the audio). **Compare with ASR**, an
-option of Check clips, transcribes each clip again and flags **Missing words?**
+option of the Check clips step, transcribes each clip again and flags **Missing words?**
 where ASR hears words the transcript lacks; the clip view shows what ASR heard,
 with the differences marked. Texts made by ASR are not compared with themselves.
 

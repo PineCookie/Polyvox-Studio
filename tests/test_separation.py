@@ -107,7 +107,8 @@ def test_import_endpoint_refuses_clean_up_without_a_model(service, training, asr
     client = TestClient(create_app(service.settings, service, training, asr_service))
 
     assert client.get("/api/status").json()["cleanup"] == []
-    resp = client.post("/api/datasets/import", json={"source": str(lst), "name": "x", "separate": True})
+    assert wait_job(client, client.post("/api/datasets/create", json={"source": str(lst), "name": "x"}).json()["id"])
+    resp = client.post("/api/datasets/step", json={"id": "x/train.jsonl", "step": "clean_up", "models": ["separate"]})
     assert resp.status_code == 422 and "not downloaded" in resp.json()["detail"]
 
 
@@ -126,8 +127,10 @@ def test_import_endpoint_separates_with_the_configured_chain(
     client = TestClient(create_app(settings, service, training, asr_service))
 
     assert client.get("/api/status").json()["cleanup"] == ["separate", "denoise"]
-    body = {"source": str(lst), "name": "speaker_a", "separate": True, "denoise": True}
-    job = wait_job(client, client.post("/api/datasets/import", json=body).json()["id"])
+    wait_job(client, client.post("/api/datasets/create", json={"source": str(lst), "name": "speaker_a"}).json()["id"])
+    step = {"id": "speaker_a/train.jsonl", "step": "clean_up", "models": ["separate", "denoise"]}
+    job = wait_job(client, client.post("/api/datasets/step", json=step).json()["id"])
 
     assert job["state"] == "done", job
+    assert job["result"]["cleaned"] == 1
     assert asked == [["vocals.ckpt", "denoise.ckpt"]] and len(calls) == 1

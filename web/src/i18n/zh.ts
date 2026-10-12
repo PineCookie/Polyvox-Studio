@@ -238,35 +238,20 @@ export const zh: Messages = {
   transcriptsOnlyTitle: '只有文本。',
   transcriptsOnly:
     '这个来源没有找到任何音频。如果你有这些音频，请把「音频文件夹」设为它们所在的位置后重新扫描；否则暂时无法导入。',
-  cleanupTitle: '先清理音频',
-  cleanupOptional: '可选 · 更慢 · 需要复制音频',
   noModelInstalled: ' · 未安装模型',
-  cleanupHint:
-    '在显卡上运行 RoFormer 模型（与 UVR / MSST-WebUI 相同）。人声分离保留人声、去掉音乐和背景；去混响和降噪适用于回声大或噪声多的录音。',
-  sliceLong: (n) => `把 ${n} 条长录音切分成片段`,
   clipsFrom: '片段长度',
   to: '到',
   secondsUnit: '秒',
   minClipLength: '最短片段（秒）',
   maxClipLength: '最长片段（秒）',
   minBelowMax: '最短必须小于最长',
-  sliceHint:
-    '每条录音会先识别并对齐，再在词与词之间切分，尽量在句末断开；每个片段保留自己那部分文本。整条录音原有的文本不会保留。',
-  noSliceHint: '长录音将按原样导入（太长，不利于训练）。',
-  transcribeSlices: '为切出的片段和没有文本的音频识别文本（Qwen3-ASR）',
-  transcribeClips: (n) => `为 ${n} 条没有文本的音频识别文本（Qwen3-ASR）`,
   namesAndTerms: '人名与专有名词',
   namesPlaceholder: '希望语音识别写对的人名、地名',
-  leftOut: '这些音频将不会导入。',
-  checkEachClip: '用强制对齐检查每条音频与文本是否一致',
   aligner: '对齐模型',
   trimEdges: '裁剪片段边缘：过长的静音，以及与正文隔着停顿、未写进文本的声音（笑声、嗯）；保留 0.15 秒',
-  flagSung: '标记唱歌片段（K 歌、翻唱）：审阅时可一键删除',
-  checkHint: '会标记文本与音频不符、有未转写语音、边缘被截断或静音过长的片段，供导入后审阅。',
   tidyOption: '整理语气词：连续重复缩短为两个（哈哈哈哈 → 哈哈，嗯嗯嗯 → 嗯嗯）；具体次数不可靠，只需保持一致',
   normalizeTo: '响度归一化到',
   targetLufs: '目标响度（LUFS）',
-  lufsHint: 'LUFS（EBU R128；峰值保持在 -1 dBFS 以下）',
   datasetName: '数据集名称',
   copyAudio: (name) => `把音频复制到 data/${name}/wavs（自成一体；否则音频留在原处）`,
   importBrings: (clips, recordings) =>
@@ -276,8 +261,6 @@ export const zh: Messages = {
   runStepsAfter: '导入后用默认设置运行剩余的步骤（切分、转写、检查）',
   runStepsAfterHint: '如需先调整设置（例如为带音乐的录音分离人声，或为语音识别设置语言和名称），请不要勾选。',
   importButton: '导入',
-  sliceAndImport: '切分并导入',
-  importClips: (n) => `导入 ${n} 条`,
 
   // 任务进度
   phase: {
@@ -297,8 +280,6 @@ export const zh: Messages = {
   jobCancelled: (what) => `${what}已取消。`,
   jobFailed: (what) => `${what}失败。`,
   importWhat: '导入',
-  checkWhat: '检查',
-  normalizeWhat: '响度归一化',
   stepWhat: '该步骤',
 
   // 数据集步骤
@@ -385,14 +366,6 @@ export const zh: Messages = {
 
   // 数据集页面
   trainOnIt: '用它训练',
-  importedSummary: (n, sliced, transcribed, trimmed) =>
-    `已导入 ${n} 条${sliced ? `，由 ${sliced} 条录音切分而来` : ''}${transcribed ? `；其中 ${transcribed} 条由语音识别生成文本` : ''}${
-      trimmed ? `；裁剪了 ${trimmed} 条` : ''
-    }。`,
-  checkFailed: '检查失败。',
-  normalizeFailed: '响度归一化失败。',
-  checkClipsTitle: '检查片段',
-  checkClipsHint: '将每条音频与文本对齐：标记不匹配、未转写语音、边缘截断、静音过长、其他声音和削波。',
   voiceMatch: (score) => `声音相似度 ${score}`,
   voiceMatchTitle:
     '与数据集声音的相似度（说话人向量）：本人的片段大多高于 0.7，其他人低于 0.55；短于 2.5 秒的片段分数偏低',
@@ -404,12 +377,6 @@ export const zh: Messages = {
   detectSinging: '检测唱歌',
   checking: '检查中…',
   checkButton: '检查',
-  tidyTitle: '整理语气词',
-  tidyHint: '把连续重复的语气词缩短为两个（哈哈哈哈 → 哈哈，嗯嗯嗯 → 嗯嗯）；会保留原始清单。',
-  nothingToTidy: '没有需要整理的。',
-  tidied: (n) => `整理了 ${n} 条文本；重新检查以更新它们的标记。`,
-  tidyButton: '整理',
-  normalizeTitle: '响度归一化',
   dsExportTitle: '导出给其他 TTS',
   dsExportHint: '按其他工具的格式写出训练片段（GPT-SoVITS、F5-TTS、Kaldi 等）。',
   dsExportFormat: '导出格式',
@@ -433,20 +400,6 @@ export const zh: Messages = {
       .filter(Boolean)
       .join('，')}。`,
   normalizeHint: '每条音频一个增益（EBU R128），峰值保持在 -1 dBFS 以下；保留原始文件，检查结果仍然有效。',
-  normalizing: '处理中…',
-  normalizeButton: '归一化',
-  checkDone: (timings) => `检查完成。${timings}。`,
-  lufsSpread: (low, high, median) => `${low} … ${high} LUFS（中位数 ${median}）`,
-  normalizedSummary: (normalized, unchanged, limited, skipped) =>
-    [
-      `已归一化 ${normalized} 条`,
-      unchanged && `${unchanged} 条已符合`,
-      limited && `${limited} 条因峰值限制略低`,
-      skipped && `跳过 ${skipped} 条`,
-    ]
-      .filter(Boolean)
-      .join('，') + '。',
-  beforeAfter: (before, after) => `之前 ${before}；现在 ${after}。`,
 
   // 数据集概况
   checkingAudio: '正在检查音频文件…',

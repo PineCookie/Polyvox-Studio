@@ -33,22 +33,23 @@ def test_tidy_manifest_rewrites_only_texts_and_keeps_a_backup(tmp_path):
     assert fillers.tidy_manifest(manifest) == 0  # nothing left to tidy
 
 
-def test_import_tidies_by_default_and_datasets_can_be_tidied_later(service, training, data_dir, tmp_path):
+def test_transcribe_step_tidies_fillers_even_with_every_text_there(service, training, data_dir, tmp_path):
     clip = tmp_path / "a.wav"
     sf.write(clip, np.zeros(16000, dtype=np.float32), 16000)
     lst = write_list(tmp_path / "speaker_a.list", [f"{clip}|speaker_a|ZH|哈哈哈哈，示例"])
     client = TestClient(create_app(service.settings, service, training))
-
-    job = wait_job(client, client.post("/api/datasets/import", json={"source": str(lst), "name": "a"}).json()["id"])
-    assert job["state"] == "done", job
     manifest = data_dir / "a" / "train.jsonl"
-    assert json.loads(manifest.read_text(encoding="utf-8"))["text"] == "哈哈，示例"
 
-    body = {"source": str(lst), "name": "b", "tidy_fillers": False}
-    wait_job(client, client.post("/api/datasets/import", json=body).json()["id"])
-    assert client.post("/api/datasets/tidy-fillers", json={"id": "b/train.jsonl"}).json() == {"changed": 1}
-    assert json.loads((data_dir / "b" / "train.jsonl").read_text(encoding="utf-8"))["text"] == "哈哈，示例"
-    assert client.post("/api/datasets/tidy-fillers", json={"id": "nope/train.jsonl"}).status_code == 404
+    job = wait_job(client, client.post("/api/datasets/create", json={"source": str(lst), "name": "a"}).json()["id"])
+    assert job["state"] == "done", job
+    step = {"id": "a/train.jsonl", "step": "transcribe", "tidy_fillers": False}
+    assert wait_job(client, client.post("/api/datasets/step", json=step).json()["id"])["result"]["tidied"] == 0
+    assert json.loads(manifest.read_text(encoding="utf-8"))["text"] == "哈哈哈哈，示例"
+
+    step["tidy_fillers"] = True
+    assert wait_job(client, client.post("/api/datasets/step", json=step).json()["id"])["result"]["tidied"] == 1
+    assert json.loads(manifest.read_text(encoding="utf-8"))["text"] == "哈哈，示例"
+    assert client.post("/api/datasets/step", json={**step, "id": "nope/train.jsonl"}).status_code == 404
 
 
 def test_is_filler():

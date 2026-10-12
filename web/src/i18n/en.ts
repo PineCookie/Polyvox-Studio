@@ -245,38 +245,22 @@ export const en = {
   transcriptsOnlyTitle: 'Transcripts only.',
   transcriptsOnly:
     "No audio was found for this source. If you have the clips, set Audio folder to where they are and scan again; otherwise it can't be imported yet.",
-  cleanupTitle: 'Clean up the audio first',
-  cleanupOptional: 'optional · slower · needs copying',
   noModelInstalled: ' · no model installed',
-  cleanupHint:
-    'RoFormer models (as in UVR / MSST-WebUI) on the GPU. Separation keeps the voice and drops music and background; de-reverb and denoise are for echoey or noisy recordings.',
-  sliceLong: (n: number) => `Slice the ${n} long recordings into clips`,
   clipsFrom: 'Clips from',
   to: 'to',
   secondsUnit: 'seconds',
   minClipLength: 'Minimum clip length (seconds)',
   maxClipLength: 'Maximum clip length (seconds)',
   minBelowMax: 'min must be below max',
-  sliceHint:
-    'Each recording is transcribed and aligned first, then cut between words, preferably at sentence ends; each clip keeps its part of the transcript. Any transcript of a whole recording is not kept.',
-  noSliceHint: 'Long recordings are imported as they are (too long to train well).',
-  transcribeSlices: 'Transcribe the slices and clips without text (Qwen3-ASR)',
-  transcribeClips: (n: number) => `Transcribe the ${n} clips without text (Qwen3-ASR)`,
   namesAndTerms: 'Names and terms',
   namesPlaceholder: 'Speaker and place names the ASR should spell right',
-  leftOut: 'Those clips will be left out.',
-  checkEachClip: 'Check each clip against its text (forced alignment)',
   aligner: 'Aligner',
   trimEdges:
     'Trim the clip edges: long silence, and untranscribed sounds (a laugh, 嗯) a pause separates from the words; keeps 0.15 s',
-  flagSung: 'Flag sung clips (karaoke, covers): drop them in review with one click',
-  checkHint:
-    'Flags clips whose text does not match, with untranscribed speech, cut at the edge or with long silence, for review after the import.',
   tidyOption:
     'Tidy fillers: shorten runs to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯); counts are unreliable and only need to be consistent',
   normalizeTo: 'Normalize loudness to',
   targetLufs: 'Target loudness (LUFS)',
-  lufsHint: 'LUFS (EBU R128; peaks stay below -1 dBFS)',
   datasetName: 'Dataset name',
   copyAudio: (name: string) =>
     `Copy audio into data/${name}/wavs (self-contained; otherwise the files stay where they are)`,
@@ -290,8 +274,6 @@ export const en = {
   runStepsAfterHint:
     'Leave this off to choose settings first, e.g. vocal separation for recordings with music, or a language and names for ASR.',
   importButton: 'Import',
-  sliceAndImport: 'Slice and import',
-  importClips: (n: number) => `Import ${n} clips`,
 
   // Job progress
   phase: {
@@ -311,8 +293,6 @@ export const en = {
   jobCancelled: (what: string) => `${what} cancelled.`,
   jobFailed: (what: string) => `${what} failed.`,
   importWhat: 'Import',
-  checkWhat: 'Check',
-  normalizeWhat: 'Normalizing',
   stepWhat: 'The step',
 
   // Dataset steps (prep/steps.py)
@@ -417,15 +397,6 @@ export const en = {
 
   // Dataset page
   trainOnIt: 'Train on it',
-  importedSummary: (n: string, sliced: number, transcribed: string, trimmed: string) =>
-    `Imported ${n} clips${sliced ? `, sliced from ${sliced} recordings` : ''}${
-      transcribed ? `; ${transcribed} transcribed by ASR` : ''
-    }${trimmed ? `; ${trimmed} trimmed` : ''}.`,
-  checkFailed: 'Check failed.',
-  normalizeFailed: 'Normalizing failed.',
-  checkClipsTitle: 'Check clips',
-  checkClipsHint:
-    'Align each clip with its text: flags mismatches, untranscribed speech, cut edges and long silence, other voices and clipping.',
   voiceMatch: (score: string) => `Voice match ${score}`,
   voiceMatchTitle:
     'Similarity to the dataset’s voice (speaker embedding): the speaker’s clips mostly score above 0.7, other people below 0.55; clips under 2.5 s score lower',
@@ -437,12 +408,6 @@ export const en = {
   detectSinging: 'detect singing',
   checking: 'Checking…',
   checkButton: 'Check',
-  tidyTitle: 'Tidy fillers',
-  tidyHint: 'Shorten runs of fillers to two (哈哈哈哈 → 哈哈, 嗯嗯嗯 → 嗯嗯); the original manifest is kept.',
-  nothingToTidy: 'Nothing to tidy.',
-  tidied: (n: string) => `${n} transcripts tidied; check again to refresh their flags.`,
-  tidyButton: 'Tidy',
-  normalizeTitle: 'Normalize loudness',
   dsExportTitle: 'Export for other TTS',
   dsExportHint: 'Write the training clips in another tool’s layout (GPT-SoVITS, F5-TTS, Kaldi …).',
   dsExportFormat: 'Export format',
@@ -466,20 +431,6 @@ export const en = {
       .filter(Boolean)
       .join(', ')}.`,
   normalizeHint: 'One gain per clip (EBU R128), kept below -1 dBFS peaks; originals are kept, checks stay valid.',
-  normalizing: 'Normalizing…',
-  normalizeButton: 'Normalize',
-  checkDone: (timings: string) => `Check done. ${timings}.`,
-  lufsSpread: (low: number, high: number, median: number) => `${low} … ${high} LUFS (median ${median})`,
-  normalizedSummary: (normalized: string, unchanged: string, limited: string, skipped: string) =>
-    [
-      `${normalized} clips normalized`,
-      unchanged && `${unchanged} already there`,
-      limited && `${limited} kept quieter by their peaks`,
-      skipped && `${skipped} skipped`,
-    ]
-      .filter(Boolean)
-      .join(', ') + '.',
-  beforeAfter: (before: string, after: string) => ` Before ${before}; now ${after}.`,
 
   // Dataset summary
   checkingAudio: 'Checking audio files…',

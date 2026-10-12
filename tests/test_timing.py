@@ -41,6 +41,6 @@ def test_import_job_reports_its_timings(tmp_path, data_dir, service, training):
     sf.write(clip, [0.0] * 16000, 16000)
     lst = write_list(tmp_path / "speaker_a.list", [f"{clip}|speaker_a|ZH|示例"])
     client = TestClient(create_app(service.settings, service, training))
-    job = wait_job(client, client.post("/api/datasets/import", json={"source": str(lst), "name": "a"}).json()["id"])
+    job = wait_job(client, client.post("/api/datasets/create", json={"source": str(lst), "name": "a"}).json()["id"])
     assert job["state"] == "done", job
     assert "scanning" in job["result"]["timings"] and "writing clips" in job["result"]["timings"]

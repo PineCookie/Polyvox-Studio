@@ -40,7 +40,12 @@ def test_set_text_rewrites_one_entry_and_keeps_the_original(data_dir):
 
 def test_editing_a_flagged_clip_checks_it_again(client, data_dir):
     manifest = write_dataset(data_dir, ["第一句", "错错错句"])
-    assert wait_job(client, client.post("/api/datasets/check", json={"id": ID}).json()["id"])["state"] == "done"
+    assert (
+        wait_job(
+            client, client.post("/api/datasets/step", json={"id": ID, "step": "check", "everything": True}).json()["id"]
+        )["state"]
+        == "done"
+    )
     assert client.get("/api/dataset-clip", params={"id": ID, "index": 1}).json()["flags"] == ["mismatch"]
 
     clip = client.post("/api/dataset-clip/text", json={"id": ID, "index": 1, "text": "第二句"}).json()
@@ -78,8 +83,8 @@ def test_sung_clips_are_flagged_and_can_be_dropped_at_once(client, data_dir):
     manifest = write_dataset(data_dir, ["第一句", "第二句", "第三句"])
     sf.write(manifest.parent / "wavs" / "1.wav", tone([(0.0, 2.0)], 2.0), 16000)  # held throughout: "sung"
 
-    sing = {"id": ID, "detect_singing": True}
-    assert wait_job(client, client.post("/api/datasets/check", json=sing).json()["id"])["state"] == "done"
+    sing = {"id": ID, "step": "check", "detect_singing": True, "everything": True}
+    assert wait_job(client, client.post("/api/datasets/step", json=sing).json()["id"])["state"] == "done"
     rows = client.get("/api/dataset-rows", params={"id": ID, "flag": "singing"}).json()["rows"]
     assert [r["index"] for r in rows] == [1]
 
@@ -87,10 +92,10 @@ def test_sung_clips_are_flagged_and_can_be_dropped_at_once(client, data_dir):
     assert client.post("/api/datasets/drop-flagged", json={"id": ID, "flag": "singing"}).json() == {"dropped": 0}
     assert client.get("/api/dataset-rows", params={"id": ID}).json()["dropped"] == 1
     assert client.post("/api/datasets/drop-flagged", json={"id": ID, "flag": "nope"}).status_code == 422
-    # Without detection asked for (the default), nothing is flagged as sung.
-    body = {"id": ID}
+    # Without detection asked for, nothing is flagged as sung.
+    body = {"id": ID, "step": "check", "detect_singing": False, "everything": True}
     assert (
-        wait_job(client, client.post("/api/datasets/check", json=body).json()["id"])["result"]["flags"]["singing"] == 0
+        wait_job(client, client.post("/api/datasets/step", json=body).json()["id"])["result"]["flags"]["singing"] == 0
     )
 
 
@@ -116,7 +121,9 @@ def test_check_can_compare_with_asr_but_not_asr_made_texts(client, data_dir):
     manifest = write_dataset(data_dir, ["clip", "第二句"])  # ASR hears more than "clip"
     (manifest.parent / manifests.ASR_FILE).write_text(json.dumps({"wavs/1.wav": {"language": "zh"}}))
 
-    job = client.post("/api/datasets/check", json={"id": ID, "compare_asr": True}).json()
+    job = client.post(
+        "/api/datasets/step", json={"id": ID, "step": "check", "compare_asr": True, "everything": True}
+    ).json()
     assert wait_job(client, job["id"])["result"]["flags"]["asr_more"] == 1
 
     first = client.get("/api/dataset-clip", params={"id": ID, "index": 0}).json()

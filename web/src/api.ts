@@ -441,63 +441,8 @@ export interface CheckSummary {
   flags: Partial<Record<CheckFlag, number>>
 }
 
-export interface ImportOptions {
-  source: string
-  audioDir: string
-  name: string
-  copyAudio: boolean
-  transcribe: boolean
-  language: string // '' = detect per clip; 'auto' = estimate from the dataset, then force it
-  prompt: string // names / terms for ASR
-  slice: boolean // cut long recordings into clips at pauses
-  sliceMin: number
-  sliceMax: number
-  check: boolean // check each clip against its text by forced alignment
-  aligner: Aligner
-  trim: boolean // cut long silent edges from the copies
-  cleanup: CleanupOption[] // applied first, in this order: separate, dereverb, denoise
-  tidyFillers: boolean // 哈哈哈哈 -> 哈哈 in every transcript
-  detectSinging: boolean // with check: flag sung clips
-  normalizeLufs: number | null // bring each clip to this loudness; null = as recorded
-}
-
 // Seconds per stage of a job ("separation", "asr", ...), longest first.
 export type Timings = Record<string, number>
-
-export type ImportJob = Job<{
-  id: string
-  imported: number
-  transcribed: number
-  sliced: number
-  trimmed: number
-  checks: CheckSummary | null
-  timings?: Timings
-}>
-
-export async function importDataset(o: ImportOptions): Promise<ImportJob> {
-  const body = {
-    source: o.source,
-    audio_dir: o.audioDir || null,
-    name: o.name,
-    copy_audio: o.copyAudio,
-    transcribe: o.transcribe,
-    language: o.language || null,
-    prompt: o.prompt.trim() || null,
-    slice: o.slice,
-    slice_min_seconds: o.sliceMin,
-    slice_max_seconds: o.sliceMax,
-    check: o.check,
-    aligner: o.aligner,
-    trim: o.trim,
-    separate: o.cleanup.includes('separate'),
-    dereverb: o.cleanup.includes('dereverb'),
-    denoise: o.cleanup.includes('denoise'),
-    tidy_fillers: o.tidyFillers,
-    detect_singing: o.detectSinging,
-    normalize_lufs: o.normalizeLufs,
-  }
-  return (await postJson('/api/datasets/import', body)).json()
-}
 
 // Processing steps of a dataset (src/polyvox/prep/steps.py), in order after its sources.
 export type StepName = 'clean_up' | 'slice' | 'transcribe' | 'check' | 'tidy'
@@ -585,29 +530,8 @@ export async function createDataset(
   return (await postJson('/api/datasets/create', body)).json()
 }
 
-export type CheckJob = Job<CheckSummary & { timings?: Timings }>
-
-/** Shorten runs of fillers in a dataset's transcripts, in place (the original manifest is kept). */
-export async function tidyFillers(id: string): Promise<{ changed: number }> {
-  return (await postJson('/api/datasets/tidy-fillers', { id })).json()
-}
-
-// Loudness normalization (src/polyvox/loudness.py); levels are [p10, median, p90] LUFS.
+// Loudness normalization (src/polyvox/loudness.py).
 export const DEFAULT_LUFS = -20
-
-export type NormalizeJob = Job<{
-  normalized: number
-  unchanged: number
-  peak_limited: number
-  skipped: number
-  before: [number, number, number] | null
-  after: [number, number, number] | null
-}>
-
-/** Bring every clip of a dataset to a loudness in place (originals kept; checks stay valid). */
-export async function normalizeDataset(id: string, targetLufs: number): Promise<NormalizeJob> {
-  return (await postJson('/api/datasets/normalize', { id, target_lufs: targetLufs })).json()
-}
 
 export interface ExportFormat {
   id: string
@@ -647,16 +571,6 @@ export async function exportDir(id: string, format: string): Promise<string> {
 
 export async function exportDataset(id: string, options: ExportOptions): Promise<ExportJob> {
   return (await postJson('/api/datasets/export', { id, ...options })).json()
-}
-
-export async function checkDataset(
-  id: string,
-  aligner: Aligner,
-  compareAsr: boolean,
-  detectSinging: boolean,
-): Promise<CheckJob> {
-  const body = { id, aligner, compare_asr: compareAsr, detect_singing: detectSinging }
-  return (await postJson('/api/datasets/check', body)).json()
 }
 
 /** Drop every clip whose check has the flag (e.g. all sung clips); returns how many were newly dropped. */

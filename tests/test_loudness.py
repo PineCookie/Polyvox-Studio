@@ -91,16 +91,14 @@ def test_normalize_endpoints(service, training, data_dir, tmp_path):
     lst = write_list(tmp_path / "speaker_a.list", [f"{clip}|speaker_a|ZH|示例"])
     client = TestClient(create_app(service.settings, service, training))
 
-    body = {"source": str(lst), "name": "a", "normalize_lufs": -20}
-    assert wait_job(client, client.post("/api/datasets/import", json=body).json()["id"])["state"] == "done"
-    audio, rate = sf.read(data_dir / "a" / "wavs" / "a.wav")
-    assert loudness.integrated(audio, rate) == pytest.approx(-20.0, abs=0.1)
+    body = {"source": str(lst), "name": "a"}
+    assert wait_job(client, client.post("/api/datasets/create", json=body).json()["id"])["state"] == "done"
 
-    job = wait_job(
-        client, client.post("/api/datasets/normalize", json={"id": "a/train.jsonl", "target_lufs": -26}).json()["id"]
-    )
-    assert (job["state"], job["result"]["normalized"]) == ("done", 1), job
-    audio, rate = sf.read(data_dir / "a" / "wavs" / "a.wav")
-    assert loudness.integrated(audio, rate) == pytest.approx(-26.0, abs=0.1)
-    assert client.post("/api/datasets/normalize", json={"id": "nope/train.jsonl"}).status_code == 404
-    assert client.post("/api/datasets/normalize", json={"id": "a/train.jsonl", "target_lufs": 0}).status_code == 422
+    for target in (-20, -26):
+        step = {"id": "a/train.jsonl", "step": "tidy", "trim": False, "normalize_lufs": target}
+        job = wait_job(client, client.post("/api/datasets/step", json=step).json()["id"])
+        assert (job["state"], job["result"]["normalized"]) == ("done", 1), job
+        audio, rate = sf.read(data_dir / "a" / "wavs" / "a.wav")
+        assert loudness.integrated(audio, rate) == pytest.approx(target, abs=0.1)
+    assert client.post("/api/datasets/step", json={**step, "id": "nope/train.jsonl"}).status_code == 404
+    assert client.post("/api/datasets/step", json={**step, "normalize_lufs": 0}).status_code == 422
