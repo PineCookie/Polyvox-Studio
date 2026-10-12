@@ -92,6 +92,7 @@ export const en = {
     top_p: 'Top-p',
     repetition_penalty: 'Repetition penalty',
     base_version: 'Base model version',
+    sample_steps: 'Steps',
     speed: 'Speed',
   } as Record<string, string>,
   paramHints: {
@@ -106,7 +107,8 @@ export const en = {
     top_k: 'How many of the likeliest sound tokens each step chooses among.',
     repetition_penalty: 'Against loops and stutters; raise it if a phrase repeats.',
     base_version:
-      'v2ProPlus (default) or v2Pro: the base model without a voice. Voices speak with the version they were trained from.',
+      'v2ProPlus (default), v2Pro or v4 (48 kHz; needs the reference’s transcript): the base model without a voice. Voices speak with the version they were trained from.',
+    sample_steps: 'v4: detail passes per stretch of sound. 8 is the webui’s default; more is slower.',
     speed: "Speaking rate; 1 is the voice's own.",
   } as Record<string, string>,
   seed: 'Seed',

@@ -1,11 +1,14 @@
-"""GPT-SoVITS v2Pro / v2ProPlus synthesis on the vendored modules (vendor/gpt_sovits).
+"""GPT-SoVITS v2Pro / v2ProPlus / v4 synthesis on the vendored modules (vendor/gpt_sovits).
 
 What upstream's inference_webui.get_tts_wav does for these versions, without the
 webui: text -> phonemes + RoBERTa features; the reference clip -> semantic tokens
 (HuBERT through the voice's quantizer), a spectrogram and a speaker embedding;
 the GPT continues the reference's tokens with the text's; SoVITS decodes them
-to 32 kHz audio in the reference's timbre. Long texts are cut into chunks of up
-to four sentences, joined with short pauses.
+to 32 kHz audio in the reference's timbre. v4 instead turns them into a mel
+spectrogram with a flow-matching DiT (continuing the reference's mel, in
+windows) and a vocoder makes 48 kHz audio; it needs the reference's
+transcript. Long texts are cut into chunks of up to four sentences, joined with
+short pauses.
 """
 
 from __future__ import annotations
@@ -27,6 +30,13 @@ PAUSE_S = 0.3  # between chunks, and after the reference's semantic prompt
 SPLITS = set("，。？！,.?!~:：—…")
 SEMANTIC_HZ = 50  # upstream's early stop: max_sec x 50 tokens
 BERT_DIM = 1024
+VERSIONS = ("v2ProPlus", "v2Pro", "v4")
+V4 = "v4"
+V4_RATE = 48_000  # the vocoder's output
+# v4's mel: 32 kHz audio, 100 bands, 100 frames/s; values scaled from [-12, 2] to [-1, 1].
+V4_MEL = {"n_fft": 1280, "num_mels": 100, "sampling_rate": 32000, "hop_size": 320, "win_size": 1280}
+V4_SPEC_MIN, V4_SPEC_MAX = -12.0, 2.0
+V4_REF_FRAMES, V4_WINDOW = 500, 1000  # mel frames of reference prompt / per DiT window (prompt included)
 
 
 @dataclass(frozen=True)
@@ -36,6 +46,7 @@ class Options:
     temperature: float = 1.0
     repetition_penalty: float = 1.35
     speed: float = 1.0
+    sample_steps: int = 8  # v4: flow-matching steps per mel window
 
 
 @dataclass
@@ -43,7 +54,7 @@ class Voice:
     """A voice's GPT and SoVITS weights, loaded."""
 
     key: object
-    model_version: str  # v2Pro | v2ProPlus
+    model_version: str  # v2Pro | v2ProPlus | v4
     sovits: torch.nn.Module
     gpt: torch.nn.Module
     hps: object  # the SoVITS config (filter length, hop, sampling rate ...)
@@ -51,8 +62,14 @@ class Voice:
     decoder: object = None  # decode.Decoder for the GPT, made on first use (CUDA)
 
     @property
-    def sample_rate(self) -> int:
+    def data_rate(self) -> int:
+        """The rate SoVITS reads references at (its spectrogram)."""
         return int(self.hps.data.sampling_rate)
+
+    @property
+    def sample_rate(self) -> int:
+        """The rate of the audio it makes."""
+        return V4_RATE if self.model_version == V4 else self.data_rate
 
 
 @dataclass
@@ -62,7 +79,10 @@ class Reference:
     phones: list[int]
     bert: torch.Tensor | None
     spec: torch.Tensor
-    sv_emb: torch.Tensor
+    sv_emb: torch.Tensor | None  # v2Pro only
+    mel: torch.Tensor | None = None  # v4: the reference's last mel frames, normalized [1, 100, T]
+    fea: torch.Tensor | None = None  # v4: DiT conditions for those frames [1, 512, T]
+    ge: torch.Tensor | None = None  # v4: the reference's style vector
 
 
 class Config(dict):
@@ -102,36 +122,46 @@ class Pipeline:
         self.bert = AutoModelForMaskedLM.from_pretrained(bert_dir).to(device, self.dtype).eval()
         self.hubert = CNHubert(str(self.base_dir / "chinese-hubert-base")).to(device, self.dtype).eval()
         self.sv = SV(device, self.half, str(self.base_dir / "sv" / "pretrained_eres2netv2w24s4ep4.ckpt"))
+        self.v4_dir = self.base_dir / "gsv-v4-pretrained"  # v4's SoVITS base and vocoder
+        self.vocoder: torch.nn.Module | None = None  # v4's, loaded with the first v4 voice
 
     # ------------------------------------------------------------ weights
     def base_weights(self, version: str = "v2ProPlus") -> tuple[Path, Path]:
         """(SoVITS, GPT) of a base model."""
+        if version == V4:
+            return self.v4_dir / "s2Gv4.pth", self.base_dir / "s1v3.ckpt"
         return self.base_dir / "v2Pro" / f"s2G{version}.pth", self.base_dir / "s1v3.ckpt"
 
     def load_voice(self, sovits_path: Path, gpt_path: Path, key: object = None) -> Voice:
         from ...vendor.gpt_sovits.AR.models.t2s_model import Text2SemanticDecoder
-        from ...vendor.gpt_sovits.module.models import SynthesizerTrn
+        from ...vendor.gpt_sovits.module.models import SynthesizerTrn, SynthesizerTrnV3
         from ...vendor.gpt_sovits.process_ckpt import get_sovits_version_from_path_fast, load_sovits_new, load_weights
 
         _, model_version, lora = get_sovits_version_from_path_fast(str(sovits_path))
-        if lora or model_version not in ("v2Pro", "v2ProPlus"):
+        if model_version not in VERSIONS or (lora and model_version != V4):
             raise ValueError(
-                f"{Path(sovits_path).name} is GPT-SoVITS {model_version}; only v2Pro / v2ProPlus run here."
+                f"{Path(sovits_path).name} is GPT-SoVITS {model_version}; only {' / '.join(VERSIONS)} run here."
             )
         saved = load_sovits_new(sovits_path)
         hps = Config(saved["config"])
         model = {**hps["model"], "semantic_frame_rate": "25hz", "version": model_version}
-        sovits = SynthesizerTrn(
-            hps.data.filter_length // 2 + 1,
-            hps.train.segment_size // hps.data.hop_length,
-            n_speakers=hps.data.n_speakers,
-            **model,
-        )
+        sizes = (hps.data.filter_length // 2 + 1, hps.train.segment_size // hps.data.hop_length)
+        if model_version == V4:
+            sovits = SynthesizerTrnV3(*sizes, n_speakers=hps.data.n_speakers, **model)
+            weights = saved["weight"]
+            if lora:  # the webui's v4 voices: the trained parts over the base, with the DiT's LoRA merged
+                weights = {**load_sovits_new(self.base_weights(V4)[0])["weight"], **weights}
+                weights = merge_lora(weights)
+        else:
+            sovits = SynthesizerTrn(*sizes, n_speakers=hps.data.n_speakers, **model)
+            weights = saved["weight"]
         if hasattr(sovits, "enc_q"):
             del sovits.enc_q  # training only
-        missing, _ = sovits.load_state_dict(saved["weight"], strict=False)
+        missing, _ = sovits.load_state_dict(weights, strict=False)
         if missing:
             raise ValueError(f"{Path(sovits_path).name} lacks {len(missing)} SoVITS weights, e.g. {missing[0]}.")
+        if model_version == V4:
+            self._ensure_vocoder()
         gpt_saved = load_weights(gpt_path)
         gpt = Text2SemanticDecoder(gpt_saved["config"], top_k=3)
         gpt.load_state_dict({k.removeprefix("model."): v for k, v in gpt_saved["weight"].items()})
@@ -143,6 +173,28 @@ class Pipeline:
             hps=hps,
             max_sec=float(gpt_saved["config"]["data"]["max_sec"]),
         )
+
+    def _ensure_vocoder(self) -> torch.nn.Module:
+        """v4's vocoder (mel -> 48 kHz), shared by all v4 voices."""
+        if self.vocoder is None:
+            from ...vendor.gpt_sovits.module.models import Generator
+
+            vocoder = Generator(
+                initial_channel=100,
+                resblock="1",
+                resblock_kernel_sizes=[3, 7, 11],
+                resblock_dilation_sizes=[[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                upsample_rates=[10, 6, 2, 2, 2],
+                upsample_initial_channel=512,
+                upsample_kernel_sizes=[20, 12, 4, 4, 4],
+                gin_channels=0,
+                is_bias=True,
+            )
+            vocoder.remove_weight_norm()  # saved without weight norm
+            path = self.v4_dir / "vocoder.pth"
+            vocoder.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+            self.vocoder = vocoder.to(self.device, self.dtype).eval()
+        return self.vocoder
 
     # ------------------------------------------------------------ text
     def phones_and_bert(self, text: str, language: str = "zh", lead_in: bool = True) -> tuple[list[int], torch.Tensor]:
@@ -182,11 +234,14 @@ class Pipeline:
         (None: the voice follows only its timbre, upstream's "reference-free" mode)."""
         import librosa
 
-        sr = voice.sample_rate
+        sr = voice.data_rate
         audio16, _ = librosa.load(str(wav), sr=16000)
         seconds = len(audio16) / 16000
         if not REF_MIN_S <= seconds <= REF_MAX_S:
             raise ValueError(f"The reference clip is {seconds:.1f} s; GPT-SoVITS needs {REF_MIN_S:g}-{REF_MAX_S:g} s.")
+        v4 = voice.model_version == V4
+        if v4 and not (text and text.strip()):
+            raise ValueError("GPT-SoVITS v4 needs the reference clip's transcript.")
         from ...vendor.gpt_sovits.module.mel_processing import spectrogram_torch
 
         with torch.no_grad():
@@ -211,9 +266,27 @@ class Pipeline:
                 hps.win_length,
                 center=False,
             ).to(self.dtype)
+            if v4:
+                mel, fea, ge = self._v4_prompt(voice, wav, spec, prompt, phones)
+                return Reference(key, prompt, phones, bert, spec, sv_emb=None, mel=mel, fea=fea, ge=ge)
             audio16k = librosa.resample(audio, orig_sr=sr, target_sr=16000)
             sv_emb = self.sv.compute_embedding3(torch.from_numpy(audio16k).to(self.device, self.dtype)[None])
         return Reference(key=key, prompt=prompt, phones=phones or [], bert=bert, spec=spec, sv_emb=sv_emb)
+
+    def _v4_prompt(self, voice: Voice, wav: Path, spec: torch.Tensor, prompt: torch.Tensor, phones: list[int]):
+        """The reference's normalized mel and its DiT conditions (last V4_REF_FRAMES
+        frames of both), and its style vector."""
+        import librosa
+
+        from ...vendor.gpt_sovits.module.mel_processing import mel_spectrogram_torch
+
+        audio, _ = librosa.load(str(wav), sr=V4_MEL["sampling_rate"])
+        mel = mel_spectrogram_torch(torch.from_numpy(audio).to(self.device)[None], fmin=0, fmax=None, **V4_MEL)
+        mel = ((mel - V4_SPEC_MIN) / (V4_SPEC_MAX - V4_SPEC_MIN) * 2 - 1).to(self.dtype)
+        fea, ge = voice.sovits.decode_encp(prompt[None], torch.LongTensor(phones).to(self.device)[None], spec)
+        n = min(mel.shape[2], fea.shape[2])  # as upstream: both cut to the shorter, then to their last frames
+        start = max(0, n - V4_REF_FRAMES)
+        return mel[:, :, start:n], fea[:, :, start:n], ge
 
     # ------------------------------------------------------------ synthesis
     def synthesize(
@@ -264,18 +337,43 @@ class Pipeline:
                         **sampling,
                     )
                 semantic = tokens[:, -n:][None]
-                audio = voice.sovits.decode(
-                    semantic,
-                    torch.LongTensor(phones).to(self.device)[None],
-                    [ref.spec],
-                    speed=options.speed,
-                    sv_emb=[ref.sv_emb],
-                )[0][0].float()
+                if voice.model_version == V4:
+                    audio = self._v4_audio(voice, ref, semantic, phones, options).float()
+                else:
+                    audio = voice.sovits.decode(
+                        semantic,
+                        torch.LongTensor(phones).to(self.device)[None],
+                        [ref.spec],
+                        speed=options.speed,
+                        sv_emb=[ref.sv_emb],
+                    )[0][0].float()
             peak = float(audio.abs().max())
             if peak > 1:  # as upstream: avoid clipping
                 audio = audio / peak
             out += [audio.cpu().numpy(), pause]
         return np.concatenate(out[:-1])
+
+    def _v4_audio(self, voice: Voice, ref: Reference, semantic: torch.Tensor, phones: list[int], options: Options):
+        """Semantic tokens -> mel (the DiT, window by window, each continuing the
+        last frames before it, the first the reference's) -> 48 kHz audio."""
+        fea, _ = voice.sovits.decode_encp(
+            semantic, torch.LongTensor(phones).to(self.device)[None], ref.spec, ref.ge, options.speed
+        )
+        mel, cond = ref.mel, ref.fea
+        keep = mel.shape[2]
+        step = V4_WINDOW - keep
+        out = []
+        for i in range(0, fea.shape[2], step):
+            chunk = fea[:, :, i : i + step]
+            x = torch.cat([cond, chunk], 2).transpose(2, 1)
+            lengths = torch.LongTensor([x.shape[1]]).to(self.device)
+            made = voice.sovits.cfm.inference(x, lengths, mel, options.sample_steps, inference_cfg_rate=0)
+            made = made[:, :, mel.shape[2] :]
+            mel, cond = made[:, :, -keep:], chunk[:, :, -keep:]
+            out.append(made)
+        mel = (torch.cat(out, 2) + 1) / 2 * (V4_SPEC_MAX - V4_SPEC_MIN) + V4_SPEC_MIN
+        with torch.inference_mode():
+            return self._ensure_vocoder()(mel)[0][0]
 
     def _decoder(self, voice: Voice):
         if not self.fast_decode:
@@ -301,6 +399,25 @@ class Pipeline:
             self.compile_decode = False
             voice.decoder = Decoder(voice.gpt)
             return voice.decoder.generate(*inputs, **sampling)
+
+
+def merge_lora(weights: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """The webui's v4 voice weights as plain SoVITS weights: its DiT was wrapped
+    by peft (keys ``cfm.base_model.model.<module>.lora_{A,B}.default.weight``),
+    so each LoRA folds into its layer, W + B @ A (the webui trains with
+    alpha = rank: scale 1)."""
+    plain: dict[str, torch.Tensor] = {}
+    lora: dict[str, dict[str, torch.Tensor]] = {}
+    for key, value in weights.items():
+        key = key.replace("cfm.base_model.model.", "cfm.").replace(".base_layer.", ".")
+        if m := re.match(r"(.+)\.lora_([AB])\.default\.weight$", key):
+            lora.setdefault(m[1], {})[m[2]] = value
+        else:
+            plain[key] = value
+    for module, ab in lora.items():
+        w = plain[f"{module}.weight"]
+        plain[f"{module}.weight"] = (w.float() + ab["B"].float() @ ab["A"].float()).to(w.dtype)
+    return plain
 
 
 @contextlib.contextmanager

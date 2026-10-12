@@ -10,7 +10,7 @@ from torch.nn import functional as F
 from polyvox.vendor.gpt_sovits.module import commons
 from polyvox.vendor.gpt_sovits.module import modules
 from polyvox.vendor.gpt_sovits.module import attentions
-DiT = None  # v3 / v4 only (f5_tts not vendored)
+from polyvox.vendor.gpt_sovits.f5_tts.model import DiT
 from torch.nn import Conv1d, ConvTranspose1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 from polyvox.vendor.gpt_sovits.module.commons import init_weights, get_padding

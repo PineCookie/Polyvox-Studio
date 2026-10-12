@@ -4,7 +4,8 @@ A voice folder holds the two trained models, their config and a default
 reference clip (GPT-SoVITS always clones from a clip; Synthesize uses this one
 unless another is given):
 
-    sovits_weights.pth   SoVITS weights, saved as the webui saves them
+    sovits_weights.pth   SoVITS weights, saved as the webui saves them (v4: the
+                         trained parts and the DiT's LoRA, over the v4 base)
     gpt_weights.ckpt     GPT weights (none: the base GPT, e.g. a training
                          checkpoint from before the GPT stage)
     lora_config.json     {"engine": "gpt_sovits", "version": "v2ProPlus", "base_model": ...}
@@ -23,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from ...data import audio_io, manifests
-from .synth import REF_MAX_S, REF_MIN_S
+from .synth import REF_MAX_S, REF_MIN_S, V4, VERSIONS
 
 ENGINE = "gpt_sovits"
 BASE_REPO = "lj1995/GPT-SoVITS"
@@ -144,8 +145,8 @@ def import_webui(
         if path is not None and not path.is_file():
             raise ValueError(f"No {kind} weights at {path}.")
     _, version, lora = get_sovits_version_from_path_fast(str(sovits))
-    if lora or version not in ("v2Pro", "v2ProPlus"):
-        raise ValueError(f"{sovits.name} is GPT-SoVITS {version}; only v2Pro / v2ProPlus voices are supported.")
+    if version not in VERSIONS or (lora and version != V4):
+        raise ValueError(f"{sovits.name} is GPT-SoVITS {version}; only {' / '.join(VERSIONS)} voices are supported.")
     try:  # both readable (and holding no pickled code) before anything is copied
         load_sovits_new(sovits)
         gpt_saved = load_weights(gpt) if gpt is not None else {"weight": {}, "config": {}}
@@ -212,8 +213,8 @@ def package_files(voice_dir: Path, name: str) -> dict[str, bytes]:
 
     sovits_path = voice_dir / SOVITS_FILE
     _, version, _ = get_sovits_version_from_path_fast(str(sovits_path))
-    if version not in ("v2Pro", "v2ProPlus"):
-        raise ValueError(f"Only v2Pro / v2ProPlus voices can be exported, not {version}.")
+    if version not in VERSIONS:
+        raise ValueError(f"Only {' / '.join(VERSIONS)} voices can be exported, not {version}.")
 
     def saved(obj, tag: bytes = b"") -> bytes:
         buf = io.BytesIO()
@@ -223,9 +224,11 @@ def package_files(voice_dir: Path, name: str) -> dict[str, bytes]:
 
     sovits = load_sovits_new(sovits_path)
     config = {**plain_config(sovits["config"]), "name": name}
+    # v4 voices keep lora_rank: the webui reads it to tell the trained parts from full weights.
+    lora = {"lora_rank": sovits["lora_rank"]} if sovits.get("lora_rank") else {}
     files = {
         SOVITS_FILE: saved(
-            {"weight": sovits["weight"], "config": config, "info": sovits.get("info", "")},
+            {"weight": sovits["weight"], "config": config, "info": sovits.get("info", ""), **lora},
             model_version2byte[version],
         ),
         CONFIG_FILE: (

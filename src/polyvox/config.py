@@ -29,6 +29,8 @@ class Settings:
     # the G2PW folder; "" = not downloaded (the engine is unavailable).
     gsv_model: str = ""
     gsv_g2pw_model: str = ""
+    # GPT-SoVITS v4's SoVITS base and vocoder (folder); "" = v4 unavailable.
+    gsv_v4_model: str = ""
     lora_dir: Path = Path("lora")
     # Where JSONL training manifests are found.
     data_dir: Path = Path("data")
@@ -88,6 +90,7 @@ class Settings:
             dots_model=_env("DOTS_MODEL", cls.dots_model),
             gsv_model=_env("GSV_MODEL", cls.gsv_model),
             gsv_g2pw_model=_env("GSV_G2PW_MODEL", cls.gsv_g2pw_model),
+            gsv_v4_model=_env("GSV_V4_MODEL", cls.gsv_v4_model),
             lora_dir=Path(_env("LORA_DIR", str(cls.lora_dir))),
             data_dir=Path(_env("DATA_DIR", str(cls.data_dir))),
             device=_env("DEVICE", cls.device),

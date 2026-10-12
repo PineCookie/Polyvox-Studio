@@ -217,10 +217,10 @@ def test_webui_weights_import_as_a_voice(lora_dir, tmp_path):
 
 
 def test_unsupported_or_unsafe_weights_are_not_imported(lora_dir, tmp_path):
-    v4, gpt = webui_weights(tmp_path / "v4", tag=b"04")
+    v3, gpt = webui_weights(tmp_path / "v3", tag=b"03")
     clip = tone(tmp_path / "ref.wav", 5.0)
-    with pytest.raises(ValueError, match="v4"):
-        voices.import_webui(lora_dir, "old", v4, gpt, (clip, ""))
+    with pytest.raises(ValueError, match="v3"):
+        voices.import_webui(lora_dir, "old", v3, gpt, (clip, ""))
     sovits, _ = webui_weights(tmp_path / "ok")
     with pytest.raises(ValueError, match="3-10 s"):
         voices.import_webui(lora_dir, "short", sovits, gpt, (tone(tmp_path / "s.wav", 1.0), ""))
@@ -469,9 +469,112 @@ def test_the_base_models_version_is_a_choice(engine, pipeline, lora_dir, tmp_pat
     assert pipeline.voices[0] == ("s2Gv2Pro.pth", "s1v3.ckpt")
     assert pipeline.voices[1][0].endswith(voices.SOVITS_FILE)
     with pytest.raises(ValueError, match="one of"):
+        engine.synthesize(SynthesisRequest(text="你好", reference_wav=clip, options={"base_version": "v3"}))
+    with pytest.raises(ValueError, match="v4 isn't downloaded"):
         engine.synthesize(SynthesisRequest(text="你好", reference_wav=clip, options={"base_version": "v4"}))
     (param,) = [p for p in engine.public()["params"] if p["name"] == "base_version"]
-    assert (param["kind"], list(param["choices"]), param["base_only"]) == ("choice", ["v2ProPlus", "v2Pro"], True)
+    assert (param["kind"], list(param["choices"]), param["base_only"]) == (
+        "choice",
+        ["v2ProPlus", "v2Pro", "v4"],
+        True,
+    )
+
+
+# --------------------------------------------------------------------------- v4
+
+
+def test_v4_webui_voices_import_and_package_with_their_lora_rank(lora_dir, tmp_path):
+    from polyvox import sharing
+    from polyvox.vendor.gpt_sovits.process_ckpt import get_sovits_version_from_path_fast, load_sovits_new
+
+    _, gpt = webui_weights(tmp_path / "webui")
+    buf = io.BytesIO()
+    lora_key = "cfm.base_model.model.estimator.transformer_blocks.0.attn.to_q.lora_A.default.weight"
+    torch.save({"weight": {lora_key: torch.zeros(2, 4).half()}, "config": {"model": {}}, "lora_rank": 32}, buf)
+    sovits = tmp_path / "webui" / "voice_v4_e10_s100_l32.pth"
+    sovits.write_bytes(b"04" + buf.getvalue()[2:])
+    voices.import_webui(lora_dir, "voice_v4", sovits, gpt, (tone(tmp_path / "ref.wav", 5.0), "示例。"))
+    (ckpt,) = lora_library.scan(lora_dir)
+    assert ckpt.version == "v4"
+
+    package = sharing.export_package(ckpt, "shared_v4", "")
+    other = tmp_path / "other_lora"
+    other.mkdir()
+    sharing.import_package(other, package, "shared_v4.zip")
+    shared = other / "gpt_sovits" / "shared_v4" / voices.SOVITS_FILE
+    assert get_sovits_version_from_path_fast(str(shared))[1:] == ["v4", True]
+    assert load_sovits_new(shared)["lora_rank"] == 32  # the webui needs it to load the voice
+
+
+def test_v4_lora_weights_fold_into_the_dits_layers():
+    from polyvox.engines.gpt_sovits.synth import merge_lora
+
+    peft = "cfm.base_model.model.estimator.transformer_blocks.0.attn.to_q"
+    a, b = torch.randn(2, 4), torch.randn(3, 2)
+    weights = {
+        "cfm.estimator.transformer_blocks.0.attn.to_q.weight": torch.ones(3, 4).half(),  # the base's
+        "cfm.estimator.transformer_blocks.0.attn.to_q.bias": torch.zeros(3),
+        f"{peft}.lora_A.default.weight": a,
+        f"{peft}.lora_B.default.weight": b,
+        "cfm.base_model.model.estimator.rotary_embed.inv_freq": torch.ones(2),
+        "wns1.w": torch.ones(1),
+    }
+    merged = merge_lora(weights)
+    assert sorted(merged) == [
+        "cfm.estimator.rotary_embed.inv_freq",
+        "cfm.estimator.transformer_blocks.0.attn.to_q.bias",
+        "cfm.estimator.transformer_blocks.0.attn.to_q.weight",
+        "wns1.w",
+    ]
+    w = merged["cfm.estimator.transformer_blocks.0.attn.to_q.weight"]
+    assert w.dtype == torch.float16 and torch.allclose(w.float(), (1 + b @ a).half().float())
+
+
+def test_the_dits_rotary_embedding_rotates_interleaved_pairs():
+    from polyvox.vendor.gpt_sovits.f5_tts.rotary import RotaryEmbedding, apply_rotary_pos_emb
+
+    freqs, scale = RotaryEmbedding(8).forward_from_seq_len(5)
+    q = torch.randn(1, 2, 5, 8)
+    rotated = apply_rotary_pos_emb(q, freqs, scale)
+    # Pairs (0, 1), (2, 3), ... turn as complex numbers by position x frequency.
+    pairs = torch.view_as_complex(q.unflatten(-1, (4, 2)).contiguous())
+    angle = torch.arange(5)[:, None] * (1.0 / 10000 ** (torch.arange(0, 8, 2) / 8))
+    expected = torch.view_as_real(pairs * torch.polar(torch.ones_like(angle), angle)).flatten(-2)
+    assert torch.allclose(rotated, expected, atol=1e-5)
+
+
+def test_v4_makes_its_mel_window_by_window_each_continuing_the_last():
+    from types import SimpleNamespace
+
+    from polyvox.engines.gpt_sovits import synth
+
+    frames, keep = 2300, 40  # semantic frames' conditions; the reference's mel frames
+    prompts = []
+
+    class Cfm:
+        def inference(self, x, lengths, prompt, steps, inference_cfg_rate):
+            prompts.append(prompt[0, 0].clone())
+            assert x.shape[1] <= synth.V4_WINDOW and int(lengths) == x.shape[1] and steps == 8
+            return x.transpose(2, 1)[:, :100]  # "mel" = the conditions: frame i holds i
+
+    class Sovits:
+        cfm = Cfm()
+
+        def decode_encp(self, codes, text, refer, ge, speed):
+            return torch.arange(frames).float().expand(1, 512, frames), ge
+
+    pipeline = synth.Pipeline.__new__(synth.Pipeline)
+    pipeline.device = "cpu"
+    pipeline.vocoder = lambda mel: mel[:, :1]  # [1, 1, T]
+    ref = SimpleNamespace(spec=None, ge=None, mel=torch.full((1, 100, keep), -5.0), fea=torch.zeros(1, 512, keep))
+    voice = SimpleNamespace(sovits=Sovits())
+    audio = pipeline._v4_audio(voice, ref, None, [1, 2], synth.Options())
+
+    made = (audio + 12) / 14 * 2 - 1  # undo the mel scaling: the frame numbers
+    assert torch.allclose(made, torch.arange(frames).float(), atol=1e-3)
+    assert len(prompts) == -(-frames // (synth.V4_WINDOW - keep))  # windows of 1000 frames, prompt included
+    assert (prompts[0] == -5).all()  # the reference's mel first, then each window's last frames
+    assert torch.equal(prompts[1], torch.arange(synth.V4_WINDOW - 2 * keep, synth.V4_WINDOW - keep).float())
 
 
 def test_training_can_start_from_v2pro(engine, data_dir, tmp_path):

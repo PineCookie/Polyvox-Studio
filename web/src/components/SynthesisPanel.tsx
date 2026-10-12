@@ -107,6 +107,8 @@ interface Props {
   voiceReference: string | null
   // The base model is chosen (no voice): settings only it uses show.
   isBase: boolean
+  // The chosen voice's model version (null: unknown, or the base model, whose version is an option).
+  voiceVersion: string | null
 }
 
 export function SynthesisPanel({
@@ -119,6 +121,7 @@ export function SynthesisPanel({
   onTranscribed,
   voiceReference,
   isBase,
+  voiceVersion,
 }: Props) {
   const t = useT()
   const [text, setText] = useState('')
@@ -132,6 +135,11 @@ export function SynthesisPanel({
   const options: EngineOptions = engine ? { ...defaultOptions(engine), ...changed[engine.id] } : {}
   const setOption = (name: string, value: number | boolean | string) =>
     engine && setChanged((c) => ({ ...c, [engine.id]: { ...c[engine.id], [name]: value } }))
+  // Settings shown for this choice: base-only ones with the base model, version-bound ones for their versions.
+  const version = isBase ? String(options.base_version ?? '') : voiceVersion
+  const shown = (engine?.params ?? []).filter(
+    (p) => (isBase || !p.base_only) && (!p.versions.length || (version !== null && p.versions.includes(version))),
+  )
   const textArea = useRef<HTMLTextAreaElement>(null)
   // A playable URL for the chosen reference, released when it changes.
   const referenceUrl = useMemo(() => (referenceAudio ? URL.createObjectURL(referenceAudio) : null), [referenceAudio])
@@ -300,10 +308,10 @@ export function SynthesisPanel({
       <details className="advanced">
         <summary>{t.advanced}</summary>
         <div className="advanced-grid">
-          {engine?.params
-            .filter((p) => p.kind === 'choice' && (isBase || !p.base_only))
+          {shown
+            .filter((p) => p.kind === 'choice')
             .map((p) => (
-              <label key={`${engine.id}.${p.name}`} className="field">
+              <label key={`${engine?.id}.${p.name}`} className="field">
                 <span>{t.paramLabels[p.name] ?? p.name}</span>
                 <select value={String(options[p.name])} onChange={(e) => setOption(p.name, e.target.value)}>
                   {(p.choices ?? []).map((c) => (
@@ -315,11 +323,11 @@ export function SynthesisPanel({
                 {t.paramHints[p.name] && <span className="muted hint">{t.paramHints[p.name]}</span>}
               </label>
             ))}
-          {engine?.params
+          {shown
             .filter((p) => p.kind === 'float' || p.kind === 'int')
             .map((p) => (
               <ParamSlider
-                key={`${engine.id}.${p.name}`}
+                key={`${engine?.id}.${p.name}`}
                 param={p}
                 value={Number(options[p.name])}
                 onChange={(v) => setOption(p.name, v)}
@@ -335,10 +343,10 @@ export function SynthesisPanel({
             />
           </label>
           <div className="toggles">
-            {engine?.params
+            {shown
               .filter((p) => p.kind === 'bool')
               .map((p) => (
-                <label key={`${engine.id}.${p.name}`}>
+                <label key={`${engine?.id}.${p.name}`}>
                   <input
                     type="checkbox"
                     checked={Boolean(options[p.name])}

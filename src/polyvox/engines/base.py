@@ -26,6 +26,7 @@ class Param:
     step: float | None = None
     choices: tuple[str, ...] | None = None  # kind "choice": the allowed values
     base_only: bool = False  # only used with the base model (no voice / LoRA chosen)
+    versions: tuple[str, ...] = ()  # only used by these model versions (a voice's, or base_version); () = all
 
     def coerce(self, value) -> float | int | bool | str:
         if self.kind == "choice":

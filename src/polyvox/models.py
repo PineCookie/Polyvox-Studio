@@ -122,6 +122,17 @@ MODELS: tuple[ModelSpec, ...] = (
         license="MIT",
     ),
     ModelSpec(
+        "gsv_v4_model",
+        "GPT-SoVITS v4",
+        "Text to speech (48 kHz), voice training: v4's SoVITS base (a mel DiT) and vocoder",
+        "lj1995/GPT-SoVITS",
+        "lj1995__GPT-SoVITS",
+        ("gsv-v4-pretrained/s2Gv4.pth", "gsv-v4-pretrained/vocoder.pth"),
+        830,
+        entry="gsv-v4-pretrained",
+        license="MIT",
+    ),
+    ModelSpec(
         "gsv_g2pw_model",
         "G2PW",
         "GPT-SoVITS: pronunciation of Chinese characters with several readings",

@@ -29,7 +29,7 @@ src/polyvox/
                    worker.py (training subprocess around the vendored script)
     dots/          engine.py (dots.tts, 48 kHz); lora.py (LoRA layers, merging);
                    worker.py (training subprocess)
-    gpt_sovits/    engine.py (GPT-SoVITS v2Pro / v2ProPlus, 32 kHz); synth.py (the
+    gpt_sovits/    engine.py (GPT-SoVITS v2Pro / v2ProPlus, 32 kHz; v4, 48 kHz); synth.py (the
                    synthesis pipeline); voices.py (voice folders with a default
                    reference clip, import of weights the GPT-SoVITS webui trained);
                    features.py + worker.py (training: full fine-tuning, SoVITS then GPT)
@@ -52,7 +52,7 @@ src/polyvox/
                    roformer/ from Music-Source-Separation-Training (MIT);
                    dots_tts/ from the dots.tts 0.3.1 wheel (Apache-2.0, changes listed
                    in its __init__.py); gpt_sovits/ from GPT-SoVITS (MIT): the v2Pro
-                   synthesis and training modules, Chinese + English text (rebuilt by
+                   and v4 synthesis and training modules, Chinese + English text (rebuilt by
                    tools/vendor_gpt_sovits.py from a pinned upstream commit; changes listed
                    in its __init__.py)
   server/          the FastAPI app (app.py; serves web/dist when built), what the
@@ -124,6 +124,7 @@ folder. A model variable set explicitly (below) always wins.
 | `POLYVOX_DOTS_MODEL` | `rednote-hilab/dots.tts-soar` | dots.tts: local model dir or Hugging Face id |
 | `POLYVOX_GSV_MODEL` | (downloaded copy) | GPT-SoVITS: a folder laid out like `lj1995/GPT-SoVITS` (v2Pro, s1v3.ckpt, encoders) |
 | `POLYVOX_GSV_G2PW_MODEL` | (downloaded copy) | GPT-SoVITS: the G2PW folder (Chinese pronunciation) |
+| `POLYVOX_GSV_V4_MODEL` | (downloaded copy) | GPT-SoVITS v4: a folder with `s2Gv4.pth` and `vocoder.pth` (`gsv-v4-pretrained`) |
 | `POLYVOX_LORA_DIR` | `lora` | LoRA checkpoints and training runs |
 | `POLYVOX_DATA_DIR` | `data` | JSONL training manifests |
 | `POLYVOX_DEVICE` | `auto` | inference device: `cuda`, `cuda:1`, `cpu`, ... |

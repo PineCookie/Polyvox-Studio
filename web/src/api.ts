@@ -37,6 +37,7 @@ export interface EngineParam {
   step: number | null
   choices: string[] | null // kind 'choice': the allowed values
   base_only: boolean // only used with the base model (no voice chosen)
+  versions: string[] // only used by these model versions (the voice's, or base_version); empty: all
 }
 
 export interface Engine {

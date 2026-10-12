@@ -176,10 +176,16 @@ def _gsv_readme(name: str, version: str, has_gpt: bool, has_reference: bool, ste
         if has_reference
         else "It comes without a reference clip: give one (3-10 s of the voice, with its transcript) when synthesizing."
     )
+    trained = (
+        "the GPT fine-tuned in full, SoVITS as the webui trains v4 (a LoRA of its mel DiT plus\n"
+        "the parts around it; it loads over the v4 base, `gsv-v4-pretrained/s2Gv4.pth`)"
+        if version == "v4"
+        else "both models fine-tuned\nin full"
+    )
     return f"""# {name}
 
-A [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) {version} voice: both models fine-tuned
-in full from the official {version} base models ([lj1995/GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS)).
+A [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) {version} voice: {trained} from the official
+{version} base models ([lj1995/GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS)).
 
 | | |
 |---|---|

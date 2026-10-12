@@ -1,9 +1,10 @@
-"""GPT-SoVITS v2Pro / v2ProPlus (RVC-Boss/GPT-SoVITS, vendor/gpt_sovits) as an engine.
+"""GPT-SoVITS v2Pro / v2ProPlus / v4 (RVC-Boss/GPT-SoVITS, vendor/gpt_sovits) as an engine.
 
 A GPT turns text into semantic tokens, continuing a reference clip's; SoVITS
-decodes them to 32 kHz audio in the reference's timbre. It always clones a
-clip: the request's, else the voice's own default (voices.py). Voices are full
-weights (~300 MB), loaded when chosen; the base is v2ProPlus.
+decodes them to 32 kHz audio in the reference's timbre (v4: a mel DiT and a
+vocoder, 48 kHz). It always clones a clip: the request's, else the voice's own
+default (voices.py). Voices are full weights (~300 MB; v4: its trained parts
+over the v4 base), loaded when chosen; the base is v2ProPlus.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from ... import lora_library
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
 from . import voices
-from .synth import Options, split_text
+from .synth import V4, VERSIONS, Options, split_text
 
 if TYPE_CHECKING:
     from ...training import TrainParams
@@ -34,7 +35,6 @@ TOKENS_PER_CHAR = 5.5  # first guess of semantic tokens per character; refined f
 MIN_TOKENS = 12
 LEARN_MIN_CHARS = 10
 BASE_VERSION = "v2ProPlus"
-VERSIONS = ("v2ProPlus", "v2Pro")
 
 # (base models folder, G2PW folder, device) -> synth.Pipeline
 PipelineLoader = Callable[[Path, Path, str], object]
@@ -77,6 +77,8 @@ class GptSovitsEngine(Engine):
         # Against loops and stutters: penalizes semantic tokens the GPT just made.
         Param("repetition_penalty", "float", 1.35, 1.0, 2.0, 0.05),
         Param("speed", "float", 1.0, 0.6, 1.65, 0.05),
+        # v4 only: flow-matching steps per mel window.
+        Param("sample_steps", "int", 8, 4, 32, 4, versions=(V4,)),
         # The base model's version (a voice has its own, from its weights).
         Param("base_version", "choice", BASE_VERSION, choices=VERSIONS, base_only=True),
     )
@@ -166,12 +168,16 @@ class GptSovitsEngine(Engine):
             g2pw = Path(self.settings.model_path("gsv_g2pw_model"))
             t0 = time.time()
             self._pipeline = self._loader(base, g2pw, self.device)
+            if v4 := self.settings.model_path("gsv_v4_model"):
+                self._pipeline.v4_dir = Path(v4)
             if self.settings.optimize is False:  # upstream's decoding loop instead of the CUDA graph
                 self._pipeline.fast_decode = False
             logger.info("GPT-SoVITS front ends loaded in %.1f s", time.time() - t0)
         return self._pipeline
 
     def _ensure_voice(self, pipeline, ckpt: lora_library.LoraCheckpoint | None, base_version: str = BASE_VERSION):
+        if (base_version if ckpt is None else ckpt.version) == V4 and not self.settings.model_path("gsv_v4_model"):
+            raise ValueError("GPT-SoVITS v4 isn't downloaded yet (Models: GPT-SoVITS v4).")
         if ckpt is None:
             key = ("base", base_version)
             sovits, gpt = pipeline.base_weights(base_version)

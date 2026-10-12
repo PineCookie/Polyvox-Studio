@@ -100,6 +100,7 @@ def test_engines_are_listed_with_their_settings(client):
         "step": None,
         "choices": None,
         "base_only": False,
+        "versions": [],
     }
 
 

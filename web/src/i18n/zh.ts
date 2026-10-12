@@ -90,6 +90,7 @@ export const zh: Messages = {
     top_p: 'Top-p',
     repetition_penalty: '重复惩罚',
     base_version: '基础模型版本',
+    sample_steps: '步数',
     speed: '语速',
   },
   paramHints: {
@@ -101,7 +102,9 @@ export const zh: Messages = {
     temperature: '声音 token 的随机程度：越低越稳定平淡，越高越生动但更易出错。',
     top_k: '每一步从多少个最可能的声音 token 中选择。',
     repetition_penalty: '防止重复和卡顿；若有句子重复可调高。',
-    base_version: 'v2ProPlus（默认）或 v2Pro：未选择音色时使用的基础模型。音色使用其训练时的版本。',
+    base_version:
+      'v2ProPlus（默认）、v2Pro 或 v4（48 kHz，需要参考音频的文本）：未选择音色时使用的基础模型。音色使用其训练时的版本。',
+    sample_steps: 'v4：每段声音的细化次数。8 为 webui 默认值；更多会更慢。',
     speed: '语速；1 为音色本身的语速。',
   },
   seed: '随机种子',
@@ -647,6 +650,7 @@ export const zh: Messages = {
     dots_model: '语音合成（48 kHz）、LoRA 训练',
     gsv_model: '语音合成（32 kHz）、音色训练：基础模型及其 HuBERT、RoBERTa 和说话人编码器',
     gsv_g2pw_model: 'GPT-SoVITS：多音字的读音',
+    gsv_v4_model: '语音合成（48 kHz）、音色训练：v4 的 SoVITS 基础模型（梅尔 DiT）和声码器',
     denoiser_model: '合成：克隆前清理参考音频',
     asr_model: '语音识别：为片段生成文本、与文本对比',
     align_model: '检查片段与文本是否一致（11 种语言）',
