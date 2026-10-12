@@ -27,9 +27,10 @@ def router(s: Studio) -> APIRouter:
         return checked(training.start, params)
 
     @api.get("/api/training/runs/{name}")
-    def run_detail(name: str, since: int | None = None) -> RunDetail:
-        """``since``: only the metric points after that step (polls while training)."""
-        return found(training.detail, name, since)
+    def run_detail(name: str, since: int | None = None, log_from: int | None = None) -> RunDetail:
+        """Polls while training: ``since``, only the metric points after that step;
+        ``log_from`` (the last answer's log_next), only the console lines from there."""
+        return found(training.detail, name, since, log_from)
 
     @api.post("/api/training/runs/{name}/resume")
     def resume_run(name: str, body: ResumeIn | None = None) -> RunDetail:

@@ -37,10 +37,35 @@ def test_seconds_per_step_and_downsample():
     assert len(kept) <= 1001 and kept[0]["step"] == 0 and kept[-1]["step"] == 2499
 
 
-def test_tail_lines_keeps_final_progress_bar_state(tmp_path):
+def test_console_tail_keeps_final_progress_bar_state(tmp_path):
     log = tmp_path / "console.log"
     log.write_bytes(b"one\r\nbar 10%\rbar 100%\r\nlast\r\n")
-    assert training.tail_lines(log) == ["one", "bar 100%", "last"]
+    console = training.read_console(log)
+    assert console.lines == ["one", "bar 100%", "last"]
+    assert (console.next, console.partial, console.appended) == (log.stat().st_size, False, False)
+    assert training.read_console(tmp_path / "missing.log").lines == []
+
+
+def test_console_polls_read_only_new_lines_and_redo_the_unfinished_one(tmp_path):
+    log = tmp_path / "console.log"
+    log.write_bytes(b"start\nprogress 10%")
+    first = training.read_console(log)
+    assert first.lines == ["start", "progress 10%"] and first.partial and first.next == len(b"start\n")
+
+    with log.open("ab") as f:
+        f.write(b"\rprogress 50%")
+    poll = training.read_console(log, first.next)
+    assert (poll.lines, poll.partial, poll.appended) == (["progress 50%"], True, True)  # replaces the last line
+
+    with log.open("ab") as f:
+        f.write(b"\rprogress 100%\nnext line\n")
+    poll = training.read_console(log, poll.next)
+    assert (poll.lines, poll.partial, poll.next) == (["progress 100%", "next line"], False, log.stat().st_size)
+    assert training.read_console(log, poll.next).lines == []
+
+    log.write_bytes(b"new file\n")  # shorter than the reader's offset: the whole tail again
+    again = training.read_console(log, poll.next)
+    assert (again.lines, again.appended) == (["new file"], False)
 
 
 def test_start_prepares_run_and_completes(training, data_dir, lora_dir):
@@ -70,6 +95,8 @@ def test_start_prepares_run_and_completes(training, data_dir, lora_dir):
     newer = training.detail("voice_r32", since=10)  # a poll that has the points up to step 10
     assert newer.since == 10 and [p["step"] for p in newer.train] == [20]
     assert newer.seconds_per_step == detail.seconds_per_step and newer.samples == detail.samples
+    polled = training.detail("voice_r32", since=20, log_from=detail.log_next)  # nothing new since
+    assert (polled.train, polled.log, polled.log_appended) == ([], [], True)
 
 
 def test_stop_saves_checkpoint_and_resume_continues(training, data_dir, lora_dir):

@@ -137,7 +137,10 @@ class RunDetail(RunSummary):
     model_inputs: list[str] = []  # reference_<i>_16k.wav: the references as the model hears them
     sample_texts: list[str]
     val_clips: int  # clips in the validation manifest (0: none)
-    log: list[str]
+    log: list[str]  # console lines: its tail, or with log_from the lines after it (ConsoleLines)
+    log_next: int = 0  # the log_from for the next poll
+    log_partial: bool = False  # the last line may still change: the next poll's first line replaces it
+    log_appended: bool = False  # log continues the poller's lines
     # Set when asked for: train / val hold only the points after this step (a poll
     # while training appends them to what it has).
     since: int | None = None
@@ -218,21 +221,40 @@ def is_complete(saved: int | None, num_iters: int) -> bool:
     return saved is not None and saved >= num_iters - 1
 
 
-def tail_lines(path: Path, limit: int = LOG_TAIL_LINES) -> list[str]:
-    if not path.is_file():
-        return []
-    size = path.stat().st_size
-    with path.open("rb") as f:
-        f.seek(max(0, size - LOG_TAIL_BYTES))
-        text = f.read().decode("utf-8", errors="replace")
-    lines = text.split("\n")
-    if size > LOG_TAIL_BYTES:
-        lines = lines[1:]  # partial
-    # Progress bars redraw with "\r"; keep the final state of each line.
-    lines = [line.rstrip("\r").rsplit("\r", 1)[-1] for line in lines]
-    while lines and not lines[-1]:
-        lines.pop()
-    return lines[-limit:]
+class ConsoleLines(BaseModel):
+    lines: list[str]
+    next: int  # byte offset to read from next time: the start of the last line if it may still change
+    partial: bool  # the last line may still change (unfinished, or a progress bar redrawn with "\r")
+    appended: bool  # lines continue the reader's (read from its offset), else they are the whole tail
+
+
+def read_console(path: Path, start: int | None = None, limit: int = LOG_TAIL_LINES) -> ConsoleLines:
+    """The console's last ``limit`` lines, or with ``start`` (a ``next`` from before)
+    only what came after: its first line then replaces the reader's last one when
+    that was ``partial``. Too far behind (or a file that shrank): the whole tail."""
+    size = path.stat().st_size if path.is_file() else 0
+    appended = start is not None and start <= size and size - start <= LOG_TAIL_BYTES
+    begin = start if appended else max(0, size - LOG_TAIL_BYTES)
+    data = b""
+    if size:
+        with path.open("rb") as f:
+            f.seek(begin)
+            data = f.read(size - begin)
+    if not appended and begin > 0:
+        data = data[data.find(b"\n") + 1 :]  # began inside a line
+    # Complete lines end in "\n"; after the last one comes the line still being
+    # written (a progress bar redraws it with "\r" until it ends): read again next time.
+    end = data.rfind(b"\n") + 1
+    done, rest = data[:end], data[end:]
+    lines = done.decode("utf-8", errors="replace").split("\n")[:-1]
+    if rest:
+        lines.append(rest.decode("utf-8", errors="replace"))
+    lines = [line.rstrip("\r").rsplit("\r", 1)[-1] for line in lines]  # each line's final state
+    if not appended:
+        while lines and not lines[-1]:
+            lines.pop()
+        lines = lines[-limit:]
+    return ConsoleLines(lines=lines, next=size - len(rest), partial=bool(rest), appended=appended)
 
 
 def read_config(run_dir: Path) -> dict:
@@ -431,13 +453,15 @@ class TrainingManager:
                 logger.warning("Skipping run %s: %s", run_dir.name, e)
         return sorted(runs, key=lambda r: r.updated, reverse=True)
 
-    def detail(self, name: str, since: int | None = None) -> RunDetail:
-        """A run with its metrics; with ``since``, only the points logged after that step."""
+    def detail(self, name: str, since: int | None = None, log_from: int | None = None) -> RunDetail:
+        """A run with its metrics and console; with ``since``, only the points logged
+        after that step, with ``log_from``, only the console from there (read_console)."""
         run_dir = self._run_dir(name)
         config = read_config(run_dir)
         metrics = parse_metrics(run_dir / "checkpoints" / "train.log")
         summary = self._summary(run_dir, config, metrics["train"])
         shown = metrics if since is None else {k: [p for p in v if p["step"] > since] for k, v in metrics.items()}
+        console = read_console(run_dir / CONSOLE_FILE, log_from)
 
         samples, references, model_inputs = [], [], []
         samples_dir = run_dir / "samples"
@@ -462,7 +486,10 @@ class TrainingManager:
             model_inputs=model_inputs,
             sample_texts=_first_texts(str(config.get("val_manifest") or "")),
             val_clips=_count_lines(str(config.get("val_manifest") or "")),
-            log=tail_lines(run_dir / CONSOLE_FILE),
+            log=console.lines,
+            log_next=console.next,
+            log_partial=console.partial,
+            log_appended=console.appended,
         )
 
     def runs_using(self, folder: Path) -> list[str]:

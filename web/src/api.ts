@@ -326,9 +326,14 @@ export interface RunDetail extends RunSummary {
   model_inputs: string[] // reference_<i>_16k.wav: the references as the model hears them
   sample_texts: string[]
   val_clips: number
-  log: string[]
+  log: string[] // console lines: the tail, or with logFrom the lines after it
+  log_next: number // logFrom for the next poll
+  log_partial: boolean // the last line may still change: the next poll's first line replaces it
+  log_appended: boolean // log continues the poller's lines
   since: number | null // set: train / val hold only the points after this step
 }
+
+const CONSOLE_LINES = 200 // as many as the server's tail
 
 export const OPTIMIZERS = ['adamw', 'prodigy', 'prodigy_sf'] as const
 export type Optimizer = (typeof OPTIMIZERS)[number]
@@ -739,18 +744,25 @@ export async function listRuns(): Promise<RunSummary[]> {
   return (await request('/api/training/runs')).json()
 }
 
-/** A run; with `since`, its metrics only after that step (the rest of the run in full). */
-export async function getRun(name: string, since?: number): Promise<RunDetail> {
-  return (await request(since === undefined ? runUrl(name) : `${runUrl(name)}?since=${since}`)).json()
+/** A run; polls pass what they have (`known`) and get only what is new: metrics after
+ * its last step, console lines after its log_next. Merge the answer with `appendNew`. */
+export async function getRun(name: string, known?: RunDetail): Promise<RunDetail> {
+  if (!known) return (await request(runUrl(name))).json()
+  const since = Math.max(known.train.at(-1)?.step ?? -1, known.val.at(-1)?.step ?? -1)
+  return (await request(`${runUrl(name)}?since=${since}&log_from=${known.log_next}`)).json()
 }
 
-/** `run` (from getRun with `since`) with its new points appended to `known`'s. */
-export function appendMetrics(known: RunDetail, run: RunDetail): RunDetail {
+/** A poll's answer (`run`) with its new points and console lines added to `known`'s. */
+export function appendNew(known: RunDetail, run: RunDetail): RunDetail {
   // A known point at or after the first new one was logged again (a run resumed from an
   // earlier checkpoint): the new one replaces it.
   const append = (old: MetricPoint[], added: MetricPoint[]) =>
     added.length ? [...old.filter((p) => p.step < added[0].step), ...added] : old
-  return { ...run, since: null, train: append(known.train, run.train), val: append(known.val, run.val) }
+  const train = run.since === null ? run.train : append(known.train, run.train)
+  const val = run.since === null ? run.val : append(known.val, run.val)
+  const kept = known.log_partial ? known.log.slice(0, -1) : known.log
+  const log = run.log_appended ? [...kept, ...run.log].slice(-CONSOLE_LINES) : run.log
+  return { ...run, since: null, train, val, log, log_appended: false }
 }
 
 export async function startRun(params: TrainParams): Promise<RunDetail> {
