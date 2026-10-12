@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { DEFAULT_ENGINE } from '../api'
 import type { Engine, Lora } from '../api'
 import type { VoiceChoice } from '../engines'
+import { useFolded } from '../folded'
 import { formatStep } from '../format'
 import { useT } from '../i18n'
 import type { Messages } from '../i18n'
@@ -77,24 +78,6 @@ const GSV_ENGINE = 'gpt_sovits' // voices with a default reference clip
 // Engines whose checkpoints export as packages (sharing.ENGINE_BASE_MODELS).
 const EXPORTABLE = new Set([DEFAULT_ENGINE, 'dots_tts', GSV_ENGINE])
 
-const COLLAPSED_KEY = 'polyvox.voiceGroups' // engine ids whose group is folded
-
-function readCollapsed(): Set<string> {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[])
-  } catch {
-    return new Set()
-  }
-}
-
-function writeCollapsed(ids: Set<string>) {
-  try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...ids]))
-  } catch {
-    // not remembered (storage unavailable)
-  }
-}
-
 function shortModel(id: string): string {
   return id.split('/').at(-1) ?? id
 }
@@ -150,16 +133,7 @@ export function VoicePanel({
 
   // Voices grouped by model, in the server's engine order (VoxCPM first); checkpoints of an
   // engine this server doesn't know go last.
-  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed)
-  function toggleGroup(id: string) {
-    setCollapsed((c) => {
-      const next = new Set(c)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      writeCollapsed(next)
-      return next
-    })
-  }
+  const [collapsed, toggleGroup] = useFolded('polyvox.voiceGroups') // engine ids whose group is folded
   const groups: { id: string; name: string; engine: Engine | null; voices: Voice[] }[] =
     engines.length === 0
       ? [{ id: 'all', name: '', engine: null, voices: shown }]

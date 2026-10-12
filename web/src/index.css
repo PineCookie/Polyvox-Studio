@@ -1208,6 +1208,14 @@ input[type='search']:focus {
   margin-top: 4px;
 }
 
+.run-group {
+  gap: 8px;
+}
+
+.run-group > .voice-group-head {
+  padding-bottom: 0;
+}
+
 .voice-row:not(:disabled):hover {
   background: var(--surface-2);
 }

@@ -553,6 +553,9 @@ export const en = {
   runs: 'Runs',
   newRun: 'New run',
   noRuns: 'No training runs yet.',
+  filterRuns: (n: number) => `Filter ${n} runs`,
+  filterRunsLabel: 'Filter runs',
+  noRunMatches: (filter: string) => `No run matches “${filter}”.`,
   runStatus: {
     running: 'Training',
     stopping: 'Stopping',
