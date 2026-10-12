@@ -1,32 +1,76 @@
+<div align="center">
+
+<img src="docs/images/logo.svg" alt="Polyvox Studio logo" width="112" />
+
 # Polyvox Studio
+
+**Train text-to-speech voices from your own recordings, and use them, all on your own computer.**
+
+![Python 3.13](https://img.shields.io/badge/python-3.13-3776ab?logo=python&logoColor=white)
+![Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-555)
+![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76b900?logo=nvidia&logoColor=white)
+![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS-5b5bd6)
+![UI](https://img.shields.io/badge/UI-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-e67e22)
 
 English | [简体中文](README_zh.md)
 
-Train text-to-speech voices from your own recordings and use them, all in one
-web app on your own computer. Works with [VoxCPM2](https://github.com/OpenBMB/VoxCPM),
-[dots.tts](https://github.com/rednote-hilab/dots.tts) and
-[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS).
+</div>
 
-## Highlights
+A web app that turns raw audio into a clean dataset, fine-tunes a voice on
+[VoxCPM2](https://github.com/OpenBMB/VoxCPM),
+[dots.tts](https://github.com/rednote-hilab/dots.tts) or
+[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS), and speaks with it.
 
-- **Three TTS models, one workflow.** VoxCPM2, dots.tts and GPT-SoVITS (v2Pro,
+## ✨ Highlights
+
+- 🎙️ **Three TTS models, one workflow.** VoxCPM2, dots.tts and GPT-SoVITS (v2Pro,
   v2ProPlus, v4). Prepare a dataset once and train any of them.
-- **Raw recordings in, clean dataset out.** Hours of audio, even m4a or video
+- ✂️ **Raw recordings in, clean dataset out.** Hours of audio, even m4a or video
   files, are cut into clips between words and transcribed automatically. Music,
   reverb and noise can be removed.
-- **Bad clips found for you.** Wrong transcripts, cut-off words, other speakers,
+- 🔍 **Bad clips found for you.** Wrong transcripts, cut-off words, other speakers,
   distortion and singing are flagged, so you only review what needs it.
-- **See how training goes.** Loss charts, audio samples and a "sounds like the
+- 📈 **See how training goes.** Loss charts, audio samples and a "sounds like the
   speaker" score at every checkpoint.
-- **Faster than the original code, same quality.** Synthesis up to 4x faster,
+- ⚡ **Faster than the original code, same quality.** Synthesis up to 4x faster,
   training steps up to 3x, and switching voices takes about a second.
-- **Fits your GPU.** Settings for 8, 12 and 16 GB cards are picked for you.
-- **GPT-SoVITS compatible.** Bring the voices you trained in its webui; voices
+- 🎛️ **Fits your GPU.** Settings for 8, 12 and 16 GB cards are picked for you.
+- 🤝 **GPT-SoVITS compatible.** Bring the voices you trained in its webui; voices
   trained here work there too.
-- **Easy to install.** One command, no Python or FFmpeg setup. Windows and
+- 📦 **Easy to install.** One command, no Python or FFmpeg setup. Windows and
   Linux; interface in English and 简体中文.
 
-## Quick start
+## 🧭 How it works
+
+```mermaid
+flowchart LR
+    A["🎧 Your recordings<br/>or transcript lists"] --> B["✂️ Prepare<br/>slice · transcribe · check"]
+    B --> C["🏋️ Train<br/>VoxCPM2 · dots.tts · GPT-SoVITS"]
+    C --> D["🗣️ Synthesize<br/>with your voice"]
+```
+
+1. **Prepare:** create a dataset, add a folder of recordings or a transcript
+   list, and run the steps. Fix or drop the clips it flags.
+2. **Train:** pick a model and start. Listen to the samples as checkpoints
+   arrive, and keep the one that sounds best.
+3. **Synthesize:** choose your voice, type, and generate.
+
+## ⚡ Speed
+
+Optimized paths written for this studio, checked against the original code for
+the same results:
+
+| | Faster by |
+|---|---|
+| 🗣️ dots.tts synthesis | **~4x** |
+| 🗣️ GPT-SoVITS synthesis | **~2.5x** |
+| 🔁 Switching voices (VoxCPM2, dots.tts) | **~1 s** instead of a 30-40 s reload |
+| 🏋️ dots.tts training | **~3x** per step |
+| 🏋️ VoxCPM2 training | **~1.6x** per step, half the GPU memory |
+
+How each is done, and more numbers, in the [guide](docs/GUIDE.md#speed).
+
+## 🚀 Quick start
 
 1. Install [uv](https://docs.astral.sh/uv/):
 
@@ -39,26 +83,18 @@ web app on your own computer. Works with [VoxCPM2](https://github.com/OpenBMB/Vo
    `.tar.gz` for Linux), unpack it and run `run.bat` or `./run.sh`. The first
    start installs everything, which takes a few minutes.
 3. Open http://127.0.0.1:8808 and download **VoxCPM2** in the **Models** tab.
-4. Type something in **Synthesize** and press **Generate**.
+4. Type something in **Synthesize** and press **Generate**. 🎉
 
-## How it works
+## 💻 Requirements
 
-1. **Prepare:** create a dataset, add a folder of recordings or a transcript
-   list, and run the steps. Fix or drop the clips it flags.
-2. **Train:** pick a model and start. Listen to the samples as checkpoints
-   arrive, and keep the one that sounds best.
-3. **Synthesize:** choose your voice, type, and generate.
-
-## Requirements
-
-- Windows or Linux.
-- An NVIDIA GPU with 8 GB of memory or more; 16 GB trains at full speed. AMD
+- 🖥️ Windows or Linux.
+- 🎮 An NVIDIA GPU with 8 GB of memory or more; 16 GB trains at full speed. AMD
   GPUs on Linux should work but are untested. Without a GPU you can only
   prepare datasets.
-- Disk space for models: about 5 GB per TTS model, plus about 6 GB for the
+- 💾 Disk space for models: about 5 GB per TTS model, plus about 6 GB for the
   dataset tools (speech recognition and alignment).
 
-## Learn more
+## 📖 Learn more
 
 The [guide](docs/GUIDE.md) covers each step in depth: dataset preparation and
 the clip checks, training options, the speed optimizations and their
