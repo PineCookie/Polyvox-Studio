@@ -11,6 +11,7 @@
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76b900?logo=nvidia&logoColor=white)
 ![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS-5b5bd6)
 ![UI](https://img.shields.io/badge/UI-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-e67e22)
+![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 [English](README.md) | 简体中文
 
@@ -88,3 +89,8 @@ flowchart LR
 
 [使用指南](docs/GUIDE.md)（英文）详细介绍每个步骤：数据集准备与片段检查、训练选项、速度优化及
 实测数据、模型、配置和开发。
+
+## 📄 许可证
+
+[Apache-2.0](LICENSE)。Polyvox Studio 包含来自其他项目的代码，它们遵循各自的许可证，见
+[第三方声明](THIRD_PARTY_NOTICES.md)（英文）。

@@ -11,6 +11,7 @@
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76b900?logo=nvidia&logoColor=white)
 ![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS-5b5bd6)
 ![UI](https://img.shields.io/badge/UI-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-e67e22)
+![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 English | [简体中文](README_zh.md)
 
@@ -99,3 +100,8 @@ How each is done, and more numbers, in the [guide](docs/GUIDE.md#speed).
 The [guide](docs/GUIDE.md) covers each step in depth: dataset preparation and
 the clip checks, training options, the speed optimizations and their
 measurements, models, configuration and development.
+
+## 📄 License
+
+[Apache-2.0](LICENSE). Polyvox Studio includes code from other projects under their own
+licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

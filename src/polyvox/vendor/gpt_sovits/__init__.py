@@ -11,7 +11,8 @@ Changes from upstream:
   ones made absolute under ``polyvox.vendor.gpt_sovits``; the eres2net modules
   import each other relatively;
 - f5_tts: x_transformers' RotaryEmbedding / apply_rotary_pos_emb (2.17.10, MIT)
-  copied into f5_tts/rotary.py instead of the package;
+  copied into f5_tts/rotary.py instead of the package (its license:
+  f5_tts/LICENSE-x-transformers);
 - left out: webui, gradio, i18n, tools/, v3 / v5 parts (BigVGAN, models_v5,
   Accel), training scripts and data loaders (the studio's worker trains with
   module/losses.py and AR/modules/optim.py), Japanese / Korean / Cantonese text;

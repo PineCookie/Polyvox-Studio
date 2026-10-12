@@ -1,8 +1,10 @@
 [project]
 name = "polyvox"
 version = "0.4.0"
-description = "LoRA training and fast inference studio for VoxCPM"
+description = "Train text-to-speech voices from your own recordings (VoxCPM2, dots.tts, GPT-SoVITS) and use them"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = "==3.13.*"
 dependencies = [
     "voxcpm",

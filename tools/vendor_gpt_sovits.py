@@ -85,7 +85,8 @@ Changes from upstream:
   ones made absolute under ``polyvox.vendor.gpt_sovits``; the eres2net modules
   import each other relatively;
 - f5_tts: x_transformers' RotaryEmbedding / apply_rotary_pos_emb (2.17.10, MIT)
-  copied into f5_tts/rotary.py instead of the package;
+  copied into f5_tts/rotary.py instead of the package (its license:
+  f5_tts/LICENSE-x-transformers);
 - left out: webui, gradio, i18n, tools/, v3 / v5 parts (BigVGAN, models_v5,
   Accel), training scripts and data loaders (the studio's worker trains with
   module/losses.py and AR/modules/optim.py), Japanese / Korean / Cantonese text;
@@ -107,6 +108,28 @@ Changes from upstream:
 - feature_extractor/cnhubert.py: no flash-attention setup from tools/.
 """
 ''',
+    "f5_tts/LICENSE-x-transformers": """MIT License
+
+Copyright (c) 2020 Phil Wang
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+""",
     "text/LangSegmenter/__init__.py": "from .langsegmenter import LangSegmenter\n",
     "text/LangSegmenter/langsegmenter.py": '''"""Chinese / English splitting by script, replacing upstream's split_lang +
 fast_langdetect version (which downloads a 125 MB detector model): the studio
