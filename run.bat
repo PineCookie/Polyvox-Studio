@@ -3,7 +3,7 @@ setlocal
 rem UTF-8 mode is required for Torch Inductor on non-UTF-8 Windows locales.
 set PYTHONUTF8=1
 rem Models downloaded in the Models tab live here; settings left at their
-rem defaults use them (see README: Models).
+rem defaults use them (see docs/GUIDE.md: Models).
 if not defined POLYVOX_MODELS_DIR set POLYVOX_MODELS_DIR=%~dp0models
 if not defined POLYVOX_LORA_DIR set POLYVOX_LORA_DIR=%~dp0lora
 if not defined POLYVOX_DATA_DIR set POLYVOX_DATA_DIR=%~dp0data

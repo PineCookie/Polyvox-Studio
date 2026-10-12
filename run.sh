@@ -7,7 +7,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # UTF-8 mode, as on Windows (Torch Inductor writes generated sources as text).
 export PYTHONUTF8=1
 # Models downloaded in the Models tab live here; settings left at their
-# defaults use them (see README: Models).
+# defaults use them (see docs/GUIDE.md: Models).
 export POLYVOX_MODELS_DIR="${POLYVOX_MODELS_DIR:-$here/models}"
 export POLYVOX_LORA_DIR="${POLYVOX_LORA_DIR:-$here/lora}"
 export POLYVOX_DATA_DIR="${POLYVOX_DATA_DIR:-$here/data}"
