@@ -12,11 +12,8 @@ one is looked up as written, then relative to the list (and its ``wavs/``
 folder), then by file name inside an optional audio folder. Rows whose audio
 cannot be found are skipped: lists shared by other people often come without it.
 
-Long recordings can be sliced into clips at pauses (slicer.py), and clips that
-have audio but no transcript can be transcribed with ASR during the import;
-ASR-made texts are listed in ``<name>/asr.json`` for later review. Finally each
-clip can be checked against its text by forced alignment (checks.py), and its
-silent edges trimmed while it is copied.
+``import_dataset`` adds a source to a new dataset and runs the processing
+steps asked for (steps.py: clean-up, slicing, transcription, checks, tidying).
 """
 
 from __future__ import annotations
@@ -30,14 +27,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 
-import numpy as np
 import soundfile as sf
 
-from .. import timing
 from ..data import record
-from ..data.manifests import ASR_FILE, legacy_root, write_manifest
-from . import checks, fillers, loudness, slicer
-from .checks import Checker, ClipCheck
+from ..data.manifests import ASR_FILE, legacy_root, read_sidecar, training_entries
+from . import checks, fillers, slicer
+from .checks import Checker
 from .slicer import SliceOptions, Vad
 
 AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a"}
@@ -46,7 +41,6 @@ TRANSCRIPT_EXTENSIONS = (".lab", ".txt")
 DATASET_NAME = r"^[^\W_][\w.-]{0,79}$"
 EXAMPLES = 5
 MISSING_EXAMPLES = 2  # sliced file names are long
-TRANSCRIBE_CHUNK = 32  # clips per ASR call; progress and cancel granularity
 LONG_RECORDING_S = 20.0  # longer audio counts as a recording to slice, not a clip
 
 # Audio files -> (text, detected language) per file.
@@ -64,7 +58,6 @@ class Row:
     rate: int | None = None  # sample rate of the file
     asr: bool = False  # text made by speech recognition
     language: str | None = None  # as ASR detected (or was told)
-    origin: record.Origin | None = None  # where it was cut from, for a slice of a recording
 
 
 @dataclass
@@ -240,22 +233,12 @@ def _scan(source: Path, audio_dir: Path | None, data_dir: Path) -> tuple[ImportP
     return preview, keep
 
 
+def scan_source(source: str, audio_dir: str | None, data_dir: Path) -> tuple[ImportPreview, list[Row]]:
+    return _scan(clean_path(source), clean_path(audio_dir) if audio_dir else None, data_dir)
+
+
 def preview_import(source: str, audio_dir: str | None, data_dir: Path) -> ImportPreview:
-    return _scan(clean_path(source), clean_path(audio_dir) if audio_dir else None, data_dir)[0]
-
-
-def _unique_names(paths: list[Path]) -> list[str]:
-    """Target file names in ``wavs/``; clashing names get a numeric suffix."""
-    used: set[str] = set()
-    names = []
-    for path in paths:
-        name, i = path.name, 2
-        while name.lower() in used:
-            name = f"{path.stem}_{i}{path.suffix}"
-            i += 1
-        used.add(name.lower())
-        names.append(name)
-    return names
+    return scan_source(source, audio_dir, data_dir)[0]
 
 
 def check_name(name: str, data_dir: Path) -> None:
@@ -263,113 +246,6 @@ def check_name(name: str, data_dir: Path) -> None:
         raise ValueError("Dataset name may contain letters (any language), digits, '.', '_' and '-' only.")
     if (data_dir.resolve() / name).exists():
         raise FileExistsError(f"A dataset named '{name}' already exists.")
-
-
-def _transcribe(rows: list[Row], transcriber: Transcriber, progress: Progress) -> None:
-    """Fill in missing texts, marking them as made by ASR."""
-    todo = [i for i, row in enumerate(rows) if not row.text]
-    for start in range(0, len(todo), TRANSCRIBE_CHUNK):
-        progress("transcribing", start, len(todo))
-        chunk = todo[start : start + TRANSCRIBE_CHUNK]
-        for i, (text, language) in zip(chunk, transcriber([rows[i].audio for i in chunk]), strict=True):
-            rows[i].text = text.strip()
-            rows[i].asr, rows[i].language = bool(rows[i].text), language
-    progress("transcribing", len(todo), len(todo))
-
-
-def _slice(
-    rows: list[Row],
-    out_dir: Path,
-    opts: SliceOptions,
-    vad: Vad,
-    guide: slicer.Guide | None,
-    progress: Progress,
-    chain=None,
-) -> tuple[list[Row], list[record.Recording]]:
-    """Replace recordings longer than LONG_RECORDING_S by their clips. With a
-    ``guide`` the clips are cut between words and keep their ASR text; without
-    one they have no text. (A recording's own transcript is not used yet: it is
-    not known which part of it each chunk holds.) Progress counts seconds of
-    audio. Returns the new rows and the recordings sliced. With a ``chain`` the
-    voice is separated window by window too (phase "separating_slicing")."""
-    phase = "separating_slicing" if chain is not None else "slicing"
-    total = int(sum(row.seconds for row in rows if row.seconds > LONG_RECORDING_S))
-    out: list[Row] = []
-    recordings: list[record.Recording] = []
-    done, seconds = 0, 0.0
-    settings = {"min_seconds": opts.min_seconds, "max_seconds": opts.max_seconds}
-    for row in rows:
-        if row.seconds <= LONG_RECORDING_S:
-            out.append(row)
-            continue
-        progress(phase, int(seconds), total)
-        base = seconds
-        clips = slicer.slice_recording(
-            row.audio,
-            out_dir / f"{done:05d}",
-            opts,
-            vad,
-            guide,
-            progress=lambda at, base=base: progress(phase, int(base + at), total),
-            chain=chain,
-        )
-        for clip in clips:
-            out.append(
-                Row(
-                    ref=str(clip.path),
-                    text=clip.text,
-                    audio=clip.path,
-                    seconds=sf.info(str(clip.path)).duration,
-                    asr=bool(clip.text),
-                    language=clip.language,
-                    origin=record.Origin(str(row.audio), clip.start, clip.end),
-                )
-            )
-        recordings.append(record.Recording(str(row.audio), round(row.seconds, 3), row.rate, row.text, settings))
-        done += 1
-        seconds += row.seconds
-    progress(phase, total, total)
-    return out, recordings
-
-
-def _separate(rows: list[Row], out_dir: Path, chain, progress: Progress, sliced: bool) -> None:
-    """Replace each clip's audio by its separated voice, written to ``out_dir``
-    as PCM16 WAV at the models' rate (same file name). Recordings that will be
-    ``sliced`` are separated window by window while slicing instead."""
-    todo = [row for row in rows if not (sliced and row.seconds > LONG_RECORDING_S)]
-    for n, row in enumerate(todo):
-        progress("separating", n, len(todo))
-        src = slicer.Source(row.audio)
-        voice = chain.process(src.read_channels(0.0, src.duration, chain.rate, chain.channels)).mean(axis=0)
-        target = out_dir / f"{n:06d}" / f"{row.audio.stem}.wav"
-        target.parent.mkdir(parents=True)
-        sf.write(target, voice, chain.rate, subtype="PCM_16")
-        row.audio, row.ref = target, str(target)
-    progress("separating", len(todo), len(todo))
-
-
-def _check(
-    rows: list[Row], checker: Checker, embed: checks.Embed | None, progress: Progress
-) -> tuple[list[ClipCheck], np.ndarray | None]:
-    """Checks of rows (all with text), in order, and their common voice (checks.check_clips)."""
-    from .asr import load_audio
-
-    paths = [row.audio for row in rows]
-    out, voice = checks.check_clips(
-        paths, [row.text for row in rows], [row.asr for row in rows], checker, load_audio, embed, progress
-    )
-    if None in out:
-        raise ValueError(f"Unreadable audio: {paths[out.index(None)]}")
-    return out, voice
-
-
-def _write_clip(source: Path, target: Path, cut: tuple[float, float] | None, normalize: float | None) -> None:
-    """``source`` (mono) as PCM16 WAV: cut to [start, end) seconds, at ``normalize`` LUFS."""
-    src = slicer.Source(source)
-    audio = src.read(*(cut or (0.0, src.duration)))
-    if normalize is not None:
-        audio = loudness.normalize(audio, src.rate, normalize)
-    sf.write(target, audio, src.rate, subtype="PCM_16")
 
 
 def import_dataset(
@@ -391,117 +267,56 @@ def import_dataset(
     normalize: float | None = None,
     embed: checks.Embed | None = None,
     steps: dict[str, dict] | None = None,
+    cleanup_models: list[str] | None = None,
 ) -> ImportResult:
-    """Write ``data_dir/<name>/train.jsonl``.
-
-    With ``copy``, audio goes to ``<name>/wavs/`` and the manifest uses relative
-    paths, so the folder is self-contained; otherwise it references the files.
-    With ``slicing``, recordings longer than LONG_RECORDING_S are cut into clips
-    at pauses (needs ``copy`` and a ``transcriber``: the clips are new files
-    without text). With a ``transcriber``, clips without a transcript get one
-    from ASR; otherwise they are left out. With a ``checker`` (made for the
-    ``aligner`` named), every clip is checked against its text and the results
-    saved as align.json (with ``embed``, voices are compared too); ``trim`` then cuts long silent edges from the copies
-    (needs ``copy``; trimmed clips are written as PCM16 WAV). ``normalize``
-    brings each copied clip to that many LUFS (loudness.normalize; mono PCM16
-    WAV). ``progress`` may raise to cancel; nothing is left behind then.
-    The dataset's record (record.py) lists the recordings sliced, each clip's
-    origin in them and ``steps``: the settings each step ran with.
+    """Make dataset ``name`` from a source and run the steps asked for, in order
+    (steps.py): add the source (``copy``: into ``<name>/wavs/``), clean up with
+    the ``separation`` chain, slice recordings longer than LONG_RECORDING_S
+    (``slicing``; without it they are imported as clips), transcribe clips
+    without text, tidy fillers, check (``checker`` for ``aligner``; ``embed``
+    compares voices), trim (``trim``) and even out loudness (``normalize``
+    LUFS). ``steps``: the settings to note in the dataset's record. Each step
+    saves as it goes: a failure or cancel keeps what was done (only a dataset
+    with nothing in it is removed).
     """
+    from . import steps as st
+    from .asr import load_audio
+
     progress = progress or (lambda phase, done, total: None)
-    if slicing and not (copy and transcriber):
-        raise ValueError("Slicing writes new clips without text: it needs copying and transcription.")
     if separation is not None and not copy:
         raise ValueError("Separation writes new audio: it needs copying.")
     if trim and not (copy and checker):
         raise ValueError("Trimming rewrites the copied clips at their checked edges: it needs copying and checking.")
     if normalize is not None and not copy:
         raise ValueError("Normalizing loudness rewrites the clips: it needs copying.")
-    check_name(name, data_dir)
-    data_dir = data_dir.resolve()
-    target = data_dir / name
-
-    progress("scanning", 0, 0)
-    with timing.stage("scanning"):
-        preview, rows = _scan(clean_path(source), clean_path(audio_dir) if audio_dir else None, data_dir)
-
-    # Build next to the target and rename, so a failure leaves nothing half-written.
-    staging = data_dir / f".import-{name}"
-    shutil.rmtree(staging, ignore_errors=True)
+    folder = st.create(data_dir, name)
     try:
-        recordings: list[record.Recording] = []
-        if separation is not None:
-            _separate(rows, staging / "_separated", separation, progress, sliced=slicing is not None)
-        if slicing:
-            rows, recordings = _slice(rows, staging / "_slices", slicing, vad, guide, progress, separation)
-        if transcriber:
-            _transcribe(rows, transcriber, progress)
-        if tidy_fillers:
-            for row in rows:
-                row.text = fillers.tidy(row.text)
-        rows_kept = [(i, row) for i, row in enumerate(rows) if row.text]
-        if not rows_kept:
-            raise ValueError("No clips with both audio and a transcript; nothing to import.")
-        with timing.stage("checking"):  # alignment, VAD, ... count as themselves
-            clip_checks, voice = (
-                _check([row for _, row in rows_kept], checker, embed, progress) if checker else ([], None)
-            )
-        # (start, end) to keep per clip, for those worth trimming.
-        cuts = [c.trim_range() for c in clip_checks] if trim else [None] * len(rows_kept)
-
-        if copy:
-            (staging / "wavs").mkdir(parents=True, exist_ok=True)
-            # Rewritten clips (trimmed, normalized) are WAV, whatever the source format.
-            names = [
-                r.audio.with_suffix(".wav") if cut or normalize is not None else r.audio
-                for (_, r), cut in zip(rows_kept, cuts, strict=True)
-            ]
-            files = _unique_names(names)
-            for n, ((_, row), file, cut) in enumerate(zip(rows_kept, files, cuts, strict=True)):
-                if n % 50 == 0:
-                    progress("copying", n, len(rows_kept))
-                with timing.stage("writing clips"):
-                    if cut or normalize is not None:
-                        _write_clip(row.audio, staging / "wavs" / file, cut, normalize)
-                        if cut:
-                            clip_checks[n] = clip_checks[n].trimmed(*cut)
-                    elif row.audio.is_relative_to(staging):
-                        row.audio.replace(staging / "wavs" / file)  # a fresh slice: move, don't copy
-                    else:
-                        shutil.copy2(row.audio, staging / "wavs" / file)
-            shutil.rmtree(staging / "_slices", ignore_errors=True)
-            shutil.rmtree(staging / "_separated", ignore_errors=True)
-            paths = [f"wavs/{file}" for file in files]
-        else:
-            paths = [str(row.audio) for _, row in rows_kept]
-        pairs = list(zip(paths, rows_kept, strict=True))
-        write_manifest([{"audio": p, "text": row.text} for p, (_, row) in pairs], staging / "train.jsonl")
-        asr_rows = {p: {"language": row.language} for p, (_, row) in pairs if row.asr}
-        if asr_rows:
-            (staging / ASR_FILE).write_text(json.dumps(asr_rows, ensure_ascii=False, indent=1), encoding="utf-8")
-        if clip_checks:
-            checks.write_checks(
-                staging,
-                aligner,
-                {p: (row.text, c) for (p, (_, row)), c in zip(pairs, clip_checks, strict=True)},
-                voice,
-            )
-        origins = {}
-        for p, (_, row), cut in zip(paths, rows_kept, cuts, strict=True):
-            if (o := row.origin) is not None:
-                start, end = (o.start + cut[0], o.start + cut[1]) if cut else (o.start, o.end)
-                origins[p] = record.Origin(o.recording, round(start, 3), round(end, 3))
-        record.write_record(staging, record.Record(recordings, origins, dict(steps or {})))
-        staging.rename(target)
+        added = st.add_source(folder, source, audio_dir, data_dir, copy, slicing is None, progress)
+        if not added.clips and not added.recordings:
+            raise ValueError("No clips with audio found; nothing to import.")
     except BaseException:
-        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)
         raise
+    for step, settings in (steps or {}).items():
+        record.remember(folder, step, settings)
+    if separation is not None:
+        st.clean_up(folder, separation, cleanup_models or [], progress)
+    sliced = st.slice_recordings(folder, slicing, vad, guide, separation, progress)["sliced"] if slicing else 0
+    if transcriber:
+        st.transcribe(folder, transcriber, tidy_fillers, progress, (steps or {}).get("transcribe"))
+    elif tidy_fillers:
+        fillers.tidy_manifest(st.manifest_of(folder))
+    if checker:
+        st.check(folder, checker, aligner, load_audio, embed, progress, (steps or {}).get("check"))
+    tidied = st.tidy(folder, trim, normalize, progress) if trim or normalize is not None else {}
+    manifest = st.manifest_of(folder)
+    summary = st.check_summary(folder) if checker else None
     return ImportResult(
-        id=f"{name}/train.jsonl",
-        imported=len(rows_kept),
-        transcribed=len(asr_rows),
-        sliced=len(recordings),
-        preview=preview,
-        trimmed=sum(cut is not None for cut in cuts),
-        checks=checks.summarize(clip_checks) if clip_checks else None,
+        id=f"{name}/{st.MANIFEST}",
+        imported=len(training_entries(manifest)[0]),
+        transcribed=len(read_sidecar(folder / ASR_FILE)),
+        sliced=sliced,
+        preview=added.preview,
+        trimmed=tidied.get("trimmed", 0),
+        checks=summary,
     )

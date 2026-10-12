@@ -477,12 +477,13 @@ def check_clips(
     load: Callable[[Path], np.ndarray],
     embed: Embed | None = None,
     progress: Progress | None = None,
+    voice: np.ndarray | None = None,
 ) -> tuple[list[ClipCheck | None], np.ndarray | None]:
     """Check clips in chunks of CHECK_CHUNK (texts ASR made are not compared
     with ASR), measure clipping, and with ``embed`` score each voice against
-    the clips' common voice (embedded EMBED_EVERY clips at a time: batches of
-    similar lengths). Returns the checks (None for clips ``load`` can't read)
-    and that voice."""
+    ``voice`` (by default the clips' common voice; embedded EMBED_EVERY clips
+    at a time: batches of similar lengths). Returns the checks (None for clips
+    ``load`` can't read) and the voice."""
     progress = progress or (lambda phase, done, total: None)
     out: list[ClipCheck | None] = [None] * len(paths)
     vectors: dict[int, np.ndarray] = {}
@@ -516,7 +517,8 @@ def check_clips(
             embed_pending()
     embed_pending()
     progress("aligning", len(paths), len(paths))
-    voice = voice_of(np.stack(list(vectors.values()))) if vectors else None
+    if voice is None and vectors:
+        voice = voice_of(np.stack(list(vectors.values())))
     if voice is not None:
         for i, vector in vectors.items():
             out[i] = with_speaker(out[i], float(vector @ voice))
@@ -554,26 +556,46 @@ def check_dataset(
     load: Callable[[Path], np.ndarray],
     progress: Progress | None = None,
     embed: Embed | None = None,
+    only_needed: bool = False,
 ) -> dict:
     """Check every clip of a manifest (``check_clips``) and write its
-    align.json; returns a summary. Unreadable clips are skipped. Nothing is
-    written when cancelled."""
+    align.json; returns a summary over the dataset's current checks.
+    ``only_needed`` checks just the clips without a current check (new clips,
+    edited texts) and keeps the others, scoring voices against the saved
+    voice when there is one. Unreadable clips are skipped. Nothing is written
+    when cancelled."""
     entries, _ = read_manifest(manifest, root)
     manifest_dir = manifest.resolve().parent
     asr_made = set(read_sidecar(manifest_dir / ASR_FILE))
-    keys = [row_key(e["audio"], manifest_dir) for e in entries]
+    saved = read_sidecar(manifest_dir / ALIGN_FILE) if only_needed else {}
+    kept = {}
+    for e in entries:
+        key = row_key(e["audio"], manifest_dir)
+        old = saved.get("clips", {}).get(key)
+        if old and old.get("text") == text_key(e["text"]):
+            kept[key] = old
+    todo = [e for e in entries if row_key(e["audio"], manifest_dir) not in kept]
+    keys = [row_key(e["audio"], manifest_dir) for e in todo]
+    saved_voice = np.asarray(saved["voice"]) if kept and saved.get("voice") else None
     checked, voice = check_clips(
-        [Path(e["audio"]) for e in entries],
-        [e["text"] for e in entries],
+        [Path(e["audio"]) for e in todo],
+        [e["text"] for e in todo],
         [k in asr_made for k in keys],
         checker,
         load,
         embed,
         progress,
+        saved_voice,
     )
-    results = {k: (e["text"], c) for k, e, c in zip(keys, entries, checked, strict=True) if c is not None}
-    write_checks(manifest_dir, kind, results, voice)
-    return {"aligner": kind, **summarize([c for _, c in results.values()])}
+    clips = dict(kept)
+    for key, entry, check in zip(keys, todo, checked, strict=True):
+        if check is not None:
+            clips[key] = {"text": text_key(entry["text"]), **asdict(check)}
+    data = {"aligner": saved.get("aligner", kind) if kept else kind, "clips": clips}
+    if voice is not None:
+        data["voice"] = voice.round(6).tolist()
+    _write_align(manifest_dir, data)
+    return {"aligner": data["aligner"], **summarize([ClipCheck.from_saved(c) for c in clips.values()])}
 
 
 def check_one(

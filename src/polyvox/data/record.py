@@ -5,9 +5,12 @@ a clip's text stays empty until it is transcribed) and, here:
 
 - ``recordings``: long recordings the clips are cut from, each with the
   slicing settings it was sliced with (None: not sliced yet);
-- ``origins``: per clip cut from a recording, where (recording, seconds);
+- ``origins``: where each clip's audio came from: a recording and the
+  seconds cut from it, or a whole source file copied in;
 - ``steps``: the settings each processing step last ran with (slice,
-  transcribe, check, ...), so the next run starts from them.
+  transcribe, check, ...), so the next run starts from them;
+- ``cleaned``: clips the clean-up step processed (recordings are cleaned
+  while they are sliced).
 
 Folders without the file (prepared clips, datasets from before it) read as
 all clips, no recordings. Check results, ASR-made texts and drops keep their
@@ -35,8 +38,8 @@ class Recording:
 
 @dataclass
 class Origin:
-    recording: str  # Recording.audio
-    start: float  # seconds into the recording
+    recording: str  # Recording.audio, or the source file copied in
+    start: float  # seconds into it
     end: float
 
 
@@ -45,6 +48,7 @@ class Record:
     recordings: list[Recording] = field(default_factory=list)
     origins: dict[str, Origin] = field(default_factory=dict)  # clip key (manifests.row_key) -> origin
     steps: dict[str, dict] = field(default_factory=dict)  # step -> the settings it last ran with
+    cleaned: dict[str, list[str]] = field(default_factory=dict)  # clip key -> clean-up models applied
 
 
 def read_record(folder: Path) -> Record:
@@ -57,6 +61,7 @@ def read_record(folder: Path) -> Record:
         recordings=[Recording(**r) for r in data.get("recordings", [])],
         origins={k: Origin(**o) for k, o in data.get("origins", {}).items()},
         steps=dict(data.get("steps", {})),
+        cleaned={k: list(v) for k, v in data.get("cleaned", {}).items()},
     )
 
 

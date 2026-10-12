@@ -169,7 +169,9 @@ def test_transcribe_on_import_fills_missing_texts_in_order(tmp_path, data_dir):
         {"audio": "wavs/a.wav", "text": "asr a"},
         {"audio": "wavs/b.wav", "text": "已有文本"},
         {"audio": "wavs/c.wav", "text": "asr c"},
+        {"audio": "wavs/d.wav", "text": ""},  # kept, but dropped: review can bring it back
     ]
+    assert manifests.excluded_keys(data_dir / "asr_set") == {"wavs/d.wav"}
     asr_rows = json.loads((data_dir / "asr_set" / importer.ASR_FILE).read_text(encoding="utf-8"))
     assert asr_rows == {"wavs/a.wav": {"language": "Chinese"}, "wavs/c.wav": {"language": "Chinese"}}
     assert ("transcribing", 3, 3) in phases and any(p[0] == "copying" for p in phases)
@@ -245,8 +247,8 @@ def test_import_job_endpoints(service, training, asr_service, data_dir, tmp_path
     assert client.post("/api/datasets/import", json={"source": str(tmp_path / "x.mp4"), "name": "x"}).status_code == 422
     assert client.post("/api/datasets/import/preview", json={"source": str(tmp_path / "x.mp4")}).status_code == 422
     assert client.get("/api/jobs/nope").status_code == 404
-    no_asr = {"source": str(lst), "name": "other", "slice": True, "transcribe": False}
-    assert client.post("/api/datasets/import", json=no_asr).status_code == 422
+    bad_range = {"source": str(lst), "name": "other", "slice": True, "slice_min_seconds": 9, "slice_max_seconds": 5}
+    assert client.post("/api/datasets/import", json=bad_range).status_code == 422
 
 
 def test_transcribing_import_refused_while_training_shares_the_gpu(

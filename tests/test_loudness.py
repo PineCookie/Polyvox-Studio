@@ -79,7 +79,7 @@ def test_import_normalizes_the_copies(tmp_path, data_dir):
 
     importer.import_dataset(str(src), None, "normalized", data_dir, normalize=-23.0)
 
-    audio, rate = sf.read(data_dir / "normalized" / "wavs" / "loud.wav")
+    audio, rate = sf.read(data_dir / "normalized" / "wavs" / "loud.flac")
     assert loudness.integrated(audio, rate) == pytest.approx(-23.0, abs=0.1)
     with pytest.raises(ValueError, match="copying"):
         importer.import_dataset(str(src), None, "linked", data_dir, copy=False, normalize=-23.0)

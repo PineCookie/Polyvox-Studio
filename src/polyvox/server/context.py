@@ -148,7 +148,7 @@ class Studio:
     def refuse_if_busy(self, gpu: bool) -> None:
         """One preparation job at a time; GPU stages wait for training on their GPU."""
         jobs = self.jobs
-        if running := jobs.running("import") or jobs.running("check") or jobs.running("normalize"):
+        if running := next((j for k in ("import", "step", "check", "normalize") if (j := jobs.running(k))), None):
             raise HTTPException(409, f"Wait for “{running.title}” to finish.")
         if gpu and not self.gpu_free():
             raise HTTPException(

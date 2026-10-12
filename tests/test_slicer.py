@@ -5,7 +5,7 @@ import pytest
 import soundfile as sf
 
 from polyvox.data import record
-from polyvox.prep import importer, slicer
+from polyvox.prep import importer, slicer, steps
 from polyvox.prep.slicer import SliceOptions
 
 OPTS = SliceOptions(min_seconds=2.0, max_seconds=10.0, target_seconds=6.0, max_inner_gap=1.0, pad_seconds=0.1)
@@ -96,12 +96,16 @@ def test_import_slices_long_recordings_then_transcribes(tmp_path, data_dir):
     assert [(r.audio, r.seconds, r.rate, r.sliced) for r in saved.recordings] == [
         (talk, 40.0, 32000, {"min_seconds": 2.0, "max_seconds": 10.0})
     ]
-    assert saved.origins == {
+    assert saved.origins["wavs/short.wav"] == record.Origin(str((folder / "short.wav").resolve()), 0.0, 3.0)
+    assert {k: v for k, v in saved.origins.items() if k != "wavs/short.wav"} == {
         "wavs/talk_00000900_00006100.wav": record.Origin(talk, 0.9, 6.1),
         "wavs/talk_00007900_00013100.wav": record.Origin(talk, 7.9, 13.1),
         "wavs/talk_00019900_00026100.wav": record.Origin(talk, 19.9, 26.1),
     }
-    assert saved.steps == {"slice": {"min_seconds": 2.0, "max_seconds": 10.0}}
+    assert saved.steps == {
+        "slice": {"min_seconds": 2.0, "max_seconds": 10.0},
+        "transcribe": {"tidy_fillers": False},
+    }
     entries = [
         json.loads(line) for line in (data_dir / "sliced" / "train.jsonl").read_text(encoding="utf-8").splitlines()
     ]
@@ -298,9 +302,14 @@ def test_compressed_stereo_is_mixed_to_mono_without_gain(tmp_path):
     assert src.read_channels(0.1, 0.9, None, 2).shape[0] == 2
 
 
-def test_slicing_needs_copy_and_transcription(tmp_path, data_dir):
-    with pytest.raises(ValueError, match="needs copying and transcription"):
-        importer.import_dataset(str(tmp_path), None, "x", data_dir, slicing=OPTS)
+def test_slicing_without_asr_leaves_clips_to_transcribe(tmp_path, data_dir):
+    sf.write(tmp_path / "talk.wav", np.zeros(32000 * 40, dtype=np.float32), 32000)
+    vad = lambda wav: [(1.0, 6.0), (8.0, 13.0)]
+
+    result = importer.import_dataset(str(tmp_path), None, "x", data_dir, slicing=OPTS, vad=vad)
+
+    assert (result.sliced, result.imported) == (1, 0)
+    assert steps.status(data_dir / "x")["transcribe"] == {"clips": 2}
 
 
 class LoudnessVad:

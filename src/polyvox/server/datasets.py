@@ -10,11 +10,13 @@ from fastapi import APIRouter, HTTPException
 from .. import timing
 from ..data import manifests, record
 from ..jobs import Job
-from ..prep import checks, exporter, fillers, importer, loudness, slicer
+from ..prep import checks, exporter, fillers, importer, loudness, slicer, steps
 from ..prep.asr import LanguageLock, load_audio
 from ..prep.slicer import SliceOptions
+from ..prep.steps import DEFAULTS as STEP_DEFAULTS
 from .context import Studio, checked, found, logged_timings
 from .schemas import (
+    AddSourceIn,
     CheckIn,
     DatasetIn,
     DatasetReportOut,
@@ -25,6 +27,8 @@ from .schemas import (
     ImportSourceIn,
     JobOut,
     NormalizeIn,
+    StepIn,
+    StepStatusOut,
 )
 
 
@@ -35,6 +39,123 @@ def router(s: Studio) -> APIRouter:
     @api.get("/api/datasets")
     def list_datasets() -> list[str]:
         return manifests.scan(settings.data_dir)
+
+    def asr_tools(language: str | None, prompt: str | None):
+        """(heard: 16 kHz clips -> [(text, language)], transcriber: files -> the
+        same). ``language`` "auto" detects until the clips agree, then forces
+        that; None / "" detects per clip; else forced."""
+        lock = LanguageLock() if language == "auto" else None
+        fixed = language or None
+
+        def heard(wavs: list) -> list[tuple[str, str | None]]:
+            s.take_gpu(asr)
+            forced = lock.language if lock else fixed
+            results = asr.transcribe(wavs, language=forced, prompt=prompt)
+            if lock:
+                lock.add(wavs, results)
+            # A forced language is not detected, so record what was forced.
+            return [(r.text, r.language or forced) for r in results]
+
+        def transcriber(paths: list[Path]) -> list[tuple[str, str | None]]:
+            return heard([load_audio(p) for p in paths])
+
+        return heard, transcriber
+
+    def step_settings(folder: Path, step: str, given: dict) -> dict:
+        """A step's settings: given > its last run on this dataset > defaults."""
+        defaults = STEP_DEFAULTS[step]
+        saved = record.read_record(folder).steps.get(step, {})
+        return {
+            **defaults,
+            **{k: v for k, v in saved.items() if k in defaults},
+            **{k: v for k, v in given.items() if k in defaults and v is not None},
+        }
+
+    def run_step(folder: Path, step: str, given: dict, job: Job) -> dict:
+        opts = step_settings(folder, step, given)
+        if step == "clean_up":
+            available = s.cleanup_models()
+            if not opts["models"] or not all(available.get(m) for m in opts["models"]):
+                raise ValueError("Choose clean-up models that are downloaded (see Models).")
+            chain = s.separated(s.separation.chain([available[m] for m in opts["models"]]))
+            return steps.clean_up(folder, chain, opts["models"], job.progress)
+        if step == "slice":
+            text = step_settings(folder, "transcribe", given)
+            aligner = step_settings(folder, "check", {})["aligner"]
+            heard, _ = asr_tools(text["language"], text["prompt"])
+            guide = slicer.Guide(transcribe=heard, align=lambda wavs, texts: s.aligned(wavs, texts, aligner))
+            models = step_settings(folder, "clean_up", {})["models"]
+            available = s.cleanup_models()
+            chain = (
+                s.separated(s.separation.chain([available[m] for m in models]))
+                if models and all(available.get(m) for m in models)
+                else None
+            )
+            mid = (opts["min_seconds"] + opts["max_seconds"]) / 2
+            cut = SliceOptions(min_seconds=opts["min_seconds"], max_seconds=opts["max_seconds"], target_seconds=mid)
+            return steps.slice_recordings(folder, cut, guide=guide, chain=chain, progress=job.progress)
+        if step == "transcribe":
+            _, transcriber = asr_tools(opts["language"], opts["prompt"])
+            keep = {"language": opts["language"], "prompt": opts["prompt"]}
+            return steps.transcribe(folder, transcriber, opts["tidy_fillers"], job.progress, keep)
+        if step == "check":
+            checker = s.checker(opts["aligner"], opts["compare_asr"], opts["detect_singing"])
+            more = {"compare_asr": opts["compare_asr"], "detect_singing": opts["detect_singing"]}
+            everything = bool(given.get("everything"))
+            return steps.check(folder, checker, opts["aligner"], load_audio, s.voices, job.progress, more, everything)
+        return steps.tidy(folder, opts["trim"], opts["normalize_lufs"], job.progress)
+
+    @api.get("/api/datasets/steps")
+    def step_status(id: str) -> StepStatusOut:
+        """What each processing step still has to do on a dataset, and its last settings."""
+        manifest = found(manifests.resolve, settings.data_dir, id)
+        return StepStatusOut(**steps.status(manifest.parent))
+
+    @api.post("/api/datasets/add-source", status_code=202)
+    def add_source(body: AddSourceIn) -> JobOut:
+        """Add a source's clips and recordings to a dataset (a job: copying
+        takes a while). The job's result is {"clips", "recordings"} added."""
+        manifest = found(manifests.resolve, settings.data_dir, body.id)
+        checked(importer.detect, importer.clean_path(body.source))
+        s.refuse_if_busy(gpu=False)
+
+        def run(job: Job) -> dict:
+            added = steps.add_source(
+                manifest.parent, body.source, body.audio_dir, settings.data_dir, body.copy_audio, progress=job.progress
+            )
+            return {"clips": added.clips, "recordings": added.recordings}
+
+        return JobOut(**jobs.start("import", f"Add to {body.id}", run).public())
+
+    @api.post("/api/datasets/step", status_code=202)
+    def dataset_step(body: StepIn) -> JobOut:
+        """Run one processing step on what still needs it (a job)."""
+        manifest = found(manifests.resolve, settings.data_dir, body.id)
+        s.refuse_if_busy(gpu=body.step != "tidy")
+        given = body.model_dump(exclude={"id", "step"})
+
+        def run(job: Job) -> dict:
+            with timing.collect() as times:
+                result = run_step(manifest.parent, body.step, given, job)
+                return {**result, "timings": logged_timings(f"{body.step} {body.id}", times)}
+
+        return JobOut(**jobs.start("step", f"{body.step.replace('_', ' ').capitalize()} {body.id}", run).public())
+
+    @api.post("/api/datasets/run-remaining", status_code=202)
+    def run_remaining(body: DatasetIn) -> JobOut:
+        """Run the steps with work left (slice, transcribe, check), in order,
+        each with its last settings. The job's result is {step: its result}."""
+        manifest = found(manifests.resolve, settings.data_dir, body.id)
+        s.refuse_if_busy(gpu=True)
+
+        def run(job: Job) -> dict:
+            out = {}
+            with timing.collect() as times:
+                for step in steps.remaining(manifest.parent):
+                    out[step] = run_step(manifest.parent, step, {}, job)
+                return {**out, "timings": logged_timings(f"Steps {body.id}", times)}
+
+        return JobOut(**jobs.start("step", f"Steps {body.id}", run).public())
 
     @api.post("/api/datasets/import/preview")
     def preview_import(body: ImportSourceIn) -> ImportPreviewOut:
@@ -49,8 +170,6 @@ def router(s: Studio) -> APIRouter:
         cleanup = [k for k in available if getattr(body, k)]
         # Fail fast on what can be checked now.
         try:
-            if body.slice and not (body.copy_audio and body.transcribe):
-                raise ValueError("Slicing makes new clips without text: it needs copying and transcription.")
             if body.slice and body.slice_min_seconds >= body.slice_max_seconds:
                 raise ValueError("The minimum clip length must be below the maximum.")
             if body.trim and not (body.copy_audio and body.check):
@@ -68,37 +187,25 @@ def router(s: Studio) -> APIRouter:
             raise HTTPException(409, str(e)) from e
         except (ValueError, OSError) as e:
             raise HTTPException(422, str(e)) from e
-        s.refuse_if_busy(gpu=body.transcribe or body.check or bool(cleanup))
-
-        lock = LanguageLock() if body.language == "auto" else None
-
-        def heard(wavs: list) -> list[tuple[str, str | None]]:
-            s.take_gpu(asr)
-            forced = lock.language if lock else body.language
-            results = asr.transcribe(wavs, language=forced, prompt=body.prompt)
-            if lock:
-                lock.add(wavs, results)
-            # A forced language is not detected, so record what was forced.
-            return [(r.text, r.language or forced) for r in results]
-
-        def transcriber(paths: list[Path]) -> list[tuple[str, str | None]]:
-            return heard([load_audio(p) for p in paths])
+        s.refuse_if_busy(gpu=body.transcribe or body.check or body.slice or bool(cleanup))
+        heard, transcriber = asr_tools(body.language, body.prompt)
 
         def run(job: Job) -> dict:
             with timing.collect() as times:
                 return {**import_(job), "timings": logged_timings(f"Import {body.name}", times)}
 
         # The settings each step ran with, for the dataset's record (later runs start from them).
-        steps: dict[str, dict] = {}
+        noted: dict[str, dict] = {}
         if cleanup:
-            steps["clean_up"] = {"models": cleanup}
+            noted["clean_up"] = {"models": cleanup}
         if body.slice:
-            steps["slice"] = {"min_seconds": body.slice_min_seconds, "max_seconds": body.slice_max_seconds}
-        if body.transcribe:
-            steps["transcribe"] = {"language": body.language, "prompt": body.prompt}
+            noted["slice"] = {"min_seconds": body.slice_min_seconds, "max_seconds": body.slice_max_seconds}
+        if body.transcribe or body.slice:
+            noted["transcribe"] = {"language": body.language, "prompt": body.prompt, "tidy_fillers": body.tidy_fillers}
         if body.check:
-            steps["check"] = {"aligner": body.aligner, "compare_asr": False, "detect_singing": body.detect_singing}
-        steps["tidy"] = {"trim": body.trim, "fillers": body.tidy_fillers, "normalize_lufs": body.normalize_lufs}
+            noted["check"] = {"aligner": body.aligner, "compare_asr": False, "detect_singing": body.detect_singing}
+        if body.trim or body.normalize_lufs is not None:
+            noted["tidy"] = {"trim": body.trim, "normalize_lufs": body.normalize_lufs}
 
         def import_(job: Job) -> dict:
             result = importer.import_dataset(
@@ -128,7 +235,8 @@ def router(s: Studio) -> APIRouter:
                 tidy_fillers=body.tidy_fillers,
                 normalize=body.normalize_lufs,
                 embed=s.voices,
-                steps=steps,
+                steps=noted,
+                cleanup_models=cleanup,
             )
             return {
                 "id": result.id,
@@ -148,7 +256,7 @@ def router(s: Studio) -> APIRouter:
         Checks made for the old texts become stale."""
         manifest = found(manifests.resolve, settings.data_dir, body.id)
         changed = checked(fillers.tidy_manifest, manifest)
-        record.remember(manifest.parent, "tidy", {"fillers": True})
+        record.remember(manifest.parent, "transcribe", {"tidy_fillers": True})
         return {"changed": changed}
 
     @api.post("/api/datasets/check", status_code=202)

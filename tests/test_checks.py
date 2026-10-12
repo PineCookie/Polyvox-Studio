@@ -254,7 +254,7 @@ def test_check_dataset_flags_other_speakers_and_clipping(data_dir, align_service
 def test_import_checks_and_trims_the_copies(tmp_path, data_dir, align_service):
     src = tmp_path / "recordings"
     src.mkdir()
-    sf.write(src / "long_pause.flac", tone([(2.0, 3.0)], 4.5), 16000)  # trimmed, rewritten as WAV
+    sf.write(src / "long_pause.flac", tone([(2.0, 3.0)], 4.5), 16000)  # trimmed in place (stays FLAC)
     sf.write(src / "tight.wav", tone([(0.1, 0.9)], 1.0), 16000)
     (src / "long_pause.lab").write_text("第一句", encoding="utf-8")
     (src / "tight.lab").write_text("第二句", encoding="utf-8")
@@ -265,11 +265,11 @@ def test_import_checks_and_trims_the_copies(tmp_path, data_dir, align_service):
     assert (result.imported, result.trimmed) == (2, 1)
     assert result.checks["flagged"] == 0  # the long silence was cut away
     target = data_dir / "trimmed"
-    assert sorted(p.name for p in (target / "wavs").iterdir()) == ["long_pause.wav", "tight.wav"]
-    assert sf.info(str(target / "wavs" / "long_pause.wav")).duration == pytest.approx(1.3, abs=0.03)
+    assert sorted(p.name for p in (target / "wavs").iterdir()) == ["long_pause.flac", "tight.wav"]
+    assert sf.info(str(target / "wavs" / "long_pause.flac")).duration == pytest.approx(1.3, abs=0.03)
     assert sf.info(str(target / "wavs" / "tight.wav")).duration == pytest.approx(1.0)
     saved = json.loads((target / manifests.ALIGN_FILE).read_text(encoding="utf-8"))
-    assert saved["aligner"] == "ctc" and saved["clips"]["wavs/long_pause.wav"]["lead"] == pytest.approx(0.15, abs=0.02)
+    assert saved["aligner"] == "ctc" and saved["clips"]["wavs/long_pause.flac"]["lead"] == pytest.approx(0.15, abs=0.02)
     assert (src / "long_pause.flac").is_file()  # the source is untouched
 
     with pytest.raises(ValueError, match="needs copying and checking"):

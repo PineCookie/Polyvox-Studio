@@ -68,12 +68,12 @@ def test_import_replaces_clips_with_the_separated_voice(tmp_path, data_dir):
     result = importer.import_dataset(str(src), None, "clean", data_dir, separation=chain)
 
     assert result.imported == 1 and calls == [(2, 16000)]  # read stereo, at the model's rate
-    out = data_dir / "clean" / "wavs" / "a.wav"
+    out = data_dir / "clean" / "wavs" / "a.flac"  # cleaned in place
     info = sf.info(str(out))
     assert (info.samplerate, info.channels) == (16000, 1)
     assert np.abs(sf.read(out)[0]).mean() == pytest.approx(0.2, abs=0.01)
     manifest = (data_dir / "clean" / "train.jsonl").read_text(encoding="utf-8")
-    assert json.loads(manifest)["audio"] == "wavs/a.wav"
+    assert json.loads(manifest)["audio"] == "wavs/a.flac"
     with pytest.raises(ValueError, match="needs copying"):
         importer.import_dataset(str(src), None, "in_place", data_dir, copy=False, separation=chain)
 

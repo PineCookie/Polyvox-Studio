@@ -122,7 +122,7 @@ def read_manifest(path: Path, root: Path | None = None, untranscribed: bool = Fa
     return entries, errors
 
 
-def rewrite_manifest(path: Path, change) -> int:
+def rewrite_manifest(path: Path, change, backup: bool = True) -> int:
     """Apply ``change(entry) -> entry | None`` (None: unchanged) to each usable
     entry (clips without text too: text ""), in place: other lines and keys stay
     as written. The first time, the original is kept as ``<name>.orig``. Returns
@@ -135,9 +135,9 @@ def rewrite_manifest(path: Path, change) -> int:
             lines[n] = json.dumps(new, ensure_ascii=False)
             changed += 1
     if changed:
-        backup = path.with_name(path.name + ".orig")
-        if not backup.exists():
-            backup.write_bytes(path.read_bytes())
+        original = path.with_name(path.name + ".orig")
+        if backup and not original.exists():
+            original.write_bytes(path.read_bytes())
         tmp = path.with_name(f".{path.name}.tmp")
         tmp.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
         tmp.replace(path)
@@ -211,6 +211,36 @@ def set_text(path: Path, index: int, text: str) -> None:
     rewrite_manifest(path, change)
     if not 0 <= index <= seen:
         raise KeyError(f"No clip {index} in this dataset.")
+
+
+def append_entries(path: Path, entries: list[dict]) -> None:
+    """Add clips at the end of a manifest (atomically: a copy, then a rename)."""
+    old = path.read_text(encoding="utf-8") if path.is_file() else ""
+    if old and not old.endswith("\n"):
+        old += "\n"
+    new = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(old + new, encoding="utf-8", newline="\n")
+    tmp.replace(path)
+
+
+def set_texts(path: Path, texts: dict[str, str], root: Path | None = None) -> int:
+    """Set the text of clips by key (row_key), e.g. from ASR (no .orig backup:
+    filling in texts loses nothing). Returns how many changed."""
+    manifest_dir = path.resolve().parent
+
+    def change(entry: dict) -> dict | None:
+        key = row_key(_resolve_audio(entry["audio"], manifest_dir, root), manifest_dir)
+        text = texts.get(key)
+        return {**entry, "text": text} if text is not None and text != entry["text"] else None
+
+    return rewrite_manifest(path, change, backup=False)
+
+
+def drop_keys(manifest_dir: Path, keys: set[str]) -> None:
+    """Leave clips out of training, as dropping them in review does."""
+    if keys:
+        _write_excluded(manifest_dir, excluded_keys(manifest_dir) | keys)
 
 
 def write_manifest(entries: list[dict], path: Path) -> None:

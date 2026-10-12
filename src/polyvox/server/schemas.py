@@ -105,6 +105,48 @@ class DatasetIn(BaseModel):
     id: str  # dataset manifest id
 
 
+class AddSourceIn(ImportSourceIn):
+    id: str  # dataset manifest id
+    copy_audio: bool = True
+
+
+class StepIn(BaseModel):
+    """One processing step on a dataset (prep/steps.py). Settings left out
+    come from the step's last run on this dataset (its record), else defaults."""
+
+    id: str  # dataset manifest id
+    step: Literal["clean_up", "slice", "transcribe", "check", "tidy"]
+    # clean_up
+    models: list[Literal["separate", "dereverb", "denoise"]] | None = None
+    # slice
+    min_seconds: float | None = Field(None, ge=0.5, le=30)
+    max_seconds: float | None = Field(None, ge=3, le=60)
+    # slice (its clips' texts) and transcribe
+    language: str | None = None  # "auto" (default), "" = per clip, or a code
+    prompt: str | None = None
+    tidy_fillers: bool | None = None
+    # check
+    aligner: Literal["qwen3", "ctc"] | None = None
+    compare_asr: bool | None = None
+    detect_singing: bool | None = None
+    everything: bool = False  # check every clip again, not only those without a current check
+    # tidy
+    trim: bool | None = None
+    normalize_lufs: float | None = Field(None, ge=-40, le=-10)
+
+
+class StepStatusOut(BaseModel):
+    """Per step what still needs it (prep/steps.status), and its last settings."""
+
+    sources: dict
+    clean_up: dict
+    slice: dict
+    transcribe: dict
+    check: dict
+    tidy: dict
+    settings: dict
+
+
 class NormalizeIn(BaseModel):
     id: str  # dataset manifest id
     target_lufs: float = Field(loudness.TARGET_LUFS, ge=-40, le=-10)
