@@ -212,14 +212,6 @@ def fuse_layers() -> None:
     print("[studio] Transformer layers fused for training (torch.compile).", file=sys.stderr)
 
 
-def optimize_enabled() -> bool:
-    """As the server's Settings.optimize: POLYVOX_OPTIMIZE auto (default) / 1 / 0; auto = on CUDA."""
-    import torch
-
-    value = os.environ.get("POLYVOX_OPTIMIZE", "auto").strip().lower()
-    return torch.cuda.is_available() if value == "auto" else value in ("1", "true", "yes", "on")
-
-
 def checkpoint_layers() -> None:
     """Gradient checkpointing for VoxCPM's transformer layers (both language
     models and the diffusion decoder use MiniCPMDecoderLayer): their activations
@@ -466,6 +458,7 @@ def main() -> None:
     frozen_weights_in_bf16()
     cache_audio_latents()
     from polyvox import vram
+    from polyvox.config import optimize_from_env
     from polyvox.data import audio_io
 
     audio_io.patch_torchaudio()
@@ -474,7 +467,7 @@ def main() -> None:
         # Not fused too: recomputing compiled layers mismatches, and compiling the
         # checkpointed ones needs a C++ compiler on Windows (checked 2026-10-12).
         checkpoint_layers()
-    elif optimize_enabled():
+    elif optimize_from_env():
         fuse_layers()
     use_optimizer(*optimizer_from_config(args.config_path))
     threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid), daemon=True).start()

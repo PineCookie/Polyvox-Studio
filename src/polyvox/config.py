@@ -19,6 +19,17 @@ def _parse_bool(value: str) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def optimize_from_env() -> bool:
+    """Settings.optimize as a training subprocess sees it (the server's
+    environment): POLYVOX_OPTIMIZE on / off, or auto = on CUDA."""
+    value = _env("OPTIMIZE", "auto").strip().lower()
+    if value != "auto":
+        return _parse_bool(value)
+    import torch
+
+    return torch.cuda.is_available()
+
+
 @dataclass(frozen=True)
 class Settings:
     # Local model directory or Hugging Face repo id.

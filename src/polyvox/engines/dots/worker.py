@@ -281,6 +281,47 @@ def checkpoint_layers(model) -> None:
         block.forward = forward
 
 
+def fuse_layers(model) -> None:
+    """torch.compile of the layers' training forward: the language model's
+    decoder layers and the diffusion head's blocks, one compiled function per
+    kind (a layer's weights are its inputs), any batch length. Only while
+    training with gradients: validation and samples run as before (sample
+    generation rewires the diffusion head for inference; Unfuse puts it back).
+    If compiling fails before a fused call has worked, the layers run as they
+    are for the rest of the run. Not with checkpoint_layers (recomputing
+    compiled layers doesn't match them)."""
+    import functools
+
+    import torch
+
+    # Float attributes (norm eps, attention scaling, dropout p, the LoRA scale) as
+    # constants: left variable (dynamic=True's default), they enter the graph as
+    # CPU scalars, and CPU kernels need a C++ compiler (none on a usual Windows setup).
+    torch._dynamo.config.specialize_float = True
+    layers = {"llm": list(model.core.llm.model.layers), "dit": list(model.core.velocity_field_predictor.blocks)}
+    for kind, modules in layers.items():
+        forward = type(modules[0]).forward
+        fused = [torch.compile(forward, dynamic=True)]
+        worked: list[bool] = []
+
+        def maybe_fused(self, *args, _forward=forward, _fused=fused, _worked=worked, _kind=kind, **kwargs):
+            if _fused and torch.is_grad_enabled():
+                try:
+                    out = _fused[0](self, *args, **kwargs)
+                    if not _worked:
+                        _worked.append(True)
+                    return out
+                except Exception as e:
+                    if _worked or isinstance(e, torch.OutOfMemoryError):
+                        raise
+                    log(f"Fusing the {_kind} layers failed ({e!r}); running them unfused.")
+                    _fused.clear()
+            return _forward(self, *args, **kwargs)
+
+        for module in modules:
+            module.forward = functools.partial(maybe_fused, module)
+
+
 def use_checkpointing(batch_size: int, profile) -> bool:
     """Checkpoint layers when the micro-batch is larger than what trains without it
     on this GPU (vram.Profile.dots_plain_batch); POLYVOX_TRAIN_CHECKPOINT
@@ -322,6 +363,7 @@ def main() -> None:
     from safetensors.torch import save_file
 
     from polyvox import vram
+    from polyvox.config import optimize_from_env
     from polyvox.data import audio_io, manifests
     from polyvox.engines.dots import lora as dots_lora
     from polyvox.vendor.dots_tts.data.pipelines.tts_pipeline import BasicTtsPipeline
@@ -355,10 +397,13 @@ def main() -> None:
     loras = dots_lora.attach(model, rank, alpha, float(lora_cfg.get("dropout") or 0.0), networks)
     runtime = DotsTtsRuntime(model, Path(config["pretrained_path"]), precision="bfloat16", optimize=False)
     checkpointing = use_checkpointing(int(config["batch_size"]), vram.detect("cuda")[1])
+    fused = not checkpointing and optimize_from_env()
     if checkpointing:
         checkpoint_layers(model)
+    elif fused:
+        fuse_layers(model)
     log(f"dots.tts loaded in {time.time() - t0:.0f} s; LoRA r{rank} on {len(loras)} layers ({', '.join(networks)})"
-        f"{'; gradient checkpointing' if checkpointing else ''}.")  # fmt: skip
+        f"{'; gradient checkpointing' if checkpointing else ''}{'; fused layers' if fused else ''}.")  # fmt: skip
 
     train_records = [dict(e) for e in manifests.read_manifest(Path(config["train_manifest"]))[0]]
     val_path = Path(config["val_manifest"]) if config.get("val_manifest") else None
