@@ -48,7 +48,7 @@ def load_pipeline(base_dir: Path, g2pw_dir: Path, device: str):
 
 @dataclass
 class Progress:
-    phase: str = "idle"  # idle | loading | preparing | generating
+    phase: str = "idle"  # idle | loading | preparing | compiling | generating
     step: int = 0  # semantic tokens so far (~25 per second of audio)
     expected: int | None = None
     attempt: int = 0
@@ -151,7 +151,7 @@ class GptSovitsEngine(Engine):
                 chars = len(re.sub(r"\W", "", text))
                 self._progress.expected = max(MIN_TOKENS, round(chars * self._tokens_per_char))
                 self._progress.phase = "generating"
-                audio = pipeline.synthesize(voice, ref, text, options, seed, on_token=self._count)
+                audio = pipeline.synthesize(voice, ref, text, options, seed, on_token=self._count, on_phase=self._phase)
                 if chars >= LEARN_MIN_CHARS and options.speed == 1.0:
                     observed = self._progress.step / chars
                     self._tokens_per_char = 0.7 * self._tokens_per_char + 0.3 * observed
@@ -161,6 +161,10 @@ class GptSovitsEngine(Engine):
 
     def _count(self) -> None:
         self._progress.step += 1
+        self._progress.phase = "generating"  # (after a first call's compiling)
+
+    def _phase(self, phase: str) -> None:
+        self._progress.phase = phase
 
     def _ensure_pipeline(self):
         if self._pipeline is None:

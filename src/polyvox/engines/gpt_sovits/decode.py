@@ -27,6 +27,7 @@ import torch.nn.functional as F
 
 MAX_STEPS = 1500  # upstream's decoding loop
 MIN_STEPS = 11  # the end of speech is masked before this step (at least 10 tokens, ~0.4 s)
+WINDOWS = (512, 1024)  # attention windows below the cache size; decoding moves up as it fills them
 
 
 def layer_rest(x, q, k_cache, v_cache, bias, out_w, out_b, n1w, n1b, w1, b1, w2, b2, n2w, n2b,
@@ -141,8 +142,11 @@ class Decoder:
         self.positions = torch.arange(max_len, device=dev)
         pos = gpt.ar_audio_position
         pos.extend_pe(torch.zeros(1, max_len + MAX_STEPS, dtype=self.dtype, device=dev))
-        self._graph: torch.cuda.CUDAGraph | None = None
-        self._graph_key = None
+        # A step attends over the first ``window`` cache positions only (the rest
+        # are masked anyway): short texts don't pay for the whole cache. A
+        # generation moves to the next window when it fills one (same cache).
+        self.windows = (*(w for w in WINDOWS if w < max_len), max_len)
+        self._graphs: dict[tuple, torch.cuda.CUDAGraph] = {}  # (top_k, use_top_p, window) -> graph
 
     # ------------------------------------------------------------ sampling
     def _sample(self, logits: torch.Tensor, top_k: int, use_top_p: bool) -> tuple[torch.Tensor, torch.Tensor]:
@@ -178,22 +182,23 @@ class Decoder:
         self.step_idx.add_(1)
 
     # ------------------------------------------------------------ one step
-    def _step(self, top_k: int, use_top_p: bool) -> None:
-        """Feed the last token, sample the next (the static state in, the static state out)."""
+    def _step(self, top_k: int, use_top_p: bool, window: int) -> None:
+        """Feed the last token, sample the next (the static state in, the static
+        state out), attending over the first ``window`` cache positions."""
         gpt, heads = self.gpt, self.heads
         emb = gpt.ar_audio_embedding.word_embeddings(self.token)  # [1, 1, dim]
         pos = gpt.ar_audio_position
         # index_select, not pe[:, audio_pos]: a 0-d index tensor becomes a Python int (a sync)
         x = emb * pos.x_scale + pos.alpha * pos.pe.index_select(1, self.audio_pos.view(1)).to(emb.dtype)
-        bias = torch.where(self.positions <= self.cache_pos, 0.0, -float("inf")).view(1, 1, 1, -1)
+        bias = torch.where(self.positions[:window] <= self.cache_pos, 0.0, -float("inf")).view(1, 1, 1, -1)
         index = self.cache_pos.view(1)
         for i, (qkv_w, qkv_b, out_w, out_b, norm1, mlp, norm2) in enumerate(self.layers):
             q, k, v = F.linear(x, qkv_w, qkv_b).chunk(3, dim=-1)
             self.k[i].index_copy_(1, index, k)
             self.v[i].index_copy_(1, index, v)
             x = self._layer_rest(
-                x, q, self.k[i], self.v[i], bias, out_w, out_b, *norm1[:2], *mlp, *norm2[:2], heads, self.dim,
-                norm1[2], norm2[2],
+                x, q, self.k[i][:, :window], self.v[i][:, :window], bias, out_w, out_b, *norm1[:2], *mlp,
+                *norm2[:2], heads, self.dim, norm1[2], norm2[2],
             )  # fmt: skip
         logits = gpt.ar_predict_layer(x[:, -1])
         token, stop = self._sample(logits, top_k, use_top_p)
@@ -201,18 +206,18 @@ class Decoder:
         self.cache_pos.add_(1)
         self.audio_pos.add_(1)
 
-    def _run_step(self, top_k: int, use_top_p: bool) -> None:
+    def _run_step(self, key: tuple) -> None:
         if self.graphs:
-            self._graph.replay()  # captured by generate() before decoding
+            self._graphs[key].replay()  # captured by _ensure_graph before the step
         else:
-            self._step(top_k, use_top_p)
+            self._step(*key)
 
-    def _ensure_graph(self, top_k: int, use_top_p: bool) -> None:
-        """Capture the step before a generation starts (not halfway through
-        one), so every generation, the first included, runs the same steps
-        and repeats exactly with the same seed."""
-        key = (top_k, use_top_p)
-        if self._graph is None or self._graph_key != key:
+    def _ensure_graph(self, key: tuple) -> None:
+        """The step's graph for ``key`` (top_k, use_top_p, window), captured if
+        new. Capturing leaves the state and the random generator as they were,
+        so a generation samples the same whether or not it captured (the first
+        included, and one that moves to a larger window halfway)."""
+        if key not in self._graphs:
             self._capture(key)
 
     def _capture(self, key) -> None:
@@ -234,7 +239,7 @@ class Decoder:
         for t, s in zip(self._state(), saved, strict=True):
             t.copy_(s)
         torch.cuda.set_rng_state(rng, self.device)
-        self._graph, self._graph_key = graph, key
+        self._graphs[key] = graph
 
     def _state(self) -> list[torch.Tensor]:
         return [self.k, self.v, self.token, self.cache_pos, self.audio_pos, self.step_idx, self.seen, self.stop]
@@ -287,8 +292,9 @@ class Decoder:
         self.penalty.fill_(repetition_penalty)
         self.top_p.fill_(top_p)
         use_top_p = top_p < 1.0
+        window = next(w for w in self.windows if w > src_len)
         if self.graphs:
-            self._ensure_graph(top_k, use_top_p)
+            self._ensure_graph((top_k, use_top_p, window))
 
         new: list[torch.Tensor] = []
         idx = 0
@@ -299,7 +305,11 @@ class Decoder:
                 self.cache_pos.fill_(src_len)
                 self.audio_pos.fill_(y_len)
             else:
-                self._run_step(top_k, use_top_p)
+                if src_len + idx - 1 >= window:  # this step writes past the window: the next one
+                    window = next(w for w in self.windows if w > src_len + idx - 1)
+                    if self.graphs:
+                        self._ensure_graph((top_k, use_top_p, window))
+                self._run_step((top_k, use_top_p, window))
             new.append(self.token.clone())
             if bool(self.stop):
                 new.pop()  # the end of speech itself

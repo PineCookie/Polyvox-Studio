@@ -63,7 +63,8 @@ class FakePipeline:
         self.references.append((str(wav), text))
         return ("ref", str(wav), text)
 
-    def synthesize(self, voice, ref, text, options, seed, on_token=None):
+    def synthesize(self, voice, ref, text, options, seed, on_token=None, on_phase=None):
+        on_phase("compiling")  # as a first call in a process
         for _ in range(4):
             on_token()
         self.calls.append({"voice": voice.key, "ref": ref, "text": text, "options": options, "seed": seed})
@@ -457,7 +458,9 @@ def test_clip_features_are_cached_per_clip_for_every_run_of_a_dataset(tmp_path):
 @pytest.mark.parametrize("seed", range(5))
 def test_fast_decoding_makes_upstreams_tokens(seed, monkeypatch):
     """Greedy, so sampling noise doesn't matter: the same tokens and count as
-    upstream's infer_panel, with or without a prompt, stopping where it stops."""
+    upstream's infer_panel, with or without a prompt, stopping where it stops;
+    also when decoding moves through small attention windows on the way."""
+    from polyvox.engines.gpt_sovits import decode
     from polyvox.engines.gpt_sovits.decode import Decoder
     from polyvox.vendor.gpt_sovits.AR.models import t2s_model
 
@@ -470,12 +473,15 @@ def test_fast_decoding_makes_upstreams_tokens(seed, monkeypatch):
         gpt.ar_predict_layer.weight.mul_(20)
         gpt.ar_predict_layer.weight[1024].mul_(0.5 + 0.4 * seed)
     x, bert = torch.randint(0, 700, (1, 12)), torch.randn(1, 1024, 12)
-    decoder = Decoder(gpt, max_len=1600)
-    for prompt, penalty in ((torch.randint(0, 1024, (1, 9)), 1.35), (None, 1.0)):
-        expected = gpt.infer_panel(x, torch.tensor([12]), prompt, bert, top_k=1, early_stop_num=120,
-                                   repetition_penalty=penalty)  # fmt: skip
-        tokens, n = decoder.generate(x, prompt, bert, top_k=1, early_stop_num=120, repetition_penalty=penalty)
-        assert torch.equal(tokens, expected[0].long()) and n == expected[1]
+    prompt = torch.randint(0, 1024, (1, 9))
+    for windows in ((512, 1024), (24, 40)):  # the second: windows fill after a few tokens
+        monkeypatch.setattr(decode, "WINDOWS", windows)
+        decoder = Decoder(gpt, max_len=1600)
+        for prompt_, penalty in ((prompt, 1.35), (None, 1.0)):
+            expected = gpt.infer_panel(x, torch.tensor([12]), prompt_, bert, top_k=1, early_stop_num=120,
+                                       repetition_penalty=penalty)  # fmt: skip
+            tokens, n = decoder.generate(x, prompt_, bert, top_k=1, early_stop_num=120, repetition_penalty=penalty)
+            assert torch.equal(tokens, expected[0].long()) and n == expected[1]
 
 
 def test_the_base_models_version_is_a_choice(engine, pipeline, lora_dir, tmp_path):
@@ -597,7 +603,9 @@ def test_v4_makes_its_mel_window_by_window_each_continuing_the_last():
             return torch.arange(frames).float().expand(1, 512, frames), ge
 
     pipeline = synth.Pipeline.__new__(synth.Pipeline)
-    pipeline.device = "cpu"
+    pipeline.device, pipeline.compile_decode, pipeline.warm = "cpu", True, set()
+    phases = []
+    pipeline._on_phase = phases.append
     pipeline.vocoder = lambda mel: mel[:, :1]  # [1, 1, T]
     ref = SimpleNamespace(spec=None, ge=None, mel=torch.full((1, 100, keep), -5.0), fea=torch.zeros(1, 512, keep))
     voice = SimpleNamespace(sovits=Sovits())
@@ -607,6 +615,9 @@ def test_v4_makes_its_mel_window_by_window_each_continuing_the_last():
     assert torch.allclose(made, torch.arange(frames).float(), atol=1e-3)
     assert len(prompts) == -(-frames // (synth.V4_WINDOW - keep))  # windows of 1000 frames, prompt included
     assert (prompts[0] == -5).all()  # the reference's mel first, then each window's last frames
+    assert phases == ["compiling", "generating"]  # the first DiT run in a process waits for torch.compile
+    pipeline._v4_audio(voice, ref, None, [1, 2], synth.Options())
+    assert phases == ["compiling", "generating"]  # not again
     assert torch.equal(prompts[1], torch.arange(synth.V4_WINDOW - 2 * keep, synth.V4_WINDOW - keep).float())
 
 

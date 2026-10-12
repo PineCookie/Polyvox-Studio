@@ -141,6 +141,10 @@ class Pipeline:
         self.sv = SV(device, self.half, str(self.base_dir / "sv" / "pretrained_eres2netv2w24s4ep4.ckpt"))
         self.v4_dir = self.base_dir / "gsv-v4-pretrained"  # v4's SoVITS base and vocoder
         self.vocoder: torch.nn.Module | None = None  # v4's, loaded with the first v4 voice
+        # Compiled parts that have run in this process ("gpt", "dit"): until then
+        # their first call waits for torch.compile (synthesize's on_phase reports it).
+        self.warm: set[str] = set()
+        self._on_phase: Callable[[str], None] = lambda phase: None
 
     # ------------------------------------------------------------ weights
     def base_weights(self, version: str = "v2ProPlus") -> tuple[Path, Path]:
@@ -323,14 +327,22 @@ class Pipeline:
         options: Options,
         seed: int,
         on_token: Callable[[], None] | None = None,
+        on_phase: Callable[[str], None] | None = None,
     ) -> np.ndarray:
-        """32 kHz mono float audio of ``text`` in the reference's voice;
-        ``on_token`` is called for each semantic token the GPT makes."""
+        """Mono float audio of ``text`` in the reference's voice (at
+        voice.sample_rate); ``on_token`` is called for each semantic token the
+        GPT makes, ``on_phase("compiling")`` before a wait for torch.compile
+        (the first call of a compiled part in this process) and
+        ``on_phase("generating")`` after the DiT's."""
         chunks = split_text(text)
         if not chunks:
             raise ValueError("Text to synthesize is empty.")
-        with counting_tokens(on_token):
-            return self._synthesize(voice, ref, chunks, options, seed)
+        self._on_phase = on_phase or (lambda phase: None)
+        try:
+            with counting_tokens(on_token):
+                return self._synthesize(voice, ref, chunks, options, seed)
+        finally:
+            self._on_phase = lambda phase: None
 
     def _synthesize(self, voice: Voice, ref: Reference, chunks: list[str], options: Options, seed: int) -> np.ndarray:
         pause = np.zeros(int(voice.sample_rate * PAUSE_S), dtype=np.float32)
@@ -353,7 +365,10 @@ class Pipeline:
             decoder = self._decoder(voice)
             with torch.no_grad():
                 if decoder is not None and decoder.fits(ids_t, ref.prompt):
+                    if self.compile_decode and "gpt" not in self.warm:
+                        self._on_phase("compiling")  # until the first token
                     tokens, n = self._generate(voice, decoder, ids_t, ref.prompt, features[None], sampling)
+                    self.warm.add("gpt")
                 else:
                     tokens, n = voice.gpt.infer_panel(
                         ids_t,
@@ -389,6 +404,9 @@ class Pipeline:
         keep = mel.shape[2]
         step = V4_WINDOW - keep
         out = []
+        compiling = self.compile_decode and "dit" not in self.warm
+        if compiling:
+            self._on_phase("compiling")
         for i in range(0, fea.shape[2], step):
             chunk = fea[:, :, i : i + step]
             x = torch.cat([cond, chunk], 2).transpose(2, 1)
@@ -397,6 +415,9 @@ class Pipeline:
             made = made[:, :, mel.shape[2] :]
             mel, cond = made[:, :, -keep:], chunk[:, :, -keep:]
             out.append(made)
+        self.warm.add("dit")
+        if compiling:
+            self._on_phase("generating")
         mel = (torch.cat(out, 2) + 1) / 2 * (V4_SPEC_MAX - V4_SPEC_MIN) + V4_SPEC_MIN
         with torch.inference_mode():
             return self._ensure_vocoder()(mel)[0][0]
