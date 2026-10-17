@@ -150,9 +150,11 @@ class SynthesisRequest:
     # Voice design / style instruction, rendered as "(control)text".
     control: str = ""
     lora_id: str | None = None
-    reference_wav: Path | None = None
-    # Transcript of reference_wav; enables continuation-style cloning.
+    reference_wav: Path | None = None  # the voice (VoxCPM2's reference slot)
+    # Transcript of prompt_wav (continuation-style cloning); without prompt_wav,
+    # reference_wav is the prompt too.
     prompt_text: str | None = None
+    prompt_wav: Path | None = None
     cfg_value: float = 2.0
     inference_timesteps: int = 10
     normalize: bool = True
@@ -248,8 +250,9 @@ class InferenceService:
             seed=req.seed,
         )
         prompt_text = (req.prompt_text or "").strip()
-        if prompt_text and req.reference_wav:
-            kwargs["prompt_wav_path"] = str(req.reference_wav)
+        prompt_wav = req.prompt_wav or req.reference_wav
+        if prompt_text and prompt_wav:
+            kwargs["prompt_wav_path"] = str(prompt_wav)
             kwargs["prompt_text"] = prompt_text
 
         logger.info("Synthesizing (lora=%s): %.80s", req.lora_id or "none", final_text)

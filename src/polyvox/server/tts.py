@@ -52,9 +52,13 @@ def router(s: Studio) -> APIRouter:
         normalize: Annotated[bool | None, Form()] = None,
         denoise: Annotated[bool | None, Form()] = None,
         seed: Annotated[int | None, Form()] = None,
+        # The engine's reference inputs (capabilities.reference_inputs) by slot, each an
+        # upload or dataset clips as JSON (ReferenceClipsIn). An upload in reference_audio
+        # with prompt_text and no prompt audio is the prompt too (as before the slots).
         reference_audio: Annotated[UploadFile | None, File()] = None,
-        # Instead of reference_audio: dataset clips with their transcripts, as JSON (ReferenceClipsIn).
         reference_clips: Annotated[str | None, Form()] = None,
+        prompt_audio: Annotated[UploadFile | None, File()] = None,
+        prompt_clips: Annotated[str | None, Form()] = None,
     ) -> Response:
         tts_engine = s.registry.get(engine)
         if tts_engine is None:
@@ -71,34 +75,68 @@ def router(s: Studio) -> APIRouter:
             cfg_value=cfg_value, inference_timesteps=inference_timesteps, normalize=normalize, denoise=denoise
         )
         values |= {k: v for k, v in legacy.items() if v is not None}
-        clips = dataset_clips(reference_clips) if reference_clips else []
-        if clips and reference_audio:
-            raise HTTPException(422, "Give reference audio or dataset clips, not both.")
+        given = {
+            "reference": (reference_audio, dataset_clips(reference_clips) if reference_clips else []),
+            "prompt": (prompt_audio, dataset_clips(prompt_clips) if prompt_clips else []),
+        }
+        if any(audio and clips for audio, clips in given.values()):
+            raise HTTPException(422, "Give an uploaded clip or dataset clips, not both.")
+        caps = tts_engine.capabilities
+        if caps.reference_input("reference") is None and any(given["reference"]):
+            if any(given["prompt"]):
+                raise HTTPException(422, f"{tts_engine.name} takes one reference clip.")
+            given["prompt"] = given.pop("reference")  # its one clip, sent the old way
+            given["reference"] = (None, [])
+        if any(given["prompt"]) and caps.reference_input("prompt") is None:
+            raise HTTPException(422, f"{tts_engine.name} takes no prompt to continue from.")
         if s.profile.exclusive and (running := s.jobs.running("import") or s.jobs.running("check")):
             raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
         s.make_room_for_tts(tts_engine)
         temporary: list[Path] = []  # removed afterwards (never the dataset's own clips)
-        ref_path, extra = None, []
+
+        def upload(file: UploadFile) -> Path:
+            # As WAV when soundfile can't read it (e.g. m4a): voxcpm can't without a system FFmpeg.
+            temporary.append(path := audio_io.to_wav(save_upload(file)))
+            return path
+
+        def from_clips(clips: list[references.Clip], slot: str) -> tuple[Path, str, list[Path]]:
+            """(clip, its transcript, more clips) for one input: as they are where it
+            takes several, its first where it takes one short clip, else one clip joined
+            from them all (several clips clone a voice better than one)."""
+            spec = caps.reference_input(slot)
+            assert spec is not None  # slots the engine lacks were refused above
+            if spec.several:
+                return clips[0].audio, clips[0].text, [c.audio for c in clips[1:]]
+            if spec.max_seconds or len(clips) == 1:
+                return clips[0].audio, clips[0].text, []
+            temporary.append(path := temporary_wav())
+            return path, references.join(clips, path), []
+
         try:
-            if clips and tts_engine.capabilities.several_references:
-                (first, *rest) = clips
-                ref_path, prompt_text, extra = first.audio, first.text, [c.audio for c in rest]
-            elif clips:  # one reference made of them all: several clips clone a voice better than one
-                ref_path = temporary_wav()
-                temporary.append(ref_path)
-                prompt_text = references.join(clips, ref_path)
-            elif reference_audio:
-                # As WAV when soundfile can't read it (e.g. m4a): voxcpm can't without a system FFmpeg.
-                ref_path = audio_io.to_wav(save_upload(reference_audio))
-                temporary.append(ref_path)
+            ref_path, extra, prompt_wav, said = None, [], None, None
+            audio, clips = given["reference"]
+            if clips:
+                ref_path, _, extra = from_clips(clips, "reference")
+            elif audio:
+                ref_path = upload(audio)
+                said = prompt_text  # no prompt audio: the reference is the prompt too (SynthesisRequest)
+            audio, clips = given["prompt"]
+            if clips:
+                prompt_wav, said, _ = from_clips(clips, "prompt")
+            elif audio:
+                prompt_wav, said = upload(audio), prompt_text
+            spec = caps.reference_input("prompt")
+            if prompt_wav and spec and spec.transcript == "required" and not (said or "").strip():
+                raise ValueError(f"{tts_engine.name}'s prompt needs its transcript.")
             result = tts_engine.synthesize(
                 engines.SynthesisRequest(
                     text=text,
                     style=control,
                     lora_id=lora_id or None,
                     reference_wav=ref_path,
-                    prompt_text=prompt_text,
                     extra_references=extra,
+                    prompt_wav=prompt_wav,
+                    prompt_text=said,
                     seed=seed,
                     options=values,
                 )

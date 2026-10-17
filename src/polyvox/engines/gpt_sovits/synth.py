@@ -334,8 +334,8 @@ class Pipeline:
         voice.sample_rate); ``on_token`` is called for each semantic token the
         GPT makes, ``on_phase("compiling")`` before a wait for torch.compile
         (the first call of a compiled part in this process) and
-        ``on_phase("generating")`` after the DiT's. ``timbre``: more clips of the
-        voice whose timbre SoVITS averages with the reference's (upstream's
+        ``on_phase("generating")`` after the DiT's. ``timbre``: clips of the voice
+        whose timbre SoVITS averages instead of the reference's (upstream's
         inp_refs; v2 family only, v4 ignores them)."""
         chunks = split_text(text)
         if not chunks:
@@ -343,7 +343,7 @@ class Pipeline:
         self._on_phase = on_phase or (lambda phase: None)
         try:
             with counting_tokens(on_token):
-                return self._synthesize(voice, ref, chunks, options, seed, [ref, *timbre])
+                return self._synthesize(voice, ref, chunks, options, seed, list(timbre) or [ref])
         finally:
             self._on_phase = lambda phase: None
 

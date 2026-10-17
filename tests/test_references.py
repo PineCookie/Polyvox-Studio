@@ -9,6 +9,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from polyvox.data import manifests, references
+from polyvox.engines import Capabilities, Engine, ReferenceInput, SynthesisResult
 from polyvox.server import create_app
 
 
@@ -77,14 +78,86 @@ def test_tts_clones_from_dataset_clips_joined_into_one_reference(service, traini
     assert [c["index"] for c in picked] == [0, 4] and picked[0]["seconds"] == 6.0
 
     chosen = json.dumps({"dataset": "speaker_a/train.jsonl", "indices": [0, 4]})
-    resp = client.post("/api/tts", data={"text": "hi", "reference_clips": chosen})
+    resp = client.post("/api/tts", data={"text": "hi", "reference_clips": chosen})  # VoxCPM's reference slot only
 
     assert resp.status_code == 200, resp.text
     call = loader.models[0].generate_calls[-1]
-    assert call["prompt_text"] == "我们今天就先说到这里，下次再见吧。其实没有那么复杂，仔细想想就明白了。"
-    joined = Path(call["prompt_wav_path"])
-    assert call["reference_wav_path"] == str(joined) and not joined.exists()  # a temporary file, removed
+    joined = Path(call["reference_wav_path"])
+    assert not joined.exists() and not call.get("prompt_wav_path")  # a temporary file, removed; no prompt
     assert (manifest.parent / "wavs" / "good.wav").exists()  # the dataset's own clips stay
+
+    resp = client.post("/api/tts", data={"text": "hi", "reference_clips": chosen, "prompt_clips": chosen})
+    call = loader.models[0].generate_calls[-1]
+    assert call["prompt_text"] == "我们今天就先说到这里，下次再见吧。其实没有那么复杂，仔细想想就明白了。"
+    assert call["prompt_wav_path"] and call["reference_wav_path"]
+
+
+class Recorder(Engine):
+    """An engine with the given reference inputs that records its requests."""
+
+    name = "Recorder"
+    params = ()
+    model_setting = "model"
+    worker_module = "x"
+
+    def __init__(self, id, inputs):
+        self.id = id
+        self.capabilities = Capabilities(
+            24_000, 24_000, ("zh",), True, True, False, False, False, reference_inputs=inputs
+        )
+        self.requests = []
+
+    device = "cpu"
+    loaded = False
+
+    def status(self):
+        return {"loaded": False}
+
+    def synthesize(self, req):
+        self.requests.append(req)
+        return SynthesisResult(24_000, np.zeros(240, dtype=np.float32), req.seed)
+
+    def progress(self):
+        return {"phase": "idle"}
+
+    def unload(self):
+        pass
+
+    def training_config(self, params, run_dir, train_manifest, val_manifest):
+        return {}
+
+
+def test_each_engine_gets_its_own_inputs(service, training, data_dir):
+    dataset(data_dir, CLIPS)
+    one_clip = Recorder("one_clip", (ReferenceInput("clip", "prompt", "optional"),))  # as dots.tts
+    two_parts = Recorder(  # as GPT-SoVITS
+        "two_parts",
+        (
+            ReferenceInput("prompt", "prompt", "optional", max_seconds=10.0),
+            ReferenceInput("timbre", "reference", "none", several=True, max_seconds=10.0),
+        ),
+    )
+    registry = {"one_clip": one_clip, "two_parts": two_parts}
+    client = TestClient(create_app(service.settings, service, training, engines_=registry))
+    chosen = json.dumps({"dataset": "speaker_a/train.jsonl", "indices": [0, 4]})
+    wav = (data_dir / "speaker_a" / "wavs" / "good.wav").read_bytes()
+
+    def post(engine, files=None, **data):
+        return client.post("/api/tts", data={"text": "hi", "engine": engine, **data}, files=files)
+
+    # One clip: sent the old way it is the clip (with its transcript); several are joined into one.
+    assert post("one_clip", files={"reference_audio": ("a.wav", wav)}, prompt_text="示例。").status_code == 200
+    req = one_clip.requests[-1]
+    assert req.reference_wav is None and req.prompt_wav is not None and req.prompt_text == "示例。"
+    assert post("one_clip", prompt_clips=chosen).status_code == 200
+    assert one_clip.requests[-1].prompt_text.startswith("我们今天就先说到这里") and one_clip.requests[-1].prompt_wav
+    assert post("one_clip", reference_clips=chosen, prompt_clips=chosen).status_code == 422
+
+    # Several timbre clips as they are; the prompt takes one short clip.
+    assert post("two_parts", reference_clips=chosen, prompt_clips=chosen).status_code == 200
+    req = two_parts.requests[-1]
+    assert (req.reference_wav.name, [p.name for p in req.extra_references]) == ("good.wav", ["fine.wav"])
+    assert (req.prompt_wav.name, req.prompt_text) == ("good.wav", "我们今天就先说到这里，下次再见吧。")
 
 
 def test_tts_dataset_clip_errors(service, training, data_dir):
@@ -100,3 +173,6 @@ def test_tts_dataset_clip_errors(service, training, data_dir):
     assert post("not json") == 422
     upload = {"reference_audio": ("a.wav", b"RIFF", "audio/wav")}
     assert post(json.dumps({"dataset": "speaker_a/train.jsonl", "indices": [0]}), files=upload) == 422
+    wav = {"prompt_audio": ("a.wav", (data_dir / "speaker_a" / "wavs" / "good.wav").read_bytes())}
+    no_text = client.post("/api/tts", data={"text": "hi"}, files=wav)  # VoxCPM's prompt needs its transcript
+    assert no_text.status_code == 422 and "transcript" in no_text.json()["detail"]

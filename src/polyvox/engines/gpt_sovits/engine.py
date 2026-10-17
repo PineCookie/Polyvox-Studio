@@ -22,9 +22,11 @@ from typing import TYPE_CHECKING
 
 from ... import lora_library
 from ...config import Settings
-from ..base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
+from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from . import voices
-from .synth import BASE_VERSIONS, V4, Options, split_text
+from .synth import BASE_VERSIONS, REF_MAX_S, V4, VERSIONS, Options, split_text
+
+TIMBRE_VERSIONS = tuple(v for v in VERSIONS if v != V4)
 
 if TYPE_CHECKING:
     from ...training import TrainParams
@@ -69,7 +71,14 @@ class GptSovitsEngine(Engine):
         lora_hot_swap=False,
         reference_required=True,
         full_finetune=True,
-        several_references=True,  # SoVITS averages their timbre (v2 family; v4 uses the first)
+        reference_inputs=(
+            # The GPT's prompt (3-10 s); without a transcript only its timbre is used (not v4).
+            ReferenceInput("prompt", "prompt", "optional", max_seconds=REF_MAX_S),
+            # SoVITS averages the timbre of several clips (upstream's inp_refs; v4 has none).
+            ReferenceInput(
+                "timbre", "reference", "none", several=True, max_seconds=REF_MAX_S, versions=TIMBRE_VERSIONS
+            ),
+        ),
     )
     params = (
         Param("temperature", "float", 1.0, 0.05, 2.0, 0.05),
@@ -136,7 +145,10 @@ class GptSovitsEngine(Engine):
         if ckpt and ckpt.engine != self.id:
             raise ValueError(f"'{ckpt.id}' was trained for another model ({ckpt.engine}), not GPT-SoVITS.")
         default_ref = voices.read_reference(ckpt.path) if ckpt else None
-        if req.reference_wav is None and default_ref is None:
+        # The GPT's prompt: the given one, else the voice's own, else the timbre clip
+        # without its transcript (upstream's reference-free mode).
+        source = req.prompt_wav or (None if default_ref else req.reference_wav)
+        if source is None and default_ref is None:
             raise ValueError("GPT-SoVITS clones a reference clip: add one (3-10 s), or choose a voice that has one.")
 
         with self._lock:
@@ -144,13 +156,17 @@ class GptSovitsEngine(Engine):
             try:
                 pipeline = self._ensure_pipeline()
                 voice = self._ensure_voice(pipeline, ckpt, base_version)
-                if req.reference_wav is not None:
-                    ref = pipeline.reference(voice, req.reference_wav, req.prompt_text)
+                if source is not None:
+                    ref = pipeline.reference(voice, source, req.prompt_text if req.prompt_wav else None)
                 else:
                     ref = self._default_reference(pipeline, voice, *default_ref)
-                # Timbre only (no transcript): spectrogram and speaker embedding.
+                # The voice's clips give the timbre (as upstream's several references do), else the prompt's
+                # clip; their transcripts don't matter there: spectrogram and speaker embedding only.
+                voice_clips = [req.reference_wav, *req.extra_references] if req.reference_wav else []
                 timbre = [
-                    pipeline.reference(voice, wav, None) for wav in req.extra_references if voice.model_version != V4
+                    ref if wav == source else pipeline.reference(voice, wav, None)
+                    for wav in voice_clips
+                    if voice.model_version != V4
                 ]
                 seed = req.seed if req.seed is not None else random.randrange(2**31)
                 chars = len(re.sub(r"\W", "", text))

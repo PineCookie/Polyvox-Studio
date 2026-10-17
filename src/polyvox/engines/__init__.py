@@ -8,11 +8,21 @@ synthesis settings and training worker.
 from __future__ import annotations
 
 from ..config import Settings
-from .base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
+from .base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 
 DEFAULT = "voxcpm"  # runs and checkpoints that record no engine
 
-__all__ = ["DEFAULT", "Capabilities", "Engine", "Param", "SynthesisRequest", "SynthesisResult", "classes", "create"]
+__all__ = [
+    "DEFAULT",
+    "Capabilities",
+    "Engine",
+    "Param",
+    "ReferenceInput",
+    "SynthesisRequest",
+    "SynthesisResult",
+    "classes",
+    "create",
+]
 
 
 def classes() -> dict[str, type[Engine]]:

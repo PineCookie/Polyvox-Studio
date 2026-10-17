@@ -126,7 +126,7 @@ def test_a_given_reference_and_the_base_model(engine, pipeline, tmp_path):
     engine.synthesize(SynthesisRequest(text="hello", reference_wav=clip, prompt_text=""))
 
     assert pipeline.voices == [("s2Gv2ProPlus.pth", "s1v3.ckpt")]
-    assert pipeline.references == [(str(clip), "")]
+    assert pipeline.references == [(str(clip), None)]  # no transcript: the voice only (reference-free)
     with pytest.raises(ValueError):
         engine.synthesize(SynthesisRequest(text="hi", reference_wav=clip, options={"cfg_value": 2.0}))
     with pytest.raises(ValueError, match="empty"):
@@ -144,10 +144,23 @@ def test_more_clips_add_their_timbre_except_on_v4(engine, pipeline, tmp_path):
 
     assert pipeline.references == [(str(first), "示例。"), (str(second), None), (str(third), None)]  # timbre only
     assert pipeline.calls[0]["ref"][1] == str(first)
-    assert [r[1] for r in pipeline.calls[0]["timbre"]] == [str(second), str(third)]
+    assert [r[1] for r in pipeline.calls[0]["timbre"]] == [str(first), str(second), str(third)]
     request.options = {"base_version": "v4"}
     engine.synthesize(request)
     assert pipeline.calls[1]["timbre"] == []  # v4 averages no timbre: the first clip only
+
+
+def test_the_gpts_prompt_and_the_voices_timbre_can_be_other_clips(engine, pipeline, tmp_path):
+    prompt, voice = tone(tmp_path / "prompt.wav", 5.0), tone(tmp_path / "voice.wav", 5.0)
+
+    engine.synthesize(SynthesisRequest(text="你好", reference_wav=voice, prompt_wav=prompt, prompt_text="示例。"))
+    engine.synthesize(SynthesisRequest(text="你好", reference_wav=voice))  # no prompt: reference-free
+
+    assert pipeline.references == [(str(prompt), "示例。"), (str(voice), None), (str(voice), None)]
+    assert [r[1] for r in pipeline.calls[0]["timbre"]] == [str(voice)] and pipeline.calls[0]["ref"][1] == str(prompt)
+    assert pipeline.calls[1]["ref"] == ("ref", str(voice), None) and [r[1] for r in pipeline.calls[1]["timbre"]] == [
+        str(voice)
+    ]
 
 
 def test_other_engines_checkpoints_are_refused(engine, lora_dir, tmp_path):

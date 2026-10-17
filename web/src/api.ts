@@ -40,6 +40,19 @@ export interface EngineParam {
   versions: string[] // only used by these model versions (the voice's, or base_version); empty: all
 }
 
+export type ReferenceSlot = 'reference' | 'prompt'
+
+/** One audio input of an engine's cloning (engines/base.py ReferenceInput). */
+export interface ReferenceInput {
+  name: string // the engine's own name for it (labels: t.referenceInputs['<engine>.<name>'])
+  slot: ReferenceSlot // the /api/tts fields it fills: <slot>_audio / <slot>_clips (+ prompt_text)
+  transcript: 'none' | 'optional' | 'required'
+  several: boolean // takes several clips as they are
+  max_seconds: number | null // one short clip (never several joined)
+  versions: string[] // model versions that have it; empty: all
+  same_as: string | null // may reuse this other input's audio
+}
+
 export interface Engine {
   id: string
   name: string
@@ -56,6 +69,7 @@ export interface Engine {
     reference_required: boolean // always clones a clip: the request's or the voice's own
     training: boolean // New run offers it
     full_finetune: boolean // trains every weight: no LoRA rank or optimizer choice
+    reference_inputs: ReferenceInput[] // the audio inputs its cloning takes
   }
   params: EngineParam[] // synthesis settings
   model_setting: string // its base model in the Models list
@@ -98,10 +112,8 @@ export interface SynthesisParams {
   text: string
   control: string // style (engines with capabilities.style)
   loraId: string | null
-  referenceAudio: File | null
-  promptText: string
-  // Instead of referenceAudio: dataset clips (with their transcripts) used together.
-  referenceClips: ReferenceClips | null
+  // Audio for the engine's reference inputs, by slot.
+  references: Partial<Record<ReferenceSlot, ReferenceAudio>>
   options: EngineOptions // the engine's params by name
   seed: number | null
 }
@@ -110,6 +122,9 @@ export interface ReferenceClips {
   dataset: string
   indices: number[]
 }
+
+// An uploaded clip (with its transcript, where the input takes one), or dataset clips.
+export type ReferenceAudio = { file: File; text: string } | { clips: ReferenceClips }
 
 export interface ReferenceClip {
   index: number
@@ -285,11 +300,13 @@ export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
   form.set('text', p.text)
   form.set('control', p.control)
   if (p.loraId) form.set('lora_id', p.loraId)
-  if (p.referenceClips) {
-    form.set('reference_clips', JSON.stringify(p.referenceClips))
-  } else if (p.referenceAudio) {
-    form.set('reference_audio', p.referenceAudio)
-    if (p.promptText.trim()) form.set('prompt_text', p.promptText)
+  for (const [slot, audio] of Object.entries(p.references)) {
+    if ('clips' in audio) {
+      form.set(`${slot}_clips`, JSON.stringify(audio.clips))
+    } else {
+      form.set(`${slot}_audio`, audio.file)
+      if (slot === 'prompt' && audio.text.trim()) form.set('prompt_text', audio.text)
+    }
   }
   form.set('options', JSON.stringify(p.options))
   if (p.seed !== null) form.set('seed', String(p.seed))

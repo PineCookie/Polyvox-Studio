@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 from ... import lora_library
 from ...config import Settings
-from ..base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
+from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from . import lora as dots_lora
 
 if TYPE_CHECKING:
@@ -68,6 +68,8 @@ class DotsEngine(Engine):
         style=False,
         tags=False,
         lora_hot_swap=True,
+        # One clip: its speaker embedding, and with its transcript also speech to continue.
+        reference_inputs=(ReferenceInput("clip", "prompt", "optional"),),
     )
     params = (
         Param("guidance_scale", "float", 1.2, 0.0, 5.0, 0.1),
@@ -127,6 +129,8 @@ class DotsEngine(Engine):
         ckpt = lora_library.resolve(self.settings.lora_dir, req.lora_id) if req.lora_id else None
         if ckpt and ckpt.engine != self.id:
             raise ValueError(f"LoRA '{ckpt.id}' was trained for another model ({ckpt.engine}), not dots.tts.")
+        if req.prompt_wav and req.reference_wav and req.prompt_wav != req.reference_wav:
+            raise ValueError("dots.tts takes one reference clip: the prompt to continue from is the voice's clip.")
 
         with self._lock:
             self._progress = Progress(phase="loading" if self._runtime is None else "preparing", started=time.time())
@@ -135,10 +139,12 @@ class DotsEngine(Engine):
                 self._apply_lora(ckpt)
                 seed = req.seed if req.seed is not None else random.randrange(2**31)
                 kwargs = {}
-                if req.reference_wav:
+                # One clip gives the speaker embedding and, with its transcript, the prompt.
+                if req.prompt_wav:
+                    kwargs["prompt_audio_path"] = str(req.prompt_wav)
+                    kwargs["prompt_text"] = (req.prompt_text or "").strip()
+                elif req.reference_wav:
                     kwargs["prompt_audio_path"] = str(req.reference_wav)
-                    if (req.prompt_text or "").strip():
-                        kwargs["prompt_text"] = req.prompt_text.strip()
                 tokens = len(runtime.model.tokenizer(text)["input_ids"])
                 self._progress.expected = max(MIN_PATCHES, round(tokens * self._patches_per_token))
                 audio = self._generate(runtime, text, seed, dots_text.detect(text), options, kwargs)

@@ -47,6 +47,22 @@ class Param:
 
 
 @dataclass(frozen=True)
+class ReferenceInput:
+    """One audio input of an engine's cloning, as its model takes it; Synthesize
+    shows each with the engine's own name for it."""
+
+    name: str  # e.g. "prompt", "timbre" (the UI's label for engine.name)
+    # The request fields it fills: "reference" = reference_wav (+ extra_references),
+    # "prompt" = prompt_wav + prompt_text. /api/tts takes <slot>_audio / <slot>_clips.
+    slot: Literal["reference", "prompt"]
+    transcript: Literal["none", "optional", "required"]
+    several: bool = False  # several clips as they are; other inputs get several joined into one
+    max_seconds: float | None = None  # one clip of at most this length each (never joined)
+    versions: tuple[str, ...] = ()  # model versions that have it; () = all
+    same_as: str | None = None  # the name of another input whose audio it may reuse
+
+
+@dataclass(frozen=True)
 class Capabilities:
     sample_rate: int  # of the audio it outputs
     training_rate: int  # training audio is heard at this rate
@@ -62,23 +78,37 @@ class Capabilities:
     training: bool = True  # New run offers it
     # Training updates every weight (no LoRA rank, no optimizer choice).
     full_finetune: bool = False
-    # Takes further clips of the voice (SynthesisRequest.extra_references) besides
-    # the reference; other engines get several clips joined into one reference.
-    several_references: bool = False
+    # The audio inputs its cloning takes (each engine its own).
+    reference_inputs: tuple[ReferenceInput, ...] = ()
+
+    def reference_input(self, slot: str) -> ReferenceInput | None:
+        return next((i for i in self.reference_inputs if i.slot == slot), None)
 
 
 @dataclass
 class SynthesisRequest:
+    """``reference_wav`` (+ ``extra_references``): who it should sound like, audio
+    only. ``prompt_wav`` + ``prompt_text``: speech the model continues from, so it
+    also takes on its pace, tone and recording. A transcript without a prompt clip
+    makes the reference the prompt too (requests from before the two were apart)."""
+
     text: str
     style: str = ""
     lora_id: str | None = None
     reference_wav: Path | None = None
-    prompt_text: str | None = None  # transcript of reference_wav
+    prompt_text: str | None = None  # transcript of prompt_wav
     # More clips of the same voice (engines with capabilities.several_references).
     extra_references: list[Path] = field(default_factory=list)
     seed: int | None = None
     # Values for the engine's Params, by name; missing ones take their defaults.
     options: dict = field(default_factory=dict)
+    prompt_wav: Path | None = None
+
+    def __post_init__(self):
+        if self.prompt_wav is None and (self.prompt_text or "").strip():
+            self.prompt_wav = self.reference_wav
+        if self.prompt_wav is None:
+            self.prompt_text = None
 
 
 @dataclass

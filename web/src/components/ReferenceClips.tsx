@@ -1,17 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { datasetAudioUrl, listDatasets, pickReferenceClips } from '../api'
-import type { ReferenceClip } from '../api'
 import { useT } from '../i18n'
+import type { ClipChoice } from '../referenceInputs'
 import { SampleCell } from './SampleCell'
 
-// Three clips (~20 s) cloned a voice clearly better than one in every engine.
-const COUNT = 3
 const STORE = 'polyvox.referenceDataset'
-
-export interface ClipChoice {
-  dataset: string
-  clips: ReferenceClip[]
-}
 
 function remembered(): string {
   try {
@@ -30,6 +23,8 @@ function remember(dataset: string) {
 }
 
 interface Props {
+  // How many clips to pick (several clips of ~20 s clone a voice better than one).
+  count: number
   value: ClipChoice
   onChange: (choice: ClipChoice) => void
   onError: (message: string) => void
@@ -37,7 +32,7 @@ interface Props {
 
 /** Reference clips from a dataset, picked for it (best checked clips of 4-10 s); each can be
  * heard or removed, and "Other clips" brings the next best. */
-export function ReferenceClips({ value, onChange, onError }: Props) {
+export function ReferenceClips({ count, value, onChange, onError }: Props) {
   const t = useT()
   const [datasets, setDatasets] = useState<string[] | null>(null)
   const [seen, setSeen] = useState<number[]>([]) // clips shown for this dataset: "Other clips" skips them
@@ -65,13 +60,13 @@ export function ReferenceClips({ value, onChange, onError }: Props) {
   async function pick(dataset: string, exclude: number[]) {
     setBusy(true)
     try {
-      let clips = await pickReferenceClips(dataset, COUNT, exclude).catch((e) => {
+      let clips = await pickReferenceClips(dataset, count, exclude).catch((e) => {
         if (!exclude.length) throw e
         return null // every clip was shown: start over
       })
       if (clips === null) {
         exclude = []
-        clips = await pickReferenceClips(dataset, COUNT, exclude)
+        clips = await pickReferenceClips(dataset, count, exclude)
       }
       onChange({ dataset, clips })
       setSeen([...exclude, ...clips.map((c) => c.index)])

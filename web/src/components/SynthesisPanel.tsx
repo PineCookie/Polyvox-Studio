@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import { getTtsProgress, transcribe } from '../api'
-import type { Engine, EngineOptions, EngineParam, SynthesisParams, TtsProgress } from '../api'
+import { getTtsProgress } from '../api'
+import type { Engine, EngineOptions, EngineParam, ReferenceInput, SynthesisParams, TtsProgress } from '../api'
 import { defaultOptions } from '../engines'
 import { formatDuration } from '../format'
 import { useT } from '../i18n'
-import { forgetPeaks } from '../peaks'
-import { AudioPlayer } from './AudioPlayer'
-import { FilePicker } from './FilePicker'
-import { ReferenceClips } from './ReferenceClips'
-import type { ClipChoice } from './ReferenceClips'
+import { emptyInput, inputAudio, lacksTranscript } from '../referenceInputs'
+import type { InputState } from '../referenceInputs'
+import { ReferenceInputField } from './ReferenceInputField'
 import { ProgressBar } from './RunList'
 
 // VoxCPM2's non-verbal tags, as its cookbook spells them ([laughing], not
@@ -128,13 +126,10 @@ export function SynthesisPanel({
   const t = useT()
   const [text, setText] = useState('')
   const [control, setControl] = useState('')
-  const [referenceAudio, setReferenceAudio] = useState<File | null>(null)
-  const [promptText, setPromptText] = useState('')
-  const [referenceSource, setReferenceSource] = useState<'file' | 'dataset'>('file')
-  const [clipChoice, setClipChoice] = useState<ClipChoice>({ dataset: '', clips: [] })
+  // Each engine's reference inputs as set here, by '<engine>.<input>' (kept while switching voices).
+  const [inputStates, setInputStates] = useState<Record<string, InputState>>({})
   // Settings changed by hand, per engine (each keeps its own while switching voices).
   const [changed, setChanged] = useState<Record<string, EngineOptions>>({})
-  const [transcribing, setTranscribing] = useState(false)
   const caps = engine?.capabilities
   const options: EngineOptions = engine ? { ...defaultOptions(engine), ...changed[engine.id] } : {}
   const setOption = (name: string, value: number | boolean | string) =>
@@ -145,52 +140,38 @@ export function SynthesisPanel({
     (p) => (isBase || !p.base_only) && (!p.versions.length || (version !== null && p.versions.includes(version))),
   )
   const textArea = useRef<HTMLTextAreaElement>(null)
-  // A playable URL for the chosen reference, released when it changes.
-  const referenceUrl = useMemo(() => (referenceAudio ? URL.createObjectURL(referenceAudio) : null), [referenceAudio])
-  useEffect(
-    () => () => {
-      if (referenceUrl) {
-        URL.revokeObjectURL(referenceUrl)
-        forgetPeaks(referenceUrl)
-      }
-    },
-    [referenceUrl],
+
+  // The engine's reference inputs for this model version, each with its state. An input that may
+  // reuse another's audio starts out doing so with the base model (it cloned best that way) and
+  // empty with a trained voice (there it added nothing and could carry over how the clip ends).
+  const inputs = (caps?.reference_inputs ?? []).filter(
+    (i) => !i.versions.length || (version !== null && i.versions.includes(version)),
   )
-
-  const useClips = referenceSource === 'dataset' && clipChoice.clips.length > 0
-  const hasReference = referenceSource === 'file' ? !!referenceAudio : useClips
-  // Engines that always clone a clip need one: chosen here, or the voice's own.
-  const needsReference = !!caps?.reference_required && !hasReference && voiceReference === null
-  const canSubmit = !busy && !!engine && !engine.unavailable && text.trim().length > 0 && !needsReference
-
-  async function transcribeReference() {
-    if (!referenceAudio) return
-    setTranscribing(true)
-    try {
-      setPromptText((await transcribe(referenceAudio)).text)
-    } catch (e) {
-      onError((e as Error).message)
-    } finally {
-      setTranscribing(false)
-      onTranscribed()
-    }
+  const stateOf = (i: ReferenceInput): InputState =>
+    inputStates[`${engine?.id}.${i.name}`] ?? emptyInput(i.same_as && isBase ? 'same' : 'none')
+  const setStateOf = (i: ReferenceInput, state: InputState) =>
+    setInputStates((s) => ({ ...s, [`${engine?.id}.${i.name}`]: state }))
+  const otherOf = (i: ReferenceInput) => {
+    const other = i.same_as ? inputs.find((o) => o.name === i.same_as) : undefined
+    return other ? { input: other, state: stateOf(other) } : null
   }
+  const references: SynthesisParams['references'] = {}
+  for (const i of inputs) {
+    const audio = inputAudio(stateOf(i), otherOf(i)?.state ?? null)
+    if (audio) references[i.slot] = audio
+  }
+  const untranscribed = inputs.find((i) => lacksTranscript(i, stateOf(i), otherOf(i)?.state ?? null))
+  const inputLabel = (i: ReferenceInput) => t.referenceInputs[`${engine?.id}.${i.name}`]?.[0] ?? i.name
+
+  // Engines that always clone a clip need one: chosen here, or the voice's own.
+  const needsReference = !!caps?.reference_required && !Object.keys(references).length && voiceReference === null
+  const canSubmit =
+    !busy && !!engine && !engine.unavailable && text.trim().length > 0 && !needsReference && !untranscribed
 
   function submit(e?: FormEvent) {
     e?.preventDefault()
     if (!canSubmit) return
-    onGenerate({
-      text,
-      control: caps?.style ? control : '',
-      referenceAudio: caps?.reference_audio && referenceSource === 'file' ? referenceAudio : null,
-      promptText: caps?.reference_transcript ? promptText : '',
-      referenceClips:
-        caps?.reference_audio && useClips
-          ? { dataset: clipChoice.dataset, indices: clipChoice.clips.map((c) => c.index) }
-          : null,
-      options,
-      seed,
-    })
+    onGenerate({ text, control: caps?.style ? control : '', references, options, seed })
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -207,11 +188,6 @@ export function SynthesisPanel({
       el?.focus()
       el?.setSelectionRange(start + tag.length, start + tag.length)
     })
-  }
-
-  function clearReference() {
-    setReferenceAudio(null)
-    setPromptText('')
   }
 
   return (
@@ -270,7 +246,7 @@ export function SynthesisPanel({
         </label>
       )}
 
-      {caps?.reference_audio !== false && (
+      {inputs.length > 0 && (
         <fieldset className="field reference">
           <legend>
             {t.referenceAudio}{' '}
@@ -282,54 +258,21 @@ export function SynthesisPanel({
                   : t.referenceRequired}
             </span>
           </legend>
-          <div className="segmented" role="radiogroup">
-            <label>
-              <input type="radio" checked={referenceSource === 'file'} onChange={() => setReferenceSource('file')} />{' '}
-              {t.referenceFromFile}
-            </label>
-            <label>
-              <input
-                type="radio"
-                checked={referenceSource === 'dataset'}
-                onChange={() => setReferenceSource('dataset')}
-              />{' '}
-              {t.referenceFromDataset}
-            </label>
-          </div>
-          {caps?.reference_required && !hasReference && voiceReference !== null && (
+          {caps?.reference_required && !references.prompt && voiceReference !== null && (
             <p className="muted hint">{t.usesVoiceReference(voiceReference)}</p>
           )}
-          {referenceSource === 'dataset' ? (
-            <ReferenceClips value={clipChoice} onChange={setClipChoice} onError={onError} />
-          ) : (
-            <FilePicker
-              file={referenceAudio}
-              onChange={(f) => (f ? setReferenceAudio(f) : clearReference())}
-              accept="audio/*"
-              label={t.chooseAudio}
-              empty={t.orDropFile}
-            >
-              {referenceUrl && <AudioPlayer url={referenceUrl} />}
-            </FilePicker>
-          )}
-          {referenceSource === 'file' && referenceAudio && caps?.reference_transcript !== false && (
-            <div className="file-row">
-              <input
-                value={promptText}
-                onChange={(e) => setPromptText(e.target.value)}
-                placeholder={t.referenceTranscript}
-              />
-              <button
-                type="button"
-                className="ghost small"
-                onClick={transcribeReference}
-                disabled={transcribing}
-                title={t.transcribeTitle}
-              >
-                {transcribing ? t.transcribing : t.transcribe}
-              </button>
-            </div>
-          )}
+          {inputs.map((i) => (
+            <ReferenceInputField
+              key={`${engine?.id}.${i.name}`}
+              engineId={engine?.id ?? ''}
+              input={i}
+              value={stateOf(i)}
+              onChange={(state) => setStateOf(i, state)}
+              other={otherOf(i)}
+              onError={onError}
+              onTranscribed={onTranscribed}
+            />
+          ))}
         </fieldset>
       )}
 
@@ -393,6 +336,8 @@ export function SynthesisPanel({
           <span className="field-error">{t.engineUnavailable(engine.name, engine.unavailable)}</span>
         ) : needsReference ? (
           <span className="field-error">{t.needsReference(engine!.name)}</span>
+        ) : untranscribed ? (
+          <span className="field-error">{t.needsTranscript(inputLabel(untranscribed))}</span>
         ) : (
           <span className="muted hint">{t.ctrlEnter}</span>
         )}

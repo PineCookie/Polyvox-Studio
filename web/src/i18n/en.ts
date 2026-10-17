@@ -77,12 +77,35 @@ export const en = {
   transcribe: 'Transcribe',
   transcribing: 'Transcribing…',
   transcribeTitle: 'Fill in the transcript with speech recognition (Qwen3-ASR)',
-  referenceFromFile: 'A clip',
-  referenceFromDataset: 'Clips from a dataset',
+  // Each engine's own reference inputs (engines/*.py reference_inputs), by '<engine>.<name>': [label, hint].
+  referenceInputs: {
+    'voxcpm.reference': ['Reference', 'Who it sounds like. Audio only.'],
+    'voxcpm.prompt': [
+      'Prompt',
+      'Speech it continues from, with its transcript: it also takes on its pace, tone and recording. With the base model, the same audio as the Reference clones best; with a trained voice it adds little and can carry over how the clip ends.',
+    ],
+    'dots_tts.clip': [
+      'Reference clip',
+      'Its speaker embedding sets the voice; with its transcript the model also continues from it.',
+    ],
+    'gpt_sovits.prompt': [
+      'Prompt clip',
+      "3–10 s with its transcript: the GPT continues from it (pace, tone). Without a transcript only its timbre is used (not with v4). None: the voice's own reference.",
+    ],
+    'gpt_sovits.timbre': [
+      'Timbre clips',
+      "Clips of the voice (3–10 s each) whose timbre SoVITS averages. None: the prompt clip's timbre.",
+    ],
+  } as Record<string, [string, string]>,
+  sourceNone: 'None',
+  sourceFile: 'Upload',
+  sourceDataset: 'Dataset clips',
+  sourceSame: (label: string) => `Same as ${label}`,
+  needsTranscript: (label: string) => `${label}: add its transcript`,
   otherClips: 'Other clips',
   removeReferenceClip: 'Remove this clip',
   referenceClipsHint: (count: number, seconds: number) =>
-    `${count} ${count === 1 ? 'clip' : 'clips'}, ${seconds.toFixed(0)} s, used together with their transcripts: several clips clone a voice better than one`,
+    `${count} ${count === 1 ? 'clip' : 'clips'}, ${seconds.toFixed(0)} s`,
   advanced: 'Advanced',
   // Synthesis settings by the engine's param name (engines/*.py); unknown names show as they are.
   paramLabels: {

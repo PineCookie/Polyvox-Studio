@@ -324,6 +324,29 @@ input[type='file']::file-selector-button {
   gap: 8px;
 }
 
+/* One of an engine's reference inputs: its name and source, then the audio. */
+.reference-input {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reference-input + .reference-input {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--muted) 25%, transparent);
+}
+
+.reference-input-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+}
+
+.reference-input .hint {
+  margin: 0;
+}
+
 /* Reference clips from a dataset: player, transcript, remove. */
 .reference-clips {
   display: grid;

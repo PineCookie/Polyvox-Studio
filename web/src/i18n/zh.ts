@@ -76,12 +76,27 @@ export const zh: Messages = {
   transcribe: '识别',
   transcribing: '识别中…',
   transcribeTitle: '用语音识别（Qwen3-ASR）填写文本',
-  referenceFromFile: '一段音频',
-  referenceFromDataset: '数据集中的多段音频',
+  referenceInputs: {
+    'voxcpm.reference': ['参考', '决定听起来像谁。只用音频，不需要文本。'],
+    'voxcpm.prompt': [
+      '提示',
+      '模型接着说下去的语音，需附文本：也会沿用它的语速、语气和录音条件。用底模时与「参考」用同一段音频克隆得最像；用训练好的音色时作用不大，还可能沿用片段结尾的方式。',
+    ],
+    'dots_tts.clip': ['参考音频', '由其说话人特征决定音色；附上文本时模型还会接着它说下去。'],
+    'gpt_sovits.prompt': [
+      '提示音频',
+      '3–10 秒并附文本：GPT 接着它说下去（语速、语气）。不附文本时只用其音色（v4 不支持）。不选：使用音色自带的参考音频。',
+    ],
+    'gpt_sovits.timbre': ['音色音频', 'SoVITS 取这几段音频（每段 3–10 秒）的平均音色。不选：使用提示音频的音色。'],
+  },
+  sourceNone: '不用',
+  sourceFile: '上传',
+  sourceDataset: '数据集音频',
+  sourceSame: (label) => `同「${label}」`,
+  needsTranscript: (label) => `${label}：请填写文本`,
   otherClips: '换一批',
   removeReferenceClip: '移除这段',
-  referenceClipsHint: (count, seconds) =>
-    `${count} 段，共 ${seconds.toFixed(0)} 秒，连同文本一起使用：多段音频比一段克隆得更像`,
+  referenceClipsHint: (count, seconds) => `${count} 段，共 ${seconds.toFixed(0)} 秒`,
   advanced: '高级',
   paramLabels: {
     cfg_value: '引导强度',

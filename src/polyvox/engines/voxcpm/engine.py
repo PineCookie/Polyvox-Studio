@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from ...config import Settings
 from ...data import manifests
-from ..base import Capabilities, Engine, Param, SynthesisRequest, SynthesisResult
+from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from .inference import InferenceService
 from .inference import SynthesisRequest as VoxRequest
 
@@ -86,6 +86,13 @@ class VoxCPMEngine(Engine):
         style=True,
         tags=True,
         lora_hot_swap=True,
+        reference_inputs=(
+            # reference_wav_path: who it sounds like.
+            ReferenceInput("reference", "reference", "none"),
+            # prompt_wav_path + prompt_text: speech it continues (with the base model,
+            # the reference's own audio here too clones best).
+            ReferenceInput("prompt", "prompt", "required", same_as="reference"),
+        ),
     )
     params = (
         Param("cfg_value", "float", 2.0, 0.5, 5.0, 0.1),
@@ -126,6 +133,7 @@ class VoxCPMEngine(Engine):
                 lora_id=req.lora_id,
                 reference_wav=req.reference_wav,
                 prompt_text=req.prompt_text,
+                prompt_wav=req.prompt_wav,
                 seed=req.seed,
                 **options,
             )
