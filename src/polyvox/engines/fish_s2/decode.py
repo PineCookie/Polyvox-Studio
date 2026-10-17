@@ -9,22 +9,78 @@ over the first ``window`` cache positions (masked past the frame's own), so
 short texts don't pay for the whole cache; decoding moves to the next window
 when it fills one. Samples the same as generate.generate given the same random
 numbers (only the order the random numbers are drawn in differs).
+
+A layer is its linear layers (module calls, so a training run's LoRA hooks
+apply) and the small steps between them (Parts: norms, heads, attention,
+residuals), which ``fused`` compiles with torch.compile: one compiled function
+per step serves every layer.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 
 from .generate import DEFAULT_SAMPLING, RAS_TOP_P, RAS_WINDOW, Sampling
-from .model import DualAR, rotate
+from .model import DualAR, Shape, rms_norm, rotate
 
 CAPACITY = 4096  # positions: a 20 s reference, the text, the previous part and 1024 new frames
 WINDOWS = (512, 1024, 2048)
+
+
+@dataclass(frozen=True)
+class Parts:
+    """The steps between a layer's linear layers, for one position."""
+
+    norm: Callable  # (x, weight) -> normalized x
+    heads: Callable  # (qkv, q_norm, k_norm, table) -> q, k, v [1, heads, 1, head_dim]
+    attend: Callable  # (q, cache_k, cache_v, mask [window]) -> [1, 1, heads * head_dim]
+    residual: Callable  # (x, y, weight) -> x + y and it normalized
+    gate: Callable  # (a, b) -> silu(a) * b
+
+    @staticmethod
+    def of(s: Shape, plain: bool, fused: bool) -> Parts:
+        """``plain``: attention in bfloat16 as the fast transformer was trained;
+        else scores and softmax in float32."""
+        q_size, kv_size, scale = s.heads * s.head_dim, s.kv_heads * s.head_dim, 1 / math.sqrt(s.head_dim)
+
+        def norm(x, weight):
+            return rms_norm(x, weight, s.eps)
+
+        def heads(qkv, q_norm, k_norm, table):
+            q, k, v = qkv.split([q_size, kv_size, kv_size], -1)
+            q, k = q.view(1, 1, s.heads, s.head_dim), k.view(1, 1, s.kv_heads, s.head_dim)
+            if s.qk_norm:
+                q, k = F.rms_norm(q, (s.head_dim,), q_norm, s.eps), F.rms_norm(k, (s.head_dim,), k_norm, s.eps)
+            v = v.view(1, 1, s.kv_heads, s.head_dim)
+            return rotate(q, table).transpose(1, 2), rotate(k, table).transpose(1, 2), v.transpose(1, 2)
+
+        def attend(q, cache_k, cache_v, mask):
+            grouped = q.view(s.kv_heads, s.heads // s.kv_heads, s.head_dim)  # query head h reads kv head h // groups
+            keys = cache_k[0].transpose(1, 2)
+            if plain or q.dtype == torch.float32:
+                scores = torch.bmm(grouped, keys) * scale
+            else:
+                scores = torch.bmm(grouped, keys, out_dtype=torch.float32) * scale
+            weights = scores.masked_fill(~mask, float("-inf")).softmax(-1)
+            return torch.bmm(weights.to(cache_v.dtype), cache_v[0]).view(1, 1, q_size)
+
+        def residual(x, y, weight):
+            x = x + y
+            return x, rms_norm(x, weight, s.eps)
+
+        def gate(a, b):
+            return F.silu(a) * b
+
+        steps = (norm, heads, attend, residual, gate)
+        if fused:
+            steps = tuple(torch.compile(f, dynamic=False, fullgraph=True) for f in steps)
+        return Parts(*steps)
 
 
 def pick(logits: Tensor, temperature: Tensor, top_p: Tensor, top_k: Tensor) -> Tensor:
@@ -39,9 +95,10 @@ def pick(logits: Tensor, temperature: Tensor, top_p: Tensor, top_k: Tensor) -> T
 
 
 class Decoder:
-    def __init__(self, model: DualAR, end_token: int, graphs: bool = True):
+    def __init__(self, model: DualAR, end_token: int, graphs: bool = True, fused: bool = False):
         c = model.config
-        self.model, self.config, self.end_token, self.graphs = model, c, end_token, graphs
+        self.model, self.config, self.end_token, self.graphs, self.fused = model, c, end_token, graphs, fused
+        self.slow_parts, self.fast_parts = Parts.of(c.slow, False, fused), Parts.of(c.fast, True, fused)
         weight = model.embeddings.weight
         dev = self.device = weight.device
         model.allocate(CAPACITY)
@@ -53,6 +110,8 @@ class Decoder:
         self.head = weight[self.allowed].contiguous()  # [allowed, dim]
         self.offsets = torch.arange(c.codebooks, device=dev) * c.codebook_size
         self.positions = torch.arange(CAPACITY, device=dev)
+        # The fast transformer's position i attends to positions 0..i of its cache.
+        self.fast_masks = [self.positions[: c.codebooks] <= i for i in range(c.codebooks)]
 
         def scalar(value, dtype=torch.long):
             return torch.tensor(value, dtype=dtype, device=dev)
@@ -76,25 +135,40 @@ class Decoder:
         x = (m.embeddings(tokens[:1]) + m.codebook_embeddings(tokens[1:] + self.offsets).sum(0)) / math.sqrt(
             c.codebooks + 1
         )
-        x = x.view(1, 1, -1)
         index = self.pos.view(1)
         table = m.slow_table.index_select(0, index)
-        mask = (self.positions[:window] <= self.pos).view(1, 1, 1, window)
-        s = c.slow
-        for layer in m.layers:
-            a = layer.attention
-            h = layer.attention_norm(x)
-            q, k, v = a.wqkv(h).split([s.heads * s.head_dim, s.kv_heads * s.head_dim, s.kv_heads * s.head_dim], -1)
-            q = a.q_norm(q.view(1, 1, s.heads, s.head_dim))
-            k = a.k_norm(k.view(1, 1, s.kv_heads, s.head_dim))
-            q, k = rotate(q, table).transpose(1, 2), rotate(k, table).transpose(1, 2)
+        mask = self.positions[:window] <= self.pos
+        return self._layers(self.slow_parts, m.layers, m.norm, x.view(1, 1, -1), table, mask, window, index)[0, 0]
+
+    def _layers(self, p: Parts, layers, final_norm, x, table, mask, window, index, last_kv_only=False) -> Tensor:
+        """x [1, 1, dim] through ``layers`` (its keys / values written at ``index``), normalized
+        by ``final_norm``; ``last_kv_only``: the last layer only writes its cache (returns None)."""
+        h = p.norm(x, layers[0].attention_norm.weight)
+        for i, layer in enumerate(layers):
+            a, ff = layer.attention, layer.feed_forward
+            q_norm = a.q_norm.weight if hasattr(a, "q_norm") else None
+            k_norm = a.k_norm.weight if hasattr(a, "k_norm") else None
+            q, k, v = p.heads(a.wqkv(h), q_norm, k_norm, table)
             ck, cv = a.cache
             ck.index_copy_(2, index, k)
-            cv.index_copy_(2, index, v.view(1, 1, s.kv_heads, s.head_dim).transpose(1, 2))
-            y = F.scaled_dot_product_attention(q, ck[:, :, :window], cv[:, :, :window], attn_mask=mask, enable_gqa=True)
-            x = x + a.wo(y.transpose(1, 2).reshape(1, 1, -1))
-            x = x + layer.feed_forward(layer.ffn_norm(x))
-        return m.norm(x)[0, 0]
+            cv.index_copy_(2, index, v)
+            if last_kv_only and i == len(layers) - 1:
+                return None
+            x, h = p.residual(x, a.wo(p.attend(q, ck[:, :, :window], cv[:, :, :window], mask)), layer.ffn_norm.weight)
+            after = layers[i + 1].attention_norm.weight if i + 1 < len(layers) else final_norm.weight
+            x, h = p.residual(x, ff.w2(p.gate(ff.w1(h), ff.w3(h))), after)
+        return h
+
+    def _fast(self, x: Tensor, position: int, logits: bool = True) -> Tensor | None:
+        """As DualAR.fast; ``logits=False`` (position 0, whose output nobody reads): only its cache."""
+        m, c = self.model, self.config
+        table = m.fast_table[position : position + 1]
+        index = self.positions[position : position + 1]
+        h = self._layers(
+            self.fast_parts, m.fast_layers, m.fast_norm, x.view(1, 1, -1), table,
+            self.fast_masks[position], c.codebooks, index, last_kv_only=not logits,
+        )  # fmt: skip
+        return None if h is None else m.fast_output(h)[0, 0]
 
     def _frame(self, hidden: Tensor, guard: bool) -> None:
         """Sample the next frame from the slow hidden state into ``frame``."""
@@ -111,10 +185,10 @@ class Decoder:
             self.recent.copy_(torch.cat([self.recent[1:], token.view(1)]))
         code = (token - c.semantic_begin).clamp(0, c.codebook_size - 1)
         codes = [code]
-        m.fast(hidden, 0)
+        self._fast(hidden, 0, logits=False)
         for position in range(1, c.codebooks):
             x = m.fast_embeddings.weight.index_select(0, code.view(1))[0]
-            code = pick(m.fast(x, position).float(), self.temperature, self.top_p, self.top_k)
+            code = pick(self._fast(x, position).float(), self.temperature, self.top_p, self.top_k)
             codes.append(code)
         self.frame.copy_(torch.stack([token, *codes]))
 
@@ -123,6 +197,11 @@ class Decoder:
         self.pos.add_(1)
 
     # ------------------------------------------------------------ graphs
+    @property
+    def warm(self) -> bool:
+        """False until the first fused step is compiled (it waits for torch.compile)."""
+        return not self.fused or bool(self._graphs)
+
     def _run(self, window: int) -> None:
         if not self.graphs:
             self._step(window)

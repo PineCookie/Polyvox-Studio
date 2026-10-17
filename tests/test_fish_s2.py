@@ -83,6 +83,12 @@ def test_the_frame_decoder_makes_the_same_frames_as_plain_decoding():
     assert torch.equal(plain, framed)
     assert ((plain >= 0) & (plain < 32)).all()
 
+    # The linear layers stay module calls: hooks (a training run's LoRA) apply to both.
+    m.fast_layers[0].feed_forward.w2.register_forward_hook(lambda mod, args, out: out * 3)
+    hooked = generate.generate(m, rows, END, greedy, max_frames=20)
+    assert not torch.equal(hooked, plain)
+    assert torch.equal(decode.Decoder(m, END, graphs=False).generate(rows, greedy, max_frames=20), hooked)
+
 
 def test_the_engine_needs_its_model_and_a_transcript(settings):
     engine = FishS2Engine(settings)

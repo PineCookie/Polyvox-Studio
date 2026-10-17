@@ -49,7 +49,7 @@ _SENTENCE_END = re.compile(r"(?<=[。！？!?；;…\n])|(?<=\.)\s")
 
 @dataclass
 class Progress:
-    phase: str = "idle"  # idle | loading | preparing | generating
+    phase: str = "idle"  # idle | loading | preparing | compiling | generating
     step: int = 0  # audio frames so far (~21.5 per second of audio)
     expected: int | None = None
     attempt: int = 0
@@ -83,8 +83,9 @@ class Runtime:
         self.codec = codec.load(model_dir / "codec.pth", device)
         self.tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
         self.end_token = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
-        # One CUDA graph per frame (~1.6x faster than eager; graphs=False: the same steps eagerly).
-        self.decoder = decode.Decoder(self.model, self.end_token, graphs=graphs)
+        # One CUDA graph per frame (~1.6x faster than eager; graphs=False: the same steps eagerly),
+        # the small steps between its linear layers fused by torch.compile (~1.2x more).
+        self.decoder = decode.Decoder(self.model, self.end_token, graphs=graphs, fused=graphs)
         self.device = device
         self.merger = s2lora.Merger(self.model)
         self.lora: tuple[str, float] | None = None  # (id, weights mtime) merged into the weights
@@ -102,6 +103,22 @@ class Runtime:
         mono = torch.from_numpy(np.asarray(audio.mean(axis=0) if audio.ndim == 2 else audio, dtype=np.float32))
         mono = torchaudio.functional.resample(mono.to(self.device), rate, self.codec.sample_rate)
         return self.codec.encode(with_noise_floor(mono) if noise_floor else mono).cpu()
+
+    def generate(self, tokens, sampling, max_frames: int, on_frame):
+        """decoder.generate; if fusing its steps fails (torch.compile: no working
+        Triton, say), the rest of the process decodes unfused."""
+        import torch
+
+        from . import decode
+
+        try:
+            return self.decoder.generate(tokens, sampling, max_frames, on_frame)
+        except Exception as e:
+            if not self.decoder.fused or isinstance(e, torch.OutOfMemoryError):
+                raise
+            logger.warning("S2-Pro: fusing the decoding steps failed (%s); decoding unfused", e)
+            self.decoder = decode.Decoder(self.model, self.end_token, graphs=self.decoder.graphs)
+            return self.decoder.generate(tokens, sampling, max_frames, on_frame)
 
     def use_lora(self, ckpt: lora_library.LoraCheckpoint | None) -> None:
         """Merge the checkpoint's LoRA into the weights (None: the base model's)."""
@@ -260,11 +277,12 @@ class FishS2Engine(Engine):
                 torch.manual_seed(seed)
                 chars = sum(len(re.sub(r"\W", "", p)) for p in parts)
                 self._progress.expected = max(MIN_FRAMES, round(chars * self._frames_per_char))
-                self._progress.phase = "generating"
+                # The first frames of a process wait for torch.compile (until the first frame).
+                self._progress.phase = "generating" if rt.decoder.warm else "compiling"
                 history: list[tuple[str, torch.Tensor]] = []
                 for part in parts:
                     tokens = prompt.build(rt.tokenizer, c.codebooks, c.semantic_begin, part, reference, history[-1:])
-                    codes = rt.decoder.generate(tokens, sampling, MAX_FRAMES, self._count)
+                    codes = rt.generate(tokens, sampling, MAX_FRAMES, self._count)
                     history.append((part, codes))
                 codes = torch.cat([h[1] for h in history], 1)
                 if codes.shape[1] == 0:
@@ -277,6 +295,7 @@ class FishS2Engine(Engine):
                 self._progress.phase = "idle"
 
     def _count(self) -> None:
+        self._progress.phase = "generating"
         self._progress.step += 1
 
     def _ensure_runtime(self) -> Runtime:
