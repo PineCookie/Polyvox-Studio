@@ -56,12 +56,29 @@ export const en = {
   synthesize: 'Synthesize',
   text: 'Text',
   textPlaceholder: 'What should the voice say?',
-  tagGroup: 'Insert a non-verbal tag',
-  tagNames: { laugh: 'laugh', sigh: 'sigh', uhm: 'uhm', shh: 'shh' } as Record<string, string>,
-  insertTag: (tag: string) => `Insert ${tag}`,
-  moreTags: 'More…',
-  moreTagsLabel: 'More tags',
-  tagsHint: 'VoxCPM2 tags; use sparingly',
+  tagGroup: 'Insert an inline tag',
+  tags: 'Tags',
+  tagGroups: {
+    sounds: 'Sounds',
+    reactions: 'Reactions',
+    emotion: 'Emotion',
+    delivery: 'Delivery',
+    pacing: 'Pauses',
+  } as Record<string, string>,
+  // Chip labels by tag (without brackets); others show as written.
+  tagNames: {} as Record<string, string>,
+  insertTag: (tag: string) => `Insert ${tag} at the cursor`,
+  customTag: 'Custom…',
+  customTagPlaceholder: 'Any description, e.g. speaking slowly, almost hesitant',
+  insert: 'Insert',
+  // How an engine's tags act, by engine id.
+  tagHints: {
+    voxcpm: 'A tag is a sound at that point. Use them sparingly; other bracketed words are read out.',
+    fish_s2:
+      'A tag acts on the words after it, until the next tag or the end of the sentence. Any description works; start with one or two.',
+  } as Record<string, string>,
+  unknownTags: (engine: string, tags: string, count: number) =>
+    `${engine} doesn't know ${tags}: it would read ${count === 1 ? 'it' : 'them'} out as words.`,
   style: 'Style',
   optional: 'optional',
   stylePlaceholder: 'e.g. a calm, warm female voice, speaking slowly',

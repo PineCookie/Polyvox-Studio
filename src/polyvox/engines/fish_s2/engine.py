@@ -25,7 +25,7 @@ import numpy as np
 
 from ... import vram
 from ...config import Settings
-from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
+from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 
 if TYPE_CHECKING:
     from ...training import TrainParams
@@ -105,7 +105,43 @@ class FishS2Engine(Engine):
         reference_audio=True,
         reference_transcript=True,
         style=False,
-        tags=False,
+        tags=True,
+        # Fish Audio's well-tested tags; any [natural-language description] works too. A tag
+        # acts on the words after it, until the next tag or the end of the sentence.
+        tag_groups=(
+            TagGroup("emotion", ("[excited]", "[delight]", "[surprised]", "[shocked]", "[sad]", "[angry]")),
+            TagGroup(
+                "sounds",
+                (
+                    "[laughing]",
+                    "[chuckling]",
+                    "[giggle]",
+                    "[sigh]",
+                    "[inhale]",
+                    "[exhale]",
+                    "[gasp]",
+                    "[panting]",
+                    "[clearing throat]",
+                    "[sobbing]",
+                    "[crying]",
+                ),
+            ),
+            TagGroup(
+                "delivery",
+                (
+                    "[whisper]",
+                    "[soft voice]",
+                    "[low voice]",
+                    "[loud voice]",
+                    "[shouting]",
+                    "[screaming]",
+                    "[emphasis]",
+                    "[singing]",
+                ),
+            ),
+            TagGroup("pacing", ("[short pause]", "[pause]", "[long pause]")),
+        ),
+        free_tags=True,
         lora_hot_swap=False,
         training=False,
         # A clip with its transcript (several are joined into one).

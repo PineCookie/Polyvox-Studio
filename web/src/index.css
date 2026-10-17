@@ -376,19 +376,119 @@ input[type='file']::file-selector-button {
 }
 
 /* Non-verbal tag buttons under the text box. */
-.tag-row {
+/* The text box with its inline tags marked: a backdrop with the same text under a
+   transparent textarea (both wrap alike: same font, padding, border and gutter). */
+.tagged-text {
+  position: relative;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  transition: background 0.15s;
+}
+
+.tagged-text:focus-within {
+  background: var(--surface);
+}
+
+.tagged-backdrop,
+.tagged-text textarea {
+  font: inherit;
+  line-height: 1.55;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  scrollbar-gutter: stable;
+}
+
+.tagged-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+}
+
+.tagged-text textarea {
+  position: relative;
+  display: block;
+  background: transparent;
+}
+
+.tagged-text textarea:focus {
+  background: transparent;
+}
+
+.tagged-backdrop mark {
+  color: transparent;
+  background: var(--accent-soft);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.tagged-backdrop mark.unknown {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent);
+}
+
+/* An engine's inline tags: groups, the open group's tags, a custom tag, how they act. */
+.tag-bar {
+  display: grid;
+  gap: 6px;
+  margin-top: -6px;
+  min-width: 0;
+}
+
+.tag-groups {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: -6px;
+  font-size: 0.82rem;
 }
 
-.tag-row select {
-  flex: 0 0 auto;
-  width: 11em;
-  padding: 2px 6px;
-  font-size: 0.82rem;
+.tag-group {
+  padding: 2px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.tag-group.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chips .chip {
+  cursor: pointer;
+}
+
+.tag-chips .chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tag-bar .hint {
+  margin: 0;
+}
+
+.tag-bar .file-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.tag-bar .file-row button {
+  white-space: nowrap;
 }
 
 /* FilePicker: our own button (the native input shows the browser's language); takes drops. */

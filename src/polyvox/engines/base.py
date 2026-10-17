@@ -63,6 +63,14 @@ class ReferenceInput:
 
 
 @dataclass(frozen=True)
+class TagGroup:
+    """Inline tags of one kind, as the engine's model knows them (inserted as written)."""
+
+    name: str  # sounds | reactions | emotion | delivery | pacing (the UI's label)
+    tags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Capabilities:
     sample_rate: int  # of the audio it outputs
     training_rate: int  # training audio is heard at this rate
@@ -80,6 +88,9 @@ class Capabilities:
     full_finetune: bool = False
     # The audio inputs its cloning takes (each engine its own).
     reference_inputs: tuple[ReferenceInput, ...] = ()
+    # Inline tags (``tags``): the ones its model knows, and whether any [description] works.
+    tag_groups: tuple[TagGroup, ...] = ()
+    free_tags: bool = False
 
     def reference_input(self, slot: str) -> ReferenceInput | None:
         return next((i for i in self.reference_inputs if i.slot == slot), None)

@@ -8,7 +8,7 @@ synthesis settings and training worker.
 from __future__ import annotations
 
 from ..config import Settings
-from .base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
+from .base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 
 DEFAULT = "voxcpm"  # runs and checkpoints that record no engine
 
@@ -20,6 +20,7 @@ __all__ = [
     "ReferenceInput",
     "SynthesisRequest",
     "SynthesisResult",
+    "TagGroup",
     "classes",
     "create",
 ]

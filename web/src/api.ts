@@ -53,6 +53,11 @@ export interface ReferenceInput {
   same_as: string | null // may reuse this other input's audio
 }
 
+export interface TagGroup {
+  name: string // sounds | reactions | emotion | delivery | pacing (labels: t.tagGroups)
+  tags: string[] // inserted as written, e.g. "[laughing]"
+}
+
 export interface Engine {
   id: string
   name: string
@@ -70,6 +75,8 @@ export interface Engine {
     training: boolean // New run offers it
     full_finetune: boolean // trains every weight: no LoRA rank or optimizer choice
     reference_inputs: ReferenceInput[] // the audio inputs its cloning takes
+    tag_groups: TagGroup[] // inline tags its model knows (with capabilities.tags)
+    free_tags: boolean // any [description] works too
   }
   params: EngineParam[] // synthesis settings
   model_setting: string // its base model in the Models list

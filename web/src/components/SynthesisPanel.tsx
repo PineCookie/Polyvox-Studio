@@ -7,26 +7,12 @@ import { formatDuration } from '../format'
 import { useT } from '../i18n'
 import { emptyInput, inputAudio, lacksTranscript } from '../referenceInputs'
 import type { InputState } from '../referenceInputs'
+import { unknownTags } from '../tags'
 import { ReferenceInputField } from './ReferenceInputField'
 import { ProgressBar } from './RunList'
+import { TagBar } from './TagBar'
+import { TaggedText } from './TaggedText'
 
-// VoxCPM2's non-verbal tags, as its cookbook spells them ([laughing], not
-// [Laughter]); best used sparingly, not several in one sentence.
-const TAGS: [string, string][] = [
-  ['[laughing]', 'laugh'],
-  ['[sigh]', 'sigh'],
-  ['[Uhm]', 'uhm'],
-  ['[Shh]', 'shh'],
-] // [tag, its name in t.tagNames]
-const MORE_TAGS = [
-  '[Question-ah]',
-  '[Question-ei]',
-  '[Question-en]',
-  '[Question-oh]',
-  '[Surprise-wa]',
-  '[Surprise-yo]',
-  '[Dissatisfaction-hnn]',
-]
 const POLL_MS = 400
 
 /** Phase and an estimated share of the generation, polled while it runs. */
@@ -174,6 +160,8 @@ export function SynthesisPanel({
     onGenerate({ text, control: caps?.style ? control : '', references, options, seed })
   }
 
+  const unknown = unknownTags(text, engine)
+
   function onKeyDown(e: KeyboardEvent) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit()
   }
@@ -198,44 +186,19 @@ export function SynthesisPanel({
 
       <label className="field">
         <span>{t.text}</span>
-        <textarea
+        <TaggedText
           ref={textArea}
-          rows={5}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={setText}
           placeholder={t.textPlaceholder}
+          unknown={unknown}
           autoFocus
         />
       </label>
-      {caps?.tags && (
-        <div className="tag-row" role="group" aria-label={t.tagGroup}>
-          {TAGS.map(([tag, label]) => (
-            <button
-              key={tag}
-              type="button"
-              className="ghost small"
-              onClick={() => insertTag(tag)}
-              title={t.insertTag(tag)}
-            >
-              {t.tagNames[label]}
-            </button>
-          ))}
-          <select
-            value=""
-            onChange={(e) => e.target.value && insertTag(e.target.value)}
-            aria-label={t.moreTagsLabel}
-            className="small"
-          >
-            <option value="">{t.moreTags}</option>
-            {MORE_TAGS.map((tag) => (
-              <option key={tag} value={tag}>
-                {tag}
-              </option>
-            ))}
-          </select>
-          <span className="muted hint">{t.tagsHint}</span>
-        </div>
+      {unknown.length > 0 && (
+        <p className="field-error hint">{t.unknownTags(engine!.name, unknown.join(' '), unknown.length)}</p>
       )}
+      {caps?.tags && engine && <TagBar key={engine.id} engine={engine} onInsert={insertTag} />}
 
       {caps?.style && (
         <label className="field">

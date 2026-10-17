@@ -87,5 +87,7 @@ def test_the_engine_needs_its_model_and_a_transcript(settings):
     engine = FishS2Engine(settings)
     assert "download" in engine.unavailable()
     assert engine.capabilities.reference_inputs[0].transcript == "required" and not engine.capabilities.training
+    caps = engine.capabilities
+    assert caps.tags and caps.free_tags and all(t.startswith("[") for g in caps.tag_groups for t in g.tags)
     with pytest.raises(ValueError):
         engine.training_config(None, None, None, None)

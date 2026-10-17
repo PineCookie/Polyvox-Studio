@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from ...config import Settings
 from ...data import manifests
-from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
+from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 from .inference import InferenceService
 from .inference import SynthesisRequest as VoxRequest
 
@@ -85,6 +85,23 @@ class VoxCPMEngine(Engine):
         reference_transcript=True,
         style=True,
         tags=True,
+        # As VoxCPM2's cookbook spells them ([laughing], not [Laughter]): a sound at that point;
+        # sparingly, not several in one sentence. Other bracketed words are read out.
+        tag_groups=(
+            TagGroup("sounds", ("[laughing]", "[sigh]", "[Uhm]", "[Shh]")),
+            TagGroup(
+                "reactions",
+                (
+                    "[Question-ah]",
+                    "[Question-ei]",
+                    "[Question-en]",
+                    "[Question-oh]",
+                    "[Surprise-wa]",
+                    "[Surprise-yo]",
+                    "[Dissatisfaction-hnn]",
+                ),
+            ),
+        ),
         lora_hot_swap=True,
         reference_inputs=(
             # reference_wav_path: who it sounds like.
