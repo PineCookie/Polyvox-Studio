@@ -89,7 +89,7 @@ interface Props {
   onError: (message: string) => void
   // Called after a transcription (it loads the ASR model).
   onTranscribed: () => void
-  // Transcript of the chosen voice's own reference clip (GPT-SoVITS voices); null: it has none.
+  // Transcript of the chosen voice's own reference clip (GPT-SoVITS, S2-Pro voices); null: it has none.
   voiceReference: string | null
   // The base model is chosen (no voice): settings only it uses show.
   isBase: boolean
@@ -214,14 +214,14 @@ export function SynthesisPanel({
           <legend>
             {t.referenceAudio}{' '}
             <span className="muted">
-              {!caps?.reference_required
-                ? t.referenceOptional
-                : voiceReference !== null
-                  ? t.referenceVoiceDefault
-                  : t.referenceRequired}
+              {caps?.voice_reference && voiceReference !== null
+                ? t.referenceVoiceDefault
+                : caps?.reference_required
+                  ? t.referenceRequired
+                  : t.referenceOptional}
             </span>
           </legend>
-          {caps?.reference_required && !references.prompt && voiceReference !== null && (
+          {caps?.voice_reference && !references.prompt && voiceReference !== null && (
             <p className="muted hint">{t.usesVoiceReference(voiceReference)}</p>
           )}
           {inputs.map((i) => (

@@ -10,12 +10,19 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from .. import lora_library, sharing
-from ..data import manifests
+from .. import engines, lora_library, sharing
+from ..data import manifests, references
+from ..engines.fish_s2 import lora as s2lora
 from ..engines.gpt_sovits import voices
 from ..prep import importer
 from .context import Studio, checked, found, save_upload
 from .schemas import GptSovitsImportIn, LoraConfigOut, LoraOut
+
+
+def keeps_reference(engine: str) -> bool:
+    """Whether the engine's voices keep a default reference clip."""
+    cls = engines.classes().get(engine)
+    return bool(cls and cls.capabilities.voice_reference)
 
 
 def router(s: Studio) -> APIRouter:
@@ -23,7 +30,7 @@ def router(s: Studio) -> APIRouter:
     settings = s.settings
 
     def reference_text(ckpt: lora_library.LoraCheckpoint) -> str | None:
-        ref = voices.read_reference(ckpt.path) if ckpt.engine == voices.ENGINE else None
+        ref = voices.read_reference(ckpt.path) if keeps_reference(ckpt.engine) else None
         return ref[1] if ref else None
 
     @api.get("/api/loras")
@@ -67,11 +74,11 @@ def router(s: Studio) -> APIRouter:
         finally:
             path.unlink(missing_ok=True)
 
-    def voice_dir(id: str) -> Path:
+    def voice_ckpt(id: str) -> lora_library.LoraCheckpoint:
         ckpt = found(lora_library.resolve, settings.lora_dir, id)
-        if ckpt.engine != voices.ENGINE:
-            raise HTTPException(422, "Only GPT-SoVITS voices keep a reference clip.")
-        return ckpt.path
+        if not keeps_reference(ckpt.engine):
+            raise HTTPException(422, "This voice keeps no reference clip.")
+        return ckpt
 
     def dataset_reference(dataset: str) -> tuple[Path, str]:
         manifest = found(manifests.resolve, settings.data_dir, dataset)
@@ -103,8 +110,8 @@ def router(s: Studio) -> APIRouter:
 
     @api.get("/api/loras/reference")
     def voice_reference(id: str) -> FileResponse:
-        """A GPT-SoVITS voice's default reference clip."""
-        ref = voices.read_reference(voice_dir(id))
+        """A voice's default reference clip (GPT-SoVITS, S2-Pro)."""
+        ref = voices.read_reference(voice_ckpt(id).path)
         if ref is None:
             raise HTTPException(404, "This voice has no reference clip.")
         return FileResponse(ref[0], media_type="audio/wav")
@@ -113,19 +120,27 @@ def router(s: Studio) -> APIRouter:
     def set_voice_reference(
         id: Annotated[str, Form()],
         text: Annotated[str, Form()] = "",
-        # Pick the best clip of this dataset (manifest id) instead of an uploaded one.
+        # Pick from this dataset (manifest id) instead of an uploaded clip.
         dataset: Annotated[str | None, Form()] = None,
         audio: Annotated[UploadFile | None, File()] = None,
     ) -> LoraOut:
-        """Change a GPT-SoVITS voice's default reference clip."""
-        folder = voice_dir(id)
+        """Change a voice's default reference clip: GPT-SoVITS takes the dataset's best
+        clip (3-10 s), S2-Pro its best few joined (as training picked them)."""
+        ckpt = voice_ckpt(id)
+        folder, s2 = ckpt.path, ckpt.engine == s2lora.ENGINE
         if dataset:
-            clip, transcript = dataset_reference(dataset)
-            checked(voices.write_reference, folder, clip, transcript, f"dataset {dataset}")
+            if s2:
+                manifest = found(manifests.resolve, settings.data_dir, dataset)
+                root = manifests.legacy_root(settings.data_dir)
+                picked = checked(references.pick, manifest, s2lora.REFERENCE_CLIPS, root)
+                checked(s2lora.write_reference_clips, folder, picked, f"dataset {dataset}")
+            else:
+                clip, transcript = dataset_reference(dataset)
+                checked(voices.write_reference, folder, clip, transcript, f"dataset {dataset}")
         elif audio is not None:
             path = save_upload(audio)
-            try:
-                checked(voices.write_reference, folder, path, text, "upload")  # any format audio_io reads
+            try:  # any format audio_io reads
+                checked(s2lora.write_reference_file if s2 else voices.write_reference, folder, path, text, "upload")
             finally:
                 path.unlink(missing_ok=True)
         else:

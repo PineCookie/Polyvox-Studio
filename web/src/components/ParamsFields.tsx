@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useT } from '../i18n'
 import { DEFAULT_ENGINE, OPTIMIZERS, type Engine, type Optimizer } from '../api'
-import { OPTIMIZER_LR, type Params } from '../trainParams'
+import { optimizerLr, type Params } from '../trainParams'
 
 type NumericKey = { [K in keyof Params]: Params[K] extends number ? K : never }[keyof Params]
 type FlagKey = 'enable_lm' | 'enable_dit' | 'enable_proj'
@@ -40,6 +40,9 @@ export function ParamsFields({
   const t = useT()
   const readOnly = !onChange
   const voxcpm = params.engine === DEFAULT_ENGINE // token budget and projections are VoxCPM's
+  // Which networks get LoRA, and data loader workers: VoxCPM's and dots.tts's (S2-Pro trains its fast transformer).
+  const layerChoice = voxcpm || params.engine === 'dots_tts'
+  const slow = params.engine === 'fish_s2' && params.s2_slow
   const lora = !fullFinetune
   const showEngine = engines.length > 1 || !voxcpm
   const engineOptions = engines.some((e) => e.id === params.engine)
@@ -118,11 +121,12 @@ export function ParamsFields({
               onChange={(e) => {
                 const optimizer = e.target.value as Optimizer
                 onChange?.('optimizer', optimizer)
-                onChange?.('learning_rate', OPTIMIZER_LR[optimizer])
+                onChange?.('learning_rate', optimizerLr(params.engine, optimizer))
               }}
             >
               {OPTIMIZERS.map((o) => (
-                <option key={o} value={o}>
+                // S2-Pro's slow transformer trains with AdamW only (see s2SlowHint).
+                <option key={o} value={o} disabled={slow && o !== 'adamw'}>
                   {t.optimizers[o]}
                 </option>
               ))}
@@ -132,8 +136,9 @@ export function ParamsFields({
         {numberField(
           'learning_rate',
           { min: 0, step: 'any' },
-          lora && params.optimizer !== 'adamw' ? t.params.lr_multiplier : undefined,
+          lora && params.optimizer !== 'adamw' ? t.params.lr_multiplier : slow ? t.params.s2_fast_lr : undefined,
         )}
+        {slow && numberField('s2_slow_lr', { min: 0, step: 'any' })}
         {!lora && numberField('batch_size', { min: 1 })}
         {!lora && numberField('gpt_batch_size', { min: 1, max: 64 })}
         {!lora && (
@@ -149,6 +154,25 @@ export function ParamsFields({
           </label>
         )}
       </div>
+      {lora && params.engine === 'fish_s2' && (
+        <div className="field">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={params.s2_slow}
+              onChange={(e) => {
+                onChange?.('s2_slow', e.target.checked)
+                if (e.target.checked && params.optimizer !== 'adamw') {
+                  onChange?.('optimizer', 'adamw')
+                  onChange?.('learning_rate', optimizerLr(params.engine, 'adamw'))
+                }
+              }}
+            />{' '}
+            {t.params.s2_slow}
+          </label>
+          <span className="muted hint">{t.s2SlowHint}</span>
+        </div>
+      )}
       {hint}
       {validation}
       {/* Read-only shows everything; a new run keeps the rarely changed ones folded. */}
@@ -169,8 +193,8 @@ export function ParamsFields({
           {lora && numberField('save_interval', { min: 1 })}
           {lora && numberField('valid_interval', { min: 1 })}
           {numberField('log_interval', { min: 1 })}
-          {lora && numberField('num_workers', { min: 0, max: 16 })}
-          {lora && (
+          {lora && layerChoice && numberField('num_workers', { min: 0, max: 16 })}
+          {lora && layerChoice && (
             <div className="toggles">
               {flag('enable_lm')}
               {flag('enable_dit')}

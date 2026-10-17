@@ -101,6 +101,10 @@ class TrainParams(BaseModel):
     gpt_epochs: int = Field(15, ge=0, le=100)
     gpt_batch_size: int = Field(8, ge=1, le=64)
     gsv_version: Literal["v2ProPlus", "v2Pro", "v4"] = "v2ProPlus"  # the base model trained from (v4: LoRA rank)
+    # S2-Pro: also a LoRA on the slow transformer's attention (experimental, never the default:
+    # engines/fish_s2/lora.py), at its own AdamW learning rate (learning_rate is the fast layers').
+    s2_slow: bool = False
+    s2_slow_lr: float = Field(2e-5, gt=0, le=1)
 
 
 class RunSummary(BaseModel):

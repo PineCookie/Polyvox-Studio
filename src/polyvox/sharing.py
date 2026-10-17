@@ -1,10 +1,11 @@
 """Shareable packages: export a checkpoint, import someone else's.
 
-A package is a zip holding one folder. For a LoRA (VoxCPM, dots.tts)::
+A package is a zip holding one folder. For a LoRA (VoxCPM, dots.tts, S2-Pro)::
 
     <name>/lora_weights.safetensors   the weights, without metadata
     <name>/lora_config.json           {"base_model": "<HF id>", "lora_config": {...}}
                                       (+ "engine" for engines other than VoxCPM)
+    <name>/reference.wav, reference.json   S2-Pro: the voice's default reference and its transcript
     <name>/README.md                  what it is and how to use it
 
 For a GPT-SoVITS voice (whole models; engines/gpt_sovits/voices.package_files)::
@@ -31,6 +32,7 @@ from pathlib import Path, PurePosixPath
 
 from .engines import DEFAULT as DEFAULT_ENGINE
 from .engines.dots import lora as dots_lora
+from .engines.fish_s2 import lora as s2_lora
 from .engines.gpt_sovits import voices as gsv_voices
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
 from .lora_library import engine_dir as engine_folder
@@ -41,7 +43,11 @@ GSV_GPT_FILE = "gpt_weights.ckpt"
 GSV_PACKAGE_FILES = ("sovits_weights.pth", GSV_GPT_FILE, "reference.wav", "reference.json")
 PACKAGE_FILES = (WEIGHTS_FILE, CONFIG_FILE, README_FILE, *GSV_PACKAGE_FILES)
 # The engines a package can be for, and the base model the export suggests.
-ENGINE_BASE_MODELS = {DEFAULT_ENGINE: "openbmb/VoxCPM2", dots_lora.ENGINE: "rednote-hilab/dots.tts-soar"}
+ENGINE_BASE_MODELS = {
+    DEFAULT_ENGINE: "openbmb/VoxCPM2",
+    dots_lora.ENGINE: "rednote-hilab/dots.tts-soar",
+    s2_lora.ENGINE: "fishaudio/s2-pro",
+}
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)  # zip's earliest date: entries carry no export time
 PACKAGE_NAME = r"^[^\W_][\w.-]{0,79}$"  # Unicode letters allowed, like run names
 HUB_ID = re.compile(r"[A-Za-z0-9][\w.-]*/[\w.-]+")
@@ -169,6 +175,46 @@ Generating without a reference clip uses the voice the LoRA learned.
 """
 
 
+def _s2_readme(name: str, base_model: str, config: dict, step: int | None, dtype: str, has_reference: bool) -> str:
+    alpha = config["alpha"]
+    alpha = int(alpha) if float(alpha).is_integer() else alpha
+    reference = (
+        "`reference.wav` is the voice's default reference (a few of its clips joined); `reference.json` holds its\n"
+        "transcript. S2-Pro speaks with it unless you give another clip: the LoRA refines the sound, the\n"
+        "reference still sets much of the voice."
+        if has_reference
+        else "It comes without a reference clip: give one of the voice, with its transcript, when synthesizing."
+    )
+    return f"""# {name}
+
+A LoRA for [Fish Audio S2-Pro](https://huggingface.co/{base_model}): its fast transformer
+(the 4 layers that predict each audio frame's residual codes), trained on top of
+`{base_model}`. It only works with that base model, whose weights are under the Fish Audio
+Research License (research and non-commercial use).
+
+| | |
+|---|---|
+| Base model | `{base_model}` |
+| Rank / alpha | {config["r"]} / {alpha} |
+| Layers | attention (wqkv, wo) and feed-forward (w1, w2, w3) of the fast transformer |
+| Training steps | {step if step is not None else "unknown"} |
+| Weights | {dtype} |
+
+{reference}
+
+## Use
+
+**Polyvox Studio:** Voice panel -> Import, then choose this zip. It appears as the
+S2-Pro voice "{name}", with its reference.
+
+**Other code:** each layer `<name>` (e.g. `audio_decoder.layers.0.attention.wqkv` in the
+checkpoint's naming is `fast_layers.0.attention.wqkv` here) has `<name>.lora_A`
+(rank x in) and `<name>.lora_B` (out x rank); add `alpha / rank * B @ A` to its weight.
+Training heard every clip with a faint noise floor (white noise at -72 dBFS); encode
+references the same way.
+"""
+
+
 def _gsv_readme(name: str, version: str, has_gpt: bool, has_reference: bool, step: int | None) -> str:
     gpt_row = f"`{GSV_GPT_FILE}`" if has_gpt else "none: the base GPT (`s1v3.ckpt`) speaks for it"
     reference = (
@@ -247,8 +293,16 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
     files = {
         WEIGHTS_FILE: weights,
         CONFIG_FILE: (json.dumps(info, indent=2) + "\n").encode(),
-        README_FILE: readme.encode(),
     }
+    if ckpt.engine == s2_lora.ENGINE:
+        reference = gsv_voices.read_reference(ckpt.path)
+        if reference:  # the transcript only: where it came from stays here
+            files[s2_lora.REFERENCE_WAV] = reference[0].read_bytes()
+            files[s2_lora.REFERENCE_JSON] = (
+                json.dumps({"text": reference[1]}, ensure_ascii=False, indent=1) + "\n"
+            ).encode()
+        readme = _s2_readme(name, base_model, config, step, dtype, reference is not None)
+    files[README_FILE] = readme.encode()
     return _write_zip(name, files)
 
 
@@ -287,11 +341,16 @@ def _check_weights(data: bytes) -> None:
 
 
 def _engine_config(engine: str, raw: dict | None) -> dict:
-    """A dots.tts lora_config with the fields its loader reads, checked."""
+    """A dots.tts / S2-Pro lora_config with the fields its loader reads, checked."""
     raw = raw or {}
     r, alpha = raw.get("r"), raw.get("alpha")
     if not isinstance(r, int) or r < 1 or not isinstance(alpha, int | float) or alpha <= 0:
         raise ValueError(f"{CONFIG_FILE} needs a rank 'r' and an 'alpha'.")
+    if engine == s2_lora.ENGINE:
+        targets = raw.get("targets") or list(s2_lora.DEFAULT_TARGETS)
+        if not isinstance(targets, list) or not set(targets) <= set(s2_lora.TARGETS):
+            raise ValueError(f"{CONFIG_FILE} has unknown S2-Pro LoRA targets.")
+        return {"r": r, "alpha": float(alpha), "dropout": float(raw.get("dropout") or 0.0), "targets": targets}
     return {
         "r": r,
         "alpha": float(alpha),

@@ -23,7 +23,7 @@ export interface Lora {
   rank: number | null
   alpha: number | null
   config: LoraConfig | null // VoxCPM's layout (VoxCPM LoRAs only)
-  reference_text: string | null // its default reference clip's transcript (GPT-SoVITS voices); null: none
+  reference_text: string | null // its default reference clip's transcript (GPT-SoVITS, S2-Pro voices); null: none
   version: string | null // model version, when recorded (e.g. v2ProPlus)
 }
 
@@ -72,6 +72,7 @@ export interface Engine {
     tags: boolean
     lora_hot_swap: boolean
     reference_required: boolean // always clones a clip: the request's or the voice's own
+    voice_reference: boolean // trained voices keep a default reference clip (used when none is given)
     training: boolean // New run offers it
     full_finetune: boolean // trains every weight: no LoRA rank or optimizer choice
     reference_inputs: ReferenceInput[] // the audio inputs its cloning takes
@@ -415,6 +416,8 @@ export interface TrainParams {
   gpt_epochs: number
   gpt_batch_size: number
   gsv_version: string // the GPT-SoVITS base model trained from: v2ProPlus | v2Pro
+  s2_slow: boolean // S2-Pro: also a LoRA on the slow transformer (experimental; off by default)
+  s2_slow_lr: number // its own AdamW learning rate (learning_rate is then the fast transformer's)
 }
 
 function postJson(url: string, body?: unknown): Promise<Response> {

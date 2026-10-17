@@ -33,7 +33,7 @@ const SCHEDULE_KEYS: (keyof Schedule)[] = [
 ]
 
 // The model part of a run name; GPT-SoVITS names its version (as imported webui voices do).
-const MODEL_TAGS: Record<string, string> = { voxcpm: 'voxcpm2', dots_tts: 'dots' }
+const MODEL_TAGS: Record<string, string> = { voxcpm: 'voxcpm2', dots_tts: 'dots', fish_s2: 's2' }
 const GSV_TAGS: Record<string, string> = { v2ProPlus: 'v2pp', v2Pro: 'v2pro', v4: 'v4' }
 
 /** dataset-model[-rank], e.g. voice-voxcpm2-r32, voice-dots-r32, voice-v2pp, voice-v4-r32;

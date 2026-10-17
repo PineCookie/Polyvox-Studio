@@ -69,7 +69,7 @@ def test_status_reports_the_profile_and_services_use_it(monkeypatch, service, tr
     client = TestClient(create_app(service.settings, service, training))
     gpu = client.get("/api/status").json()["gpu"]
     assert (gpu["total_gb"], gpu["name"], gpu["train_batch"]) == (8.0, "8 GB", 1)
-    assert gpu["train_batches"] == {"voxcpm": 1, "dots_tts": 4, "gpt_sovits": 4}
+    assert gpu["train_batches"] == {"voxcpm": 1, "dots_tts": 4, "gpt_sovits": 4, "fish_s2": 4}
     assert service.denoise_on_cpu
 
 

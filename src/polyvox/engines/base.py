@@ -83,6 +83,9 @@ class Capabilities:
     # Speech always clones a reference clip: one given with the request, else the
     # voice's own (a checkpoint's reference.wav); none = refused.
     reference_required: bool = False
+    # Trained voices keep a default reference clip (reference.wav + reference.json), used
+    # when a request gives none; changeable in the Voices panel.
+    voice_reference: bool = False
     training: bool = True  # New run offers it
     # Training updates every weight (no LoRA rank, no optimizer choice).
     full_finetune: bool = False

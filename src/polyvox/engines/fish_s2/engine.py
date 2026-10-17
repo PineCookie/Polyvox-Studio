@@ -1,4 +1,5 @@
-"""Fish Audio S2-Pro as an engine (zero-shot cloning; no training here yet).
+"""Fish Audio S2-Pro as an engine: zero-shot cloning, and voices trained here
+(LoRA on its fast transformer: lora.py, train.py, worker.py).
 
 model.py, codec.py, prompt.py and generate.py are our own implementation of the
 published architecture; the weights (models\\fishaudio__s2-pro) are under the
@@ -6,7 +7,10 @@ Fish Audio Research License: research and non-commercial use only.
 
 The model is large (bfloat16 language model 9.1 GB + codec): a 16 GB GPU only.
 It clones from a reference clip with its transcript; several clips are joined
-into one (about 20 s cloned clearly better than one short clip).
+into one (about 20 s cloned clearly better than one short clip). A trained
+voice speaks with its default reference (a few of its clips joined) unless the
+request gives another: its LoRA refines the sound, the reference still sets
+much of the voice.
 """
 
 from __future__ import annotations
@@ -23,9 +27,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ... import vram
+from ... import lora_library, vram
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
+from . import lora as s2lora
 
 if TYPE_CHECKING:
     from ...training import TrainParams
@@ -81,18 +86,45 @@ class Runtime:
         # One CUDA graph per frame (~1.6x faster than eager; graphs=False: the same steps eagerly).
         self.decoder = decode.Decoder(self.model, self.end_token, graphs=graphs)
         self.device = device
+        self.merger = s2lora.Merger(self.model)
+        self.lora: tuple[str, float] | None = None  # (id, weights mtime) merged into the weights
         logger.info("S2-Pro loaded in %.1f s", time.time() - t0)
 
-    def encode(self, wav: Path):
+    def encode(self, wav: Path, noise_floor: bool = False):
+        """Codes of a clip; ``noise_floor``: heard as trained voices learned their clips."""
         import torch
         import torchaudio
 
         from ...data import audio_io
+        from .train import with_noise_floor
 
         audio, rate = audio_io.read(wav)
         mono = torch.from_numpy(np.asarray(audio.mean(axis=0) if audio.ndim == 2 else audio, dtype=np.float32))
         mono = torchaudio.functional.resample(mono.to(self.device), rate, self.codec.sample_rate)
-        return self.codec.encode(mono).cpu()
+        return self.codec.encode(with_noise_floor(mono) if noise_floor else mono).cpu()
+
+    def use_lora(self, ckpt: lora_library.LoraCheckpoint | None) -> None:
+        """Merge the checkpoint's LoRA into the weights (None: the base model's)."""
+        key = (ckpt.id, ckpt.weights_mtime) if ckpt else None
+        if key == self.lora:
+            return
+        self.lora = None
+        if ckpt is None:
+            self.merger.apply(None)
+            return
+        from safetensors.torch import load_file
+
+        try:
+            tensors = load_file(str(ckpt.path / lora_library.WEIGHTS_FILE))
+        except (OSError, RuntimeError) as e:
+            raise RuntimeError(f"Unable to load voice '{ckpt.id}': {e}") from e
+        rank, alpha = ckpt.rank, ckpt.alpha
+        try:
+            self.merger.apply(tensors, (alpha / rank) if rank and alpha else 1.0)
+        except ValueError:
+            self.merger.apply(None)
+            raise
+        self.lora = key
 
 
 class FishS2Engine(Engine):
@@ -142,8 +174,8 @@ class FishS2Engine(Engine):
             TagGroup("pacing", ("[short pause]", "[pause]", "[long pause]")),
         ),
         free_tags=True,
-        lora_hot_swap=False,
-        training=False,
+        lora_hot_swap=True,
+        voice_reference=True,
         # A clip with its transcript (several are joined into one).
         reference_inputs=(ReferenceInput("reference", "prompt", "required"),),
     )
@@ -153,7 +185,7 @@ class FishS2Engine(Engine):
         Param("top_k", "int", 30, 1, 100, 1),
     )
     model_setting = "s2_model"
-    worker_module = ""
+    worker_module = "polyvox.engines.fish_s2.worker"
 
     def __init__(self, settings: Settings, loader=Runtime):
         self.settings = settings
@@ -186,7 +218,7 @@ class FishS2Engine(Engine):
             "device": self.device,
             "model": self.settings.model_path(self.model_setting),
             "loaded": self.loaded,
-            "active_lora": None,
+            "active_lora": self._runtime.lora[0] if self._runtime and self._runtime.lora else None,
         }
 
     def progress(self) -> dict:
@@ -196,18 +228,22 @@ class FishS2Engine(Engine):
     def synthesize(self, req: SynthesisRequest) -> SynthesisResult:
         import torch
 
+        from ..gpt_sovits.voices import read_reference
         from . import generate, prompt
 
         text = re.sub(r"\s+", " ", req.text).strip()
         parts = text_parts(text)
         if not parts:
             raise ValueError("Text to synthesize is empty.")
-        if req.lora_id:
-            raise ValueError("Fish Audio S2-Pro has no trained voices here yet: choose its base model.")
+        ckpt = lora_library.resolve(self.settings.lora_dir, req.lora_id) if req.lora_id else None
+        if ckpt and ckpt.engine != self.id:
+            raise ValueError(f"Voice '{ckpt.id}' was trained for another model ({ckpt.engine}), not S2-Pro.")
         if reason := self.unavailable():
             raise ValueError(f"Fish Audio S2-Pro can't run: {reason}")
         clip = req.prompt_wav or req.reference_wav
         transcript = (req.prompt_text or "").strip()
+        if clip is None and ckpt and (own := read_reference(ckpt.path)) and own[1].strip():
+            clip, transcript = own  # the voice's default reference
         if clip is not None and not transcript:
             raise ValueError("Fish Audio S2-Pro needs the reference clip's transcript.")
         options = self.options(req.options)
@@ -217,8 +253,9 @@ class FishS2Engine(Engine):
             self._progress = Progress(phase="loading" if self._runtime is None else "preparing", started=time.time())
             try:
                 rt = self._ensure_runtime()
+                rt.use_lora(ckpt)
                 c = rt.model.config
-                reference = (rt.encode(clip), transcript) if clip is not None else None
+                reference = (rt.encode(clip, noise_floor=ckpt is not None), transcript) if clip is not None else None
                 seed = req.seed if req.seed is not None else random.randrange(2**31)
                 torch.manual_seed(seed)
                 chars = sum(len(re.sub(r"\W", "", p)) for p in parts)
@@ -262,4 +299,44 @@ class FishS2Engine(Engine):
     def training_config(
         self, params: TrainParams, run_dir: Path, train_manifest: Path, val_manifest: Path | None
     ) -> dict:
-        raise ValueError("Fish Audio S2-Pro can't be trained here yet.")
+        """A LoRA on the fast transformer (lora.py; rank / alpha / optimizer from
+        ``params``). The run's reference (samples, the voice's default) is the
+        dataset's best few clips joined."""
+        from ...data import manifests, references
+
+        if reason := self.unavailable():
+            raise ValueError(f"Fish Audio S2-Pro can't train here: {reason}")
+        if params.s2_slow and params.optimizer != "adamw":
+            raise ValueError("Training the slow transformer needs AdamW (Prodigy can't give it a smaller rate).")
+        dataset = manifests.resolve(self.settings.data_dir, params.dataset)
+        picked = references.pick(dataset, s2lora.REFERENCE_CLIPS, manifests.legacy_root(self.settings.data_dir))
+        return {
+            "pretrained_path": self.settings.model_path(self.model_setting),
+            "train_manifest": str(train_manifest),
+            "val_manifest": str(val_manifest) if val_manifest else "",
+            "save_path": str(run_dir / "checkpoints"),
+            "num_iters": params.num_iters,
+            "batch_size": params.batch_size,
+            "grad_accum_steps": params.grad_accum_steps,
+            "optimizer": params.optimizer,
+            "learning_rate": params.learning_rate,
+            "prodigy_steps": params.prodigy_steps,
+            "weight_decay": params.weight_decay,
+            "warmup_steps": params.warmup_steps,
+            "max_grad_norm": params.max_grad_norm,
+            "log_interval": params.log_interval,
+            "valid_interval": params.valid_interval,
+            "save_interval": params.save_interval,
+            "lora": {
+                "r": params.lora_rank,
+                "alpha": params.lora_alpha,
+                "dropout": params.lora_dropout,
+                "targets": [*s2lora.DEFAULT_TARGETS, *(s2lora.SLOW_TARGETS if params.s2_slow else ())],
+            },
+            # The slow transformer's own AdamW rate (learning_rate is the fast layers').
+            **({"slow_learning_rate": params.s2_slow_lr} if params.s2_slow else {}),
+            "reference": {
+                "clips": [{"audio": str(c.audio), "text": c.text} for c in picked],
+                "source": f"{params.dataset}: " + ", ".join(c.audio.name for c in picked),
+            },
+        }

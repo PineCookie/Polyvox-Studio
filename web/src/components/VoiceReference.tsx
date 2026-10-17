@@ -12,8 +12,10 @@ interface Props {
   onError: (message: string) => void
 }
 
-/** A GPT-SoVITS voice's default reference clip: listen, read its transcript, replace it. */
+/** A voice's default reference clip (GPT-SoVITS, S2-Pro): listen, read its transcript, replace it. */
 export function VoiceReference({ lora, onChanged, onError }: Props) {
+  // S2-Pro joins a dataset's best few clips (it clones better from ~20 s); GPT-SoVITS takes one of 3–10 s.
+  const joined = lora.engine === 'fish_s2'
   const t = useT()
   const [editing, setEditing] = useState(false)
   const [source, setSource] = useState<'dataset' | 'clip'>('dataset')
@@ -66,7 +68,7 @@ export function VoiceReference({ lora, onChanged, onError }: Props) {
           <div className="segmented" role="radiogroup">
             <label>
               <input type="radio" checked={source === 'dataset'} onChange={() => setSource('dataset')} />{' '}
-              {t.gsvReferenceFromDataset}
+              {joined ? t.referenceClipsFromDataset : t.gsvReferenceFromDataset}
             </label>
             <label>
               <input type="radio" checked={source === 'clip'} onChange={() => setSource('clip')} /> {t.gsvReferenceClip}

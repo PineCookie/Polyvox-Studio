@@ -115,7 +115,7 @@ export const en = {
     ],
     'fish_s2.reference': [
       'Reference',
-      'Speech of the voice with its transcript; several clips are joined into one (about 20 s clones clearly better than one short clip). None: a random voice.',
+      "Speech of the voice with its transcript; several clips are joined into one (about 20 s clones clearly better than one short clip). None: a trained voice's own reference, or a random voice with the base model.",
     ],
   } as Record<string, [string, string]>,
   sourceNone: 'None',
@@ -199,6 +199,7 @@ export const en = {
   gsvGptExample: 'e.g. D:\\GPT-SoVITS\\GPT_weights_v2ProPlus\\voice-e15.ckpt',
   gsvReference: 'Reference clip',
   gsvReferenceFromDataset: 'Best clip of a dataset',
+  referenceClipsFromDataset: 'Best clips of a dataset, joined',
   gsvReferenceClip: 'A clip',
   gsvReferenceLater: 'Later',
   otherModels: 'Other models',
@@ -237,6 +238,7 @@ export const en = {
   stepSuffix: (step: string) => ` · step ${step}`,
   exportIntro:
     'A zip with the weights, lora_config.json and a README on how to use it. Local paths, optimizer state, logs, transcripts and dataset audio are left out.',
+  exportReferenceNote: "The voice's reference clip and its transcript go in too.",
   exportVoiceIntro:
     'A zip with both models in the GPT-SoVITS webui’s format (usable there too), the reference clip with its transcript, and a README. Local paths in the weights’ saved training settings, optimizer state, logs, other transcripts and dataset audio are left out.',
   name: 'Name',
@@ -784,7 +786,12 @@ export const en = {
     gpt_epochs: 'GPT epochs',
     gpt_batch_size: 'GPT batch size',
     gsv_version: 'Model version',
+    s2_slow: 'Also train the slow transformer (experimental)',
+    s2_fast_lr: 'Learning rate · fast transformer',
+    s2_slow_lr: 'Learning rate · slow transformer',
   },
+  s2SlowHint:
+    'Adds a LoRA on the slow transformer’s attention, with AdamW and its own small learning rate (tested: 5e-4 fast, 2e-5 slow; Prodigy can’t give one part a smaller rate). About twice as slow; in our tests it sounded no more like the voice, and at higher rates it cut sentences short and left long silences. Compare its checkpoints with a run without it.',
   optimizers: {
     adamw: 'AdamW',
     prodigy: 'Prodigy',

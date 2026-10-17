@@ -16,7 +16,11 @@ interface Props {
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 const HUB_ID_PATTERN = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/
 // The usual base model per engine (sharing.ENGINE_BASE_MODELS).
-const BASE_MODELS: Record<string, string> = { voxcpm: 'openbmb/VoxCPM2', dots_tts: 'rednote-hilab/dots.tts-soar' }
+const BASE_MODELS: Record<string, string> = {
+  voxcpm: 'openbmb/VoxCPM2',
+  dots_tts: 'rednote-hilab/dots.tts-soar',
+  fish_s2: 'fishaudio/s2-pro',
+}
 
 // "voxcpm/speaker_r64/checkpoints/step_0004000" -> "speaker_r64_step4000"; the run name for its final weights.
 function defaultName(lora: Lora, final: boolean): string {
@@ -80,7 +84,10 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
           </span>
         </header>
 
-        <p className="muted hint">{voice ? t.exportVoiceIntro : t.exportIntro}</p>
+        <p className="muted hint">
+          {voice ? t.exportVoiceIntro : t.exportIntro}
+          {lora.engine === 'fish_s2' && ` ${t.exportReferenceNote}`}
+        </p>
 
         <label className="field">
           <span>

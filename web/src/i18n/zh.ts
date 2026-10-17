@@ -135,7 +135,7 @@ export const zh: Messages = {
     'gpt_sovits.timbre': ['音色音频', 'SoVITS 取这几段音频（每段 3–10 秒）的平均音色。不选：使用提示音频的音色。'],
     'fish_s2.reference': [
       '参考',
-      '该声音的语音，需附文本；多段音频会拼成一段（约 20 秒比一段短音频克隆得明显更像）。不选：随机音色。',
+      '该声音的语音，需附文本；多段音频会拼成一段（约 20 秒比一段短音频克隆得明显更像）。不选：训练的声音用自己的参考，基础模型为随机音色。',
     ],
   },
   sourceNone: '不用',
@@ -214,6 +214,7 @@ export const zh: Messages = {
   gsvGptExample: '例如 D:\\GPT-SoVITS\\GPT_weights_v2ProPlus\\voice-e15.ckpt',
   gsvReference: '参考音频',
   gsvReferenceFromDataset: '数据集中最好的片段',
+  referenceClipsFromDataset: '数据集中最好的几段（拼接）',
   gsvReferenceClip: '指定片段',
   gsvReferenceLater: '稍后添加',
   otherModels: '其他模型',
@@ -251,6 +252,7 @@ export const zh: Messages = {
   exportTitle: '导出分享包',
   stepSuffix: (step) => ` · 第 ${step} 步`,
   exportIntro: '一个包含权重、lora_config.json 和使用说明的 zip。不包含本地路径、优化器状态、日志、文本和数据集音频。',
+  exportReferenceNote: '声音的参考音频及其文本也会包含在内。',
   exportVoiceIntro:
     '一个 zip：GPT-SoVITS webui 格式的两个模型（也可在 webui 中使用）、参考音频及其文本，以及使用说明。不包含权重中训练设置里的本地路径、优化器状态、日志、其他文本和数据集音频。',
   name: '名称',
@@ -754,7 +756,12 @@ export const zh: Messages = {
     gpt_epochs: 'GPT 轮数',
     gpt_batch_size: 'GPT 批大小',
     gsv_version: '模型版本',
+    s2_slow: '同时训练慢速 Transformer（实验性）',
+    s2_fast_lr: '学习率 · 快速 Transformer',
+    s2_slow_lr: '学习率 · 慢速 Transformer',
   },
+  s2SlowHint:
+    '在慢速 Transformer 的注意力层上也加 LoRA，使用 AdamW 和它自己的较小学习率（测试过：快速 5e-4，慢速 2e-5；Prodigy 无法只给一部分更小的学习率）。训练约慢一倍；在我们的测试中声音并没有更像，学习率更高时还会把句子截断、留下长时间静音。请与不开此项的训练比较检查点。',
   optimizers: {
     adamw: 'AdamW',
     prodigy: 'Prodigy',

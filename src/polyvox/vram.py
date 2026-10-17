@@ -46,12 +46,15 @@ class Profile:
     # GPT-SoVITS v4's SoVITS stage (a LoRA on its mel DiT): the largest batch that
     # trains without gradient checkpointing (larger ones checkpoint: engines.gpt_sovits.worker)
     gsv_v4_plain_batch: int = 0
+    # S2-Pro training (needs a 16 GB card: the frozen model alone is 8.6 GB)
+    s2_train_batch: int = 4
 
     def public(self) -> dict:
         train_batches = {
             "voxcpm": self.train_batch,
             "dots_tts": self.dots_train_batch,
             "gpt_sovits": self.gsv_train_batch,
+            "fish_s2": self.s2_train_batch,
         }
         return {**asdict(self), "train_batches": train_batches}
 

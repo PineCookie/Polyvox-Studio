@@ -75,9 +75,8 @@ function groupVoices(loras: Lora[], t: Messages): Voice[] {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
 }
 
-const GSV_ENGINE = 'gpt_sovits' // voices with a default reference clip
-// Engines whose checkpoints export as packages (sharing.ENGINE_BASE_MODELS).
-const EXPORTABLE = new Set([DEFAULT_ENGINE, 'dots_tts', GSV_ENGINE])
+// Engines whose checkpoints export as packages (sharing.ENGINE_BASE_MODELS, GPT-SoVITS voices).
+const EXPORTABLE = new Set([DEFAULT_ENGINE, 'dots_tts', 'gpt_sovits', 'fish_s2'])
 
 function shortModel(id: string): string {
   return id.split('/').at(-1) ?? id
@@ -104,6 +103,8 @@ export function VoicePanel({
   const fileInput = useRef<HTMLInputElement>(null)
 
   const engineName = (id: string) => engines.find((e) => e.id === id)?.name ?? id
+  // Voices of these engines keep a default reference clip.
+  const keepsReference = (id: string) => !!engines.find((e) => e.id === id)?.capabilities.voice_reference
   const current = loras.find((l) => l.id === selected.lora) ?? null
   const currentVoice = current ? voices.find((v) => v.key === current.voice_path) : null
   // A hidden duplicate (e.g. picked from the Train tab) still needs an option.
@@ -191,7 +192,7 @@ export function VoicePanel({
               best.lora.rank !== null && t.rank(best.lora.rank),
               best.lora.version,
               best.step !== null && t.stepsCount(formatStep(best.step)),
-              best.lora.engine === GSV_ENGINE && best.lora.reference_text === null && t.noReference,
+              keepsReference(best.lora.engine) && best.lora.reference_text === null && t.noReference,
             ]
               .filter(Boolean)
               .join(' · ')}
@@ -279,7 +280,9 @@ export function VoicePanel({
                 {t.baseOf(current.base_model_id ?? current.base_model ?? t.notRecorded)}
               </span>
             </p>
-            {current.engine === GSV_ENGINE && <VoiceReference lora={current} onChanged={onRefresh} onError={onError} />}
+            {keepsReference(current.engine) && (
+              <VoiceReference lora={current} onChanged={onRefresh} onError={onError} />
+            )}
           </>
         ) : (
           <>

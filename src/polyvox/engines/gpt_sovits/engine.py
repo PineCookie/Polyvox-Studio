@@ -70,6 +70,7 @@ class GptSovitsEngine(Engine):
         tags=False,
         lora_hot_swap=False,
         reference_required=True,
+        voice_reference=True,
         full_finetune=True,
         reference_inputs=(
             # The GPT's prompt (3-10 s); without a transcript only its timbre is used (not v4).
