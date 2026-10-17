@@ -106,9 +106,10 @@ class TrainParams(BaseModel):
     s2_slow: bool = False
     s2_slow_lr: float = Field(2e-5, gt=0, le=1)
     # S2-Pro training only the fast transformer: references cached per clip (0: train without
-    # references), and the slow transformer kept in CPU memory between validation samples.
+    # references), and the slow transformer kept in CPU memory between validation samples
+    # (New run takes it from the GPU profile, vram.Profile.s2_offload).
     s2_cached_references: int = Field(2, ge=0, le=8)
-    s2_offload: bool = True
+    s2_offload: bool = False
 
 
 class RunSummary(BaseModel):

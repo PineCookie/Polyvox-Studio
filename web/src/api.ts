@@ -178,6 +178,7 @@ export interface GpuProfile {
   denoise_on_cpu: boolean
   train_batch: number // VoxCPM's training micro-batch that fits; accumulation makes up the rest
   train_batches: Record<string, number> // the same per engine id
+  s2_offload: boolean // S2-Pro: training needs its slow transformer in CPU memory to fit this GPU
   note: string // what doesn't fit, if anything
 }
 

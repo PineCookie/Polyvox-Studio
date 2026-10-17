@@ -70,6 +70,8 @@ def test_status_reports_the_profile_and_services_use_it(monkeypatch, service, tr
     gpu = client.get("/api/status").json()["gpu"]
     assert (gpu["total_gb"], gpu["name"], gpu["train_batch"]) == (8.0, "8 GB", 1)
     assert gpu["train_batches"] == {"voxcpm": 1, "dots_tts": 4, "gpt_sovits": 4, "fish_s2": 4}
+    assert gpu["s2_offload"]  # 8 GB: S2-Pro's slow transformer waits in CPU memory while training
+    assert not vram.profile_for(16.0).s2_offload  # 16 GB holds it: offloading would only cost time
     assert service.denoise_on_cpu
 
 

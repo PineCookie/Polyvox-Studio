@@ -46,8 +46,11 @@ class Profile:
     # GPT-SoVITS v4's SoVITS stage (a LoRA on its mel DiT): the largest batch that
     # trains without gradient checkpointing (larger ones checkpoint: engines.gpt_sovits.worker)
     gsv_v4_plain_batch: int = 0
-    # S2-Pro training (needs a 16 GB card: the frozen model alone is 8.6 GB)
+    # S2-Pro training (needs a 16 GB card: the frozen model alone is 8.6 GB); s2_offload: keep
+    # its slow transformer in CPU memory while training from cached states (~12 -> ~3.5 GB,
+    # ~1 s each way per validation): only where the whole model and training don't fit.
     s2_train_batch: int = 4
+    s2_offload: bool = True
 
     def public(self) -> dict:
         train_batches = {
@@ -75,6 +78,7 @@ PROFILES = (  # (at least this many GB, profile), largest first
             dots_plain_batch=4,
             gsv_train_batch=8,
             gsv_v4_plain_batch=4,
+            s2_offload=False,
         ),
     ),
     (
@@ -123,6 +127,7 @@ CPU = Profile(
     note="No CUDA GPU: everything runs on the CPU (slow).",
     dots_plain_batch=64,
     gsv_v4_plain_batch=64,
+    s2_offload=False,
 )
 
 

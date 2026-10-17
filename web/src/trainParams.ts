@@ -44,7 +44,7 @@ export const DEFAULT_PARAMS: Params = {
   s2_slow: false,
   s2_slow_lr: 2e-5, // the slow transformer's tested AdamW rate (the fast one's: 5e-4)
   s2_cached_references: 2,
-  s2_offload: true,
+  s2_offload: false, // forGpu: on where the whole model and training don't fit (vram.Profile.s2_offload)
 }
 
 // Prodigy finds its own step size: learning_rate is a multiplier, 1 by its authors' advice.
@@ -83,6 +83,7 @@ export function fullSteps(clips: number, params: Params): { sovits: number; gpt:
 export const V4_BATCH = 4
 
 export function forGpu(params: Params, gpu: GpuProfile, full = false): Params {
+  params = { ...params, s2_offload: !!gpu.s2_offload }
   const batch = Math.max(1, Math.min(gpu.train_batches?.[params.engine] ?? gpu.train_batch, EFFECTIVE_BATCH))
   if (full && params.gsv_version === 'v4') return { ...params, batch_size: V4_BATCH, gpt_batch_size: batch }
   if (full) return { ...params, batch_size: batch, grad_accum_steps: 1, gpt_batch_size: batch } // both stages, as the webui
@@ -157,6 +158,6 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     s2_slow: Array.isArray(lora.targets) && lora.targets.includes('slow_attn'),
     s2_slow_lr: num(config.slow_learning_rate, d.s2_slow_lr),
     s2_cached_references: num(config.cached_references, d.s2_cached_references),
-    s2_offload: flag(config.offload, d.s2_offload),
+    s2_offload: flag(config.offload, true), // runs from before the setting offloaded
   }
 }
