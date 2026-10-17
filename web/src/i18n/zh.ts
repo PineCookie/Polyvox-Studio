@@ -88,6 +88,10 @@ export const zh: Messages = {
       '3–10 秒并附文本：GPT 接着它说下去（语速、语气）。不附文本时只用其音色（v4 不支持）。不选：使用音色自带的参考音频。',
     ],
     'gpt_sovits.timbre': ['音色音频', 'SoVITS 取这几段音频（每段 3–10 秒）的平均音色。不选：使用提示音频的音色。'],
+    'fish_s2.reference': [
+      '参考',
+      '该声音的语音，需附文本；多段音频会拼成一段（约 20 秒比一段短音频克隆得明显更像）。不选：随机音色。',
+    ],
   },
   sourceNone: '不用',
   sourceFile: '上传',
@@ -733,6 +737,7 @@ export const zh: Messages = {
     gsv_model: '语音合成（32 kHz）、音色训练：基础模型及其 HuBERT、RoBERTa 和说话人编码器',
     gsv_g2pw_model: 'GPT-SoVITS：多音字的读音',
     gsv_v4_model: '语音合成（48 kHz）、音色训练：v4 的 SoVITS 基础模型（梅尔 DiT）和声码器',
+    s2_model: '语音合成（44.1 kHz）、零样本克隆；需要 16 GB 显卡',
     denoiser_model: '合成：克隆前清理参考音频',
     asr_model: '语音识别：为片段生成文本、与文本对比',
     align_model: '检查片段与文本是否一致（11 种语言）',

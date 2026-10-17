@@ -24,3 +24,9 @@ Python packages and models are not part of this repository: they are downloaded
 when the studio is installed or used, under their own licenses. The Models tab
 shows each model's license; some differ from the code's (the de-reverb model's
 weights, for example, are GPL-3.0).
+
+Fish Audio S2-Pro (`src/polyvox/engines/fish_s2/`) is this project's own
+implementation of the published model architecture; it contains no Fish Audio
+code. Its weights, downloaded in the Models tab, are under the Fish Audio
+Research License: research and non-commercial use only, a commercial license
+from Fish Audio otherwise.

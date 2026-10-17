@@ -22,7 +22,12 @@ export interface VoiceChoice {
 export const BASE_VOICE: VoiceChoice = { engine: DEFAULT_ENGINE, lora: null }
 
 // Names for lists that don't load /api/engines (the server's names and order are the same).
-const NAMES: Record<string, string> = { voxcpm: 'VoxCPM', dots_tts: 'dots.tts', gpt_sovits: 'GPT-SoVITS' }
+const NAMES: Record<string, string> = {
+  voxcpm: 'VoxCPM',
+  dots_tts: 'dots.tts',
+  gpt_sovits: 'GPT-SoVITS',
+  fish_s2: 'Fish Audio S2-Pro',
+}
 
 export function engineName(id: string, engines: Engine[] = []): string {
   return engines.find((e) => e.id === id)?.name ?? NAMES[id] ?? id

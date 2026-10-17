@@ -96,6 +96,10 @@ export const en = {
       'Timbre clips',
       "Clips of the voice (3–10 s each) whose timbre SoVITS averages. None: the prompt clip's timbre.",
     ],
+    'fish_s2.reference': [
+      'Reference',
+      'Speech of the voice with its transcript; several clips are joined into one (about 20 s clones clearly better than one short clip). None: a random voice.',
+    ],
   } as Record<string, [string, string]>,
   sourceNone: 'None',
   sourceFile: 'Upload',

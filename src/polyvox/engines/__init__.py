@@ -27,10 +27,16 @@ __all__ = [
 
 def classes() -> dict[str, type[Engine]]:
     from .dots.engine import DotsEngine
+    from .fish_s2.engine import FishS2Engine
     from .gpt_sovits.engine import GptSovitsEngine
     from .voxcpm.engine import VoxCPMEngine
 
-    return {VoxCPMEngine.id: VoxCPMEngine, DotsEngine.id: DotsEngine, GptSovitsEngine.id: GptSovitsEngine}
+    return {
+        VoxCPMEngine.id: VoxCPMEngine,
+        DotsEngine.id: DotsEngine,
+        GptSovitsEngine.id: GptSovitsEngine,
+        FishS2Engine.id: FishS2Engine,
+    }
 
 
 def create(settings: Settings, **instances: Engine) -> dict[str, Engine]:
