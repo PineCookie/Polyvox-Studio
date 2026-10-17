@@ -206,6 +206,18 @@ class DualAR(nn.Module):
         self.slow_table = rope_table(capacity, c.slow.head_dim, c.slow.rope_base, p.device)
         self.fast_table = rope_table(c.codebooks, c.fast.head_dim, c.fast.rope_base, p.device)
 
+    def slow_parts(self) -> list[nn.Module]:
+        """The slow transformer and the embeddings it reads (~7.7 GB): training only the fast
+        transformer from cached slow states needs none of them on the GPU."""
+        return [self.layers, self.norm, self.embeddings, self.codebook_embeddings]
+
+    def release(self) -> None:
+        """Drop the KV caches and angle tables (allocate makes them again)."""
+        for layer in (*self.layers, *self.fast_layers):
+            layer.attention.cache = None
+        self.slow_table = self.fast_table = None
+        self.capacity = 0
+
     def embed(self, tokens: Tensor) -> Tensor:
         """tokens: [codebooks + 1, T] (row 0: token ids; rows 1..: a frame's codes where
         row 0 holds a semantic token) -> [1, T, dim]."""

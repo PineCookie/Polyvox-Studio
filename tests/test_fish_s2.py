@@ -202,6 +202,31 @@ def test_cached_slow_states_score_as_live_ones():
             assert torch.allclose(live, cached, rtol=1e-5)
 
 
+def test_training_from_cached_states_needs_no_slow_transformer():
+    m = tiny_model()
+    seq, trainer = train.Sequences(Letters(), m, END), train.Trainer(m, END)
+    clips = [
+        {"text": "一二三", "codes": torch.randint(0, 32, (3, 4))},
+        {"text": "四五", "codes": torch.randint(0, 32, (3, 3))},
+    ]
+    states = train.slow_states(trainer, seq, clips, train.reference_picks(["a" * 12, "b" * 12]), todo=[0, 1])
+    loras = s2lora.attach(m, rank=2, alpha=2.0)
+
+    for part in m.slow_parts():  # gone: any use of them would fail
+        part.to("meta")
+    loss, n = trainer.code_loss(
+        torch.cat([states[0][1], states[1][0]]), torch.cat([c["codes"].long().T for c in clips])
+    )
+    loss.backward()
+
+    assert n == (4 + 3) * 2 and torch.isfinite(loss)
+    assert all(lo.B.grad is not None for lo in loras.values())
+    assert not any(p.is_meta for p in m.fast_layers.parameters())
+    m.allocate(16)
+    m.release()
+    assert m.capacity == 0 and m.layers[0].attention.cache is None
+
+
 def test_the_slow_transformer_trains_only_when_asked():
     m = tiny_model()
     loras = s2lora.attach(m, rank=2, alpha=2.0, targets=(*s2lora.DEFAULT_TARGETS, *s2lora.SLOW_TARGETS))

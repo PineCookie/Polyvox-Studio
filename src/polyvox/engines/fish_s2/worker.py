@@ -23,8 +23,10 @@ once per clip, without and with two references picked once
 a cache shared by the dataset's runs (config "cache_file", <dataset>/.cache/;
 entries per clip as GPT-SoVITS's features: gpt_sovits.features.clip_key), so
 another run on the same clips (other LoRA settings, a resume) starts training at
-once. The fast layers' training forward is compiled (Trainer ``fused``; config
-"compile").
+once. Training and validation losses then need only the cached states, so the
+slow transformer (~7.7 GB) waits in CPU memory and comes back to the GPU only
+to speak the validation samples (~1 s each way). The fast layers' training
+forward is compiled (Trainer ``fused``; config "compile").
 """
 
 from __future__ import annotations
@@ -196,26 +198,45 @@ def main() -> None:
     slow = any(t in s2lora.SLOW_TARGETS for t in targets)
     seq = Sequences(tokenizer, model, end_token)
     trainer = Trainer(model, end_token, slow=slow, fused=bool(config.get("compile", True)))
-    cache = None
+    cache = val_cache = None
+    offloaded = False
     if not slow:  # the frozen slow transformer's states, once per clip and reference pick
-        picks = reference_picks(train_keys)
-        wanted = [[[train_keys[j] for j in pick] for pick in clip_picks] for clip_picks in picks]
-        todo = [i for i, k in enumerate(train_keys) if store[k].get("refs") != wanted[i]]
+        # Training clips clone from other training clips; validation clips from any of the run's.
+        n = len(train_keys)
+        picks = reference_picks(train_keys) + reference_picks(keys)[n:]
+        wanted = [[[keys[j] for j in pick] for pick in clip_picks] for clip_picks in picks]
+        todo = [i for i, k in enumerate(keys) if store[k].get("refs") != wanted[i]]
         if todo:
             t0 = time.time()
-            states = slow_states(trainer, seq, train_clips, picks, todo, stop=stop)
+            states = slow_states(trainer, seq, train_clips + val_clips, picks, todo, stop=stop)
             torch.cuda.empty_cache()
             if states is None:
                 save_cache(cache_file, meta, store, records, keys)
                 log("Stopped.")
                 return
             for i, clip_states in states.items():
-                store[train_keys[i]] |= {"states": clip_states, "refs": wanted[i]}
+                store[keys[i]] |= {"states": clip_states, "refs": wanted[i]}
             changed += len(todo)
             log(f"Slow transformer states of {len(todo)} clips computed in {time.time() - t0:.0f} s.")
-        if len(todo) < len(train_keys):
-            log(f"Slow transformer states of {len(train_keys) - len(todo)} clips from the dataset's cache.")
+        if len(todo) < len(keys):
+            log(f"Slow transformer states of {len(keys) - len(todo)} clips from the dataset's cache.")
         cache = [store[k]["states"] for k in train_keys]
+        val_cache = [store[k]["states"] for k in val_keys]
+        # Until samples need it, the slow transformer waits in CPU memory: training and
+        # validation run on the cached states alone.
+        for part in model.slow_parts():
+            part.to("cpu")
+        torch.cuda.empty_cache()
+        offloaded = True
+        log(f"Slow transformer moved to the CPU; {torch.cuda.memory_allocated() / 2**30:.1f} GB left on the GPU.")
+    peaks = {"preparing": 0.0, "training": 0.0, "samples": 0.0}
+
+    def peak(phase: str) -> None:
+        """The GPU's peak since the last call goes to ``phase``."""
+        peaks[phase] = max(peaks[phase], torch.cuda.max_memory_reserved() / 2**30)
+        torch.cuda.reset_peak_memory_stats()
+
+    peak("preparing")
     if changed:
         t0 = time.time()
         save_cache(cache_file, meta, store, records, keys)
@@ -304,7 +325,22 @@ def main() -> None:
         if not val_clips:
             return
 
+        def cached_losses() -> dict[str, float]:
+            """From the cached slow states: without a reference, and with the cached ones."""
+            totals: dict[str, list[float]] = {}
+            with torch.no_grad():
+                for clip, states in zip(val_clips, val_cache, strict=True):
+                    codes = clip["codes"].long().T.cuda()
+                    for v, hidden in enumerate(states):
+                        s, n = trainer.code_loss(hidden.cuda(), codes)
+                        acc = totals.setdefault("loss/codes" if v == 0 else "loss/codes_ref", [0.0, 0])
+                        acc[0] += float(s)
+                        acc[1] += n
+            return {k: s / max(n, 1) for k, (s, n) in totals.items()}
+
         def losses() -> dict[str, float]:
+            if val_cache is not None:
+                return cached_losses()
             totals: dict[str, list[float]] = {}
             with torch.no_grad():
                 for suffix, with_reference in (("", False), ("_ref", True)):
@@ -324,18 +360,22 @@ def main() -> None:
         values = averaged(losses)
         with (save_dir / "train.log").open("a", encoding="utf-8") as f:
             f.write(f"[val] step {at}: {format_metrics(values)}\n")
+        peak("training")
         averaged(lambda: samples(at))
-
-    decoder: list = []
+        peak("samples")
 
     def samples(at: int) -> None:
-        """The first validation texts, spoken with the run's reference (LoRA as trained)."""
+        """The first validation texts, spoken with the run's reference (LoRA as trained).
+        The whole model is on the GPU only meanwhile (with the slow transformer offloaded),
+        then the codec decodes in its place."""
         args.samples_dir.mkdir(parents=True, exist_ok=True)
+        spoken = []
         try:
-            if not decoder:
-                decoder.append(decode.Decoder(model, end_token, graphs=False))
+            if offloaded:
+                for part in model.slow_parts():
+                    part.to("cuda")
+            decoder = decode.Decoder(model, end_token, graphs=False)
             c = model.config
-            spoken = []
             for i, record in enumerate(val_records[:SAMPLES]):
                 ref_path = args.samples_dir / f"reference_{i}.wav"
                 if not ref_path.exists():
@@ -343,14 +383,24 @@ def main() -> None:
                     write_wav(ref_path, audio.T, rate)
                 tokens = prompt.build(tokenizer, c.codebooks, c.semantic_begin, clean(record["text"]), reference)
                 torch.manual_seed(SAMPLE_SEED)
-                spoken.append((i, decoder[0].generate(tokens, generate.DEFAULT_SAMPLING, SAMPLE_MAX_FRAMES)))
+                spoken.append((i, decoder.generate(tokens, generate.DEFAULT_SAMPLING, SAMPLE_MAX_FRAMES)))
+        except Exception as e:  # a failed sample never stops training
+            log(f"Sample generation failed: {e}")
+        finally:
+            decoder = None
+            model.release()  # the decoder's caches
+            if offloaded:
+                for part in model.slow_parts():
+                    part.to("cpu")
+            torch.cuda.empty_cache()
+        try:
             codec.to("cuda")
             for i, codes in spoken:
                 if codes.shape[1]:
                     audio = codec.decode(codes.cuda()).float().cpu().numpy()
                     write_wav(args.samples_dir / f"step_{at:07d}_{i}.wav", audio, codec.sample_rate)
-        except Exception as e:  # a failed sample never stops training
-            log(f"Sample generation failed: {e}")
+        except Exception as e:
+            log(f"Sample decoding failed: {e}")
         finally:
             codec.to("cpu")
             torch.cuda.empty_cache()
@@ -408,7 +458,9 @@ def main() -> None:
         validate(step)
     if step > 0:
         save(step)
-    log(f"Peak GPU memory {torch.cuda.max_memory_reserved() / 2**30:.1f} GB.")
+    peak("training")
+    log(f"Peak GPU memory {max(peaks.values()):.1f} GB ("
+        + ", ".join(f"{phase} {gb:.1f}" for phase, gb in peaks.items() if gb) + ").")  # fmt: skip
     log("Stopped." if stop.is_set() and step < num_iters else "Training complete.")
 
 
