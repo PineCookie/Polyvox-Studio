@@ -1,7 +1,7 @@
 [project]
 name = "polyvox"
-version = "0.4.1"
-description = "Train text-to-speech voices from your own recordings (VoxCPM2, dots.tts, GPT-SoVITS) and use them"
+version = "0.5.0"
+description = "Train text-to-speech voices from your own recordings (VoxCPM2, dots.tts, GPT-SoVITS, S2-Pro) and use them"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
