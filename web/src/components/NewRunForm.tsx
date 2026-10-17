@@ -274,6 +274,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             params={params}
             engines={engines}
             fullFinetune={full}
+            smallGpu={!!gpu?.s2_offload}
             onChange={set}
             validation={validation}
             header={

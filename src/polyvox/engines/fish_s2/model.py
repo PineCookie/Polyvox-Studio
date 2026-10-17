@@ -261,8 +261,9 @@ def checkpoint_name(key: str) -> str | None:
     return None
 
 
-def load(model_dir: Path, device: str, dtype: torch.dtype = torch.bfloat16) -> DualAR:
-    """The model from its sharded safetensors, straight onto ``device`` (no float32 copy)."""
+def load(model_dir: Path, device: str, dtype: torch.dtype = torch.bfloat16, slow_device: str | None = None) -> DualAR:
+    """The model from its sharded safetensors, straight onto ``device`` (no float32 copy);
+    ``slow_device``: where the slow transformer (DualAR.slow_parts) goes instead."""
     from safetensors import safe_open
 
     config = Config.read(model_dir)
@@ -271,10 +272,11 @@ def load(model_dir: Path, device: str, dtype: torch.dtype = torch.bfloat16) -> D
     index = json.loads((model_dir / "model.safetensors.index.json").read_text(encoding="utf-8"))
     weights = {}
     for shard in sorted(set(index["weight_map"].values())):
-        with safe_open(str(model_dir / shard), framework="pt", device=str(device)) as f:
+        with safe_open(str(model_dir / shard), framework="pt", device=str(slow_device or device)) as f:
             for key in f.keys():  # noqa: SIM118 (safe_open has no iteration)
                 if name := checkpoint_name(key):
-                    weights[name] = f.get_tensor(key).to(dtype)
+                    target = device if slow_device is None or name.startswith("fast_") else slow_device
+                    weights[name] = f.get_tensor(key).to(target, dtype)
     missing, unexpected = model.load_state_dict(weights, strict=False, assign=True)
     if missing or unexpected:
         raise ValueError(f"S2-Pro checkpoint doesn't fit: missing {missing[:5]}, unexpected {unexpected[:5]}")

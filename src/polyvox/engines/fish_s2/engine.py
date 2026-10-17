@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 ENGINE = "fish_s2"
 MIN_GB = 15.0  # a 16 GB card reports a little under 16
+TRAIN_MIN_GB = 11.0  # training: a 12 GB card (the slow transformer offloaded)
 FRAMES_PER_CHAR = 5.0  # first guess (Chinese ~4.5 characters per second, 21.5 frames per second); then learned
 MIN_FRAMES = 10
 LEARN_MIN_CHARS = 10
@@ -220,6 +221,22 @@ class FishS2Engine(Engine):
     def loaded(self) -> bool:
         return self._runtime is not None
 
+    def training_gb(self) -> float | None:
+        """Memory of the GPU training runs on (POLYVOX_TRAIN_GPU, else the first)."""
+        return vram.total_gb(f"cuda:{self.settings.train_gpu or 0}")
+
+    def training_unavailable(self) -> str | None:
+        """Training needs less than synthesis: the slow transformer waits in CPU memory
+        except for its one pass over the clips and for the samples (worker.py)."""
+        if not self.settings.model_path(self.model_setting):
+            return "download it first (Models: Fish Audio S2-Pro)."
+        gb = self.training_gb()
+        if gb is None:
+            return "it needs a CUDA GPU."
+        if gb < TRAIN_MIN_GB:
+            return f"training needs a 12 GB GPU (this one has {gb:.0f} GB)."
+        return None
+
     def unavailable(self) -> str | None:
         if not self.settings.model_path(self.model_setting):
             return "download it first (Models: Fish Audio S2-Pro)."
@@ -323,8 +340,13 @@ class FishS2Engine(Engine):
         dataset's best few clips joined."""
         from ...data import manifests, references
 
-        if reason := self.unavailable():
+        if reason := self.training_unavailable():
             raise ValueError(f"Fish Audio S2-Pro can't train here: {reason}")
+        # Below 16 GB the whole model never fits beside training: the slow transformer
+        # always waits in CPU memory, and can't train itself.
+        small = (self.training_gb() or 0) < MIN_GB
+        if params.s2_slow and small:
+            raise ValueError("Training the slow transformer needs a 16 GB GPU.")
         if params.s2_slow and params.optimizer != "adamw":
             raise ValueError("Training the slow transformer needs AdamW (Prodigy can't give it a smaller rate).")
         dataset = manifests.resolve(self.settings.data_dir, params.dataset)
@@ -354,7 +376,7 @@ class FishS2Engine(Engine):
             },
             "compile": self.settings.optimize is not False,  # fuse the fast layers' training forward
             "cached_references": params.s2_cached_references,
-            "offload": params.s2_offload,
+            "offload": params.s2_offload or small,
             # Codes and slow transformer states, shared by the dataset's runs (hidden folders aren't datasets).
             "cache_file": str(dataset.parent / ".cache" / "fish_s2.pt"),
             # The slow transformer's own AdamW rate (learning_rate is the fast layers').

@@ -551,7 +551,7 @@ class TrainingManager:
         engine = self.engines.get(id)
         if engine is None:
             raise ValueError(f"Unknown engine '{id}'.")
-        if reason := engine.unavailable():
+        if reason := engine.training_unavailable():
             raise ValueError(f"{engine.name} can't train here: {reason}")
         return engine
 

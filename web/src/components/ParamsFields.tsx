@@ -24,6 +24,9 @@ interface Props {
   engines?: Engine[]
   // The engine trains every weight: no LoRA, optimizer or accumulation settings.
   fullFinetune?: boolean
+  // S2-Pro: the GPU is too small for the whole model beside training (vram.Profile.s2_offload):
+  // the slow transformer always waits in CPU memory and can't train.
+  smallGpu?: boolean
 }
 
 /** Training parameters, editable for a new run and read-only for an existing one. */
@@ -36,6 +39,7 @@ export function ParamsFields({
   epochs,
   engines = [],
   fullFinetune = false,
+  smallGpu = false,
 }: Props) {
   const t = useT()
   const readOnly = !onChange
@@ -50,6 +54,7 @@ export function ParamsFields({
   const engineOptions = engines.some((e) => e.id === params.engine)
     ? engines
     : [...engines, { id: params.engine, name: params.engine, unavailable: null } as Engine]
+  const cantTrain = (e: Engine) => (e.training_unavailable === undefined ? e.unavailable : e.training_unavailable)
 
   function numberField(
     key: NumericKey,
@@ -87,7 +92,7 @@ export function ParamsFields({
             <span>{t.params.engine}</span>
             <select value={params.engine} onChange={(e) => onChange?.('engine', e.target.value)}>
               {engineOptions.map((e) => (
-                <option key={e.id} value={e.id} disabled={!!e.unavailable} title={e.unavailable ?? undefined}>
+                <option key={e.id} value={e.id} disabled={!!cantTrain(e)} title={cantTrain(e) ?? undefined}>
                   {e.name}
                 </option>
               ))}
@@ -162,6 +167,7 @@ export function ParamsFields({
             <input
               type="checkbox"
               checked={params.s2_slow}
+              disabled={smallGpu && !params.s2_slow}
               onChange={(e) => {
                 onChange?.('s2_slow', e.target.checked)
                 if (e.target.checked && params.optimizer !== 'adamw') {
@@ -172,7 +178,7 @@ export function ParamsFields({
             />{' '}
             {t.params.s2_slow}
           </label>
-          <span className="muted hint">{t.s2SlowHint}</span>
+          <span className="muted hint">{smallGpu ? t.s2SlowNeeds16 : t.s2SlowHint}</span>
         </div>
       )}
       {hint}
@@ -202,7 +208,8 @@ export function ParamsFields({
               <label>
                 <input
                   type="checkbox"
-                  checked={params.s2_offload}
+                  checked={params.s2_offload || smallGpu}
+                  disabled={smallGpu}
                   onChange={(e) => onChange?.('s2_offload', e.target.checked)}
                 />{' '}
                 {t.params.s2_offload}

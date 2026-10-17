@@ -220,8 +220,9 @@ transformer in CPU memory** cuts training's GPU memory from about 12 GB to 3.5 G
 (it comes back for the samples, about 1 s each way). **Also
 train the slow transformer** is experimental and off by default: it needs AdamW
 with its own small learning rate, and in our tests it sounded no more like the
-voice. Training and synthesis need a 16 GB GPU; the recipe was tuned on one
-voice.
+voice. Synthesis needs a 16 GB GPU and training a 12 GB one (below 16 GB the
+slow transformer always waits in CPU memory and can't train itself); the recipe
+was tuned on one voice.
 
 A run lives in `lora/<model>/<name>/` (`voxcpm`, `dots_tts`, `gpt_sovits` or `fish_s2`). Runs
 from VoxCPM's `lora_ft_webui.py` use the same layout, so they appear too and can be
@@ -289,8 +290,8 @@ The studio picks batch sizes and which models share the GPU from its memory:
 | 8 GB | yes; reference denoising on the CPU | yes, with gradient checkpointing (slower) | one model on the GPU at a time |
 | under 8 GB | no (needs about 8 GB) | no | as for 8 GB |
 
-Fish Audio S2-Pro is the exception: synthesis and training need 16 GB (its
-weights alone are 9 GB in bfloat16).
+Fish Audio S2-Pro is the exception: synthesis needs 16 GB (its weights alone are
+9 GB in bfloat16) and training 12 GB.
 
 Smaller cards keep the effective batch, so they train slower, not differently. A
 batch that still runs out of memory is retried in halves. Starting a training run

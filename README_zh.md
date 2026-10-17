@@ -99,7 +99,7 @@
 ## 💻 运行要求
 
 - 🖥️ Windows 或 Linux。
-- 🎮 8 GB 及以上显存的 NVIDIA 显卡；16 GB 可以全速训练，S2-Pro 需要 16 GB。Linux 上的 AMD 显卡
+- 🎮 8 GB 及以上显存的 NVIDIA 显卡；16 GB 可以全速训练。S2-Pro 合成需要 16 GB，训练需要 12 GB。Linux 上的 AMD 显卡
   应该可用，但未经测试。没有显卡时只能准备数据集。
 - 💾 模型所需磁盘空间：每个 TTS 模型约 5 GB（S2-Pro 11 GB），数据集工具（语音识别和对齐）另需约 6 GB。
 

@@ -110,9 +110,9 @@ How each is done, and more numbers, in the [guide](docs/GUIDE.md#speed).
 ## 💻 Requirements
 
 - 🖥️ Windows or Linux.
-- 🎮 An NVIDIA GPU with 8 GB of memory or more; 16 GB trains at full speed and
-  is needed for S2-Pro. AMD GPUs on Linux should work but are untested. Without a
-  GPU you can only prepare datasets.
+- 🎮 An NVIDIA GPU with 8 GB of memory or more; 16 GB trains at full speed.
+  S2-Pro needs 16 GB to synthesize and 12 GB to train. AMD GPUs on Linux should
+  work but are untested. Without a GPU you can only prepare datasets.
 - 💾 Disk space for models: about 5 GB per TTS model (S2-Pro 11 GB), plus about
   6 GB for the dataset tools (speech recognition and alignment).
 

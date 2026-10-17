@@ -62,6 +62,7 @@ export interface Engine {
   id: string
   name: string
   unavailable: string | null // why it can't run here
+  training_unavailable?: string | null // why it can't train here (engines that train)
   capabilities: {
     sample_rate: number
     training_rate: number

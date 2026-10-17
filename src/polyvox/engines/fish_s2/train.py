@@ -104,7 +104,7 @@ def slow_states(
             jobs.append((i, v, *seq.rows(c["text"], c["codes"], joined_reference(clips, chosen))))
     jobs.sort(key=lambda j: j[2].shape[1])  # similar lengths together: little padding
     out = {i: [None] * (len(picks[i]) + 1) for i in todo}
-    device = trainer.model.embeddings.weight.device
+    device = trainer.device
     k = 0
     while k < len(jobs):
         if stop is not None and stop.is_set():
@@ -209,9 +209,14 @@ class Trainer:
     operations around the matrix products. If compiling fails before a fused call
     has worked, training goes on unfused."""
 
-    def __init__(self, model: DualAR, end_token: int, slow: bool = False, recompute: bool = True, fused: bool = False):
+    def __init__(
+        self, model: DualAR, end_token: int, slow: bool = False, recompute: bool = True, fused: bool = False,
+        device=None,
+    ):  # fmt: skip
+        """``device``: where training runs (default: the model's); the slow transformer
+        may wait elsewhere while only the fast one trains."""
         c = model.config
-        dev = model.embeddings.weight.device
+        dev = self.device = torch.device(device) if device is not None else model.embeddings.weight.device
         self.model, self.slow, self.recompute = model, slow, recompute
         self.slow_table = rope_table(4096, c.slow.head_dim, c.slow.rope_base, dev)
         self.fast_table = rope_table(c.codebooks, c.fast.head_dim, c.fast.rope_base, dev)

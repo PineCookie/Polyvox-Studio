@@ -172,6 +172,10 @@ class Engine(ABC):
         """Why the engine can't run here (a missing package), else None."""
         return None
 
+    def training_unavailable(self) -> str | None:
+        """Why the engine can't train here, else None (by default: when it can't run)."""
+        return self.unavailable()
+
     def options(self, values: dict) -> dict:
         """``values`` checked against the engine's params, defaults filled in."""
         by_name = {p.name: p for p in self.params}
@@ -197,6 +201,7 @@ class Engine(ABC):
             "id": self.id,
             "name": self.name,
             "unavailable": self.unavailable(),
+            "training_unavailable": self.training_unavailable() if self.capabilities.training else None,
             "capabilities": asdict(self.capabilities),
             "params": [asdict(p) for p in self.params],
             "model_setting": self.model_setting,

@@ -281,7 +281,8 @@ def test_a_run_trains_the_fast_transformer_with_the_datasets_best_clips(settings
     params = TrainParams(name="run_a", engine="fish_s2", dataset="speaker_a/train.jsonl", optimizer="prodigy_sf")
     with pytest.raises(ValueError, match="download"):
         engine.training_config(params, tmp_path / "run_a", tmp_path / "train.jsonl", None)
-    monkeypatch.setattr(engine, "unavailable", lambda: None)
+    monkeypatch.setattr(engine, "training_unavailable", lambda: None)
+    monkeypatch.setattr(engine, "training_gb", lambda: 16.0)
 
     config = engine.training_config(params, tmp_path / "run_a", tmp_path / "train.jsonl", None)
 
@@ -297,6 +298,24 @@ def test_a_run_trains_the_fast_transformer_with_the_datasets_best_clips(settings
     assert "slow_learning_rate" not in config
     clips = config["reference"]["clips"]
     assert len(clips) == 3 and all(c["audio"].endswith(".wav") and "short" not in c["audio"] for c in clips)
+
+    # A 12 GB card trains with the slow transformer in CPU memory, whatever was asked, and
+    # can't train the slow transformer itself.
+    monkeypatch.setattr(engine, "training_gb", lambda: 11.6)
+    assert engine.training_config(params, tmp_path / "c", tmp_path / "t.jsonl", None)["offload"] is True
+    with pytest.raises(ValueError, match="16 GB"):
+        engine.training_config(slow, tmp_path / "d", tmp_path / "t.jsonl", None)
+
+
+def test_training_needs_less_gpu_memory_than_synthesis(settings, monkeypatch):
+    from polyvox import vram
+
+    engine = FishS2Engine(dataclasses.replace(settings, s2_model="X:/models/s2-pro"))
+    for gb, synthesis, training in ((16.0, True, True), (11.6, False, True), (7.6, False, False)):
+        monkeypatch.setattr(vram, "total_gb", lambda device, gb=gb: gb)
+        assert (engine.unavailable() is None, engine.training_unavailable() is None) == (synthesis, training), gb
+    assert "12 GB" in engine.training_unavailable()
+    assert engine.public()["training_unavailable"] == engine.training_unavailable()
 
 
 def test_a_voice_package_carries_its_reference(lora_dir, tmp_path):
