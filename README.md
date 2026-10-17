@@ -9,7 +9,7 @@
 ![Python 3.13](https://img.shields.io/badge/python-3.13-3776ab?logo=python&logoColor=white)
 ![Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-555)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76b900?logo=nvidia&logoColor=white)
-![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS-5b5bd6)
+![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS%20%7C%20S2--Pro-5b5bd6)
 ![UI](https://img.shields.io/badge/UI-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-e67e22)
 ![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
@@ -19,13 +19,15 @@ English | [简体中文](README_zh.md)
 
 A web app that turns raw audio into a clean dataset, fine-tunes a voice on
 [VoxCPM2](https://github.com/OpenBMB/VoxCPM),
-[dots.tts](https://github.com/rednote-hilab/dots.tts) or
-[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS), and speaks with it.
+[dots.tts](https://github.com/rednote-hilab/dots.tts),
+[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) or
+[Fish Audio S2-Pro](https://huggingface.co/fishaudio/s2-pro), and speaks with it.
 
 ## ✨ Highlights
 
-- 🎙️ **Three TTS models, one workflow.** VoxCPM2, dots.tts and GPT-SoVITS (v2Pro,
-  v2ProPlus, v4). Prepare a dataset once and train any of them.
+- 🎙️ **Four TTS models, one workflow.** VoxCPM2, dots.tts, GPT-SoVITS (v2Pro,
+  v2ProPlus, v4) and Fish Audio S2-Pro. Prepare a dataset once and train any of
+  them.
 - ✂️ **Raw recordings in, clean dataset out.** Hours of audio, even m4a or video
   files, are cut into clips between words and transcribed automatically. Music,
   reverb and noise can be removed.
@@ -46,7 +48,7 @@ A web app that turns raw audio into a clean dataset, fine-tunes a voice on
 ```mermaid
 flowchart LR
     A["🎧 Your recordings<br/>or transcript lists"] --> B["✂️ Prepare<br/>slice · transcribe · check"]
-    B --> C["🏋️ Train<br/>VoxCPM2 · dots.tts · GPT-SoVITS"]
+    B --> C["🏋️ Train<br/>VoxCPM2 · dots.tts · GPT-SoVITS · S2-Pro"]
     C --> D["🗣️ Synthesize<br/>with your voice"]
 ```
 
@@ -89,11 +91,11 @@ How each is done, and more numbers, in the [guide](docs/GUIDE.md#speed).
 ## 💻 Requirements
 
 - 🖥️ Windows or Linux.
-- 🎮 An NVIDIA GPU with 8 GB of memory or more; 16 GB trains at full speed. AMD
-  GPUs on Linux should work but are untested. Without a GPU you can only
-  prepare datasets.
-- 💾 Disk space for models: about 5 GB per TTS model, plus about 6 GB for the
-  dataset tools (speech recognition and alignment).
+- 🎮 An NVIDIA GPU with 8 GB of memory or more; 16 GB trains at full speed and
+  is needed for S2-Pro. AMD GPUs on Linux should work but are untested. Without a
+  GPU you can only prepare datasets.
+- 💾 Disk space for models: about 5 GB per TTS model (S2-Pro 11 GB), plus about
+  6 GB for the dataset tools (speech recognition and alignment).
 
 ## 📖 Learn more
 
@@ -105,3 +107,7 @@ measurements, models, configuration and development.
 
 [Apache-2.0](LICENSE). Polyvox Studio includes code from other projects under their own
 licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+Models downloaded in the Models tab keep their own licenses, shown there. Fish Audio
+S2-Pro's weights, and voices trained on them here, are for research and
+non-commercial use only (Fish Audio Research License).

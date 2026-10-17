@@ -18,20 +18,30 @@ settings do, and how to configure and develop the studio.
 The **Voice** panel lists the base models and every trained voice, grouped by
 model; a voice with several checkpoints lets you pick one. Then:
 
-- **Text**, with VoxCPM2's non-verbal tags (laugh, sigh, ...) a click away.
+- **Text**, with the model's inline tags a click away: VoxCPM2's sounds and
+  reactions (laugh, sigh, ...); S2-Pro's emotions, sounds, delivery and pauses,
+  plus any description in brackets (**Custom…**), which acts on the words after
+  it. Tags a model doesn't know are marked in the text.
 - **Style** (VoxCPM2): describe the voice, e.g. "a calm, warm voice, speaking
   slowly".
-- **Reference audio** clones a voice from a clip; adding its transcript
-  (**Transcribe** fills it in) usually makes the result closer.
+- **Reference audio**: each model shows its own inputs. VoxCPM2 has a
+  Reference (who it sounds like) and a Prompt (speech it continues from, with
+  its transcript); dots.tts one clip; GPT-SoVITS a prompt clip and timbre clips;
+  S2-Pro a reference with its transcript. Each can be an upload or **Dataset
+  clips**: three of a dataset's best clips (change them with **Other clips**),
+  joined into one for models that take a single clip. **Transcribe** fills in a
+  transcript. On every model, about 20 s of reference clones clearly better
+  than one short clip.
 - **Advanced**: guidance, steps, seed and the model's own settings.
 - **History** keeps this session's clips to compare and download.
 
-GPT-SoVITS always speaks from a reference clip: each of its voices has a default
-one, picked from the training data, that you can change in the Voice panel.
+GPT-SoVITS always speaks from a reference clip, and S2-Pro voices trained here
+keep the clips they were trained with: each such voice has a default reference,
+picked from its dataset, that you can change in the Voice panel.
 
 The first generation after a model loads takes longer while the model is
-compiled (about 30 s for VoxCPM2, a minute for dots.tts; several minutes the very
-first time); later ones are fast.
+compiled (about 30 s for VoxCPM2, a minute for dots.tts, a few seconds for
+S2-Pro; several minutes the very first time); later ones are fast.
 
 ## Preparing datasets
 
@@ -181,6 +191,7 @@ training settings; the name is suggested from the dataset and model.
 | dots.tts | a LoRA (rank 32) on the language model and the diffusion head | 4 epochs, Prodigy Schedule-Free |
 | GPT-SoVITS v2Pro / v2ProPlus | both models in full, SoVITS then GPT, as the webui does | 8 + 15 epochs |
 | GPT-SoVITS v4 | a LoRA on the SoVITS diffusion model, then the GPT in full | 8 + 15 epochs |
+| Fish Audio S2-Pro | a LoRA (rank 32) on the fast transformer, which adds each audio frame's detail | 4 epochs, Prodigy Schedule-Free |
 
 - **Stop** saves a checkpoint first; **Resume** continues from it, and
   **Continue to** adds more steps to a finished run.
@@ -196,7 +207,23 @@ training settings; the name is suggested from the dataset and model.
   finds its own step size for each part of the model, so the learning rate is a
   multiplier (1). AdamW with a cosine schedule and Prodigy are the alternatives.
 
-A run lives in `lora/<model>/<name>/` (`voxcpm`, `dots_tts` or `gpt_sovits`). Runs
+**S2-Pro** learns the voice from its dataset and keeps three of its clips as
+the voice's reference, which it speaks with unless you give another. Half the
+training sequences clone another clip of the dataset, as synthesis with a
+reference does. Training clips get a faint noise floor (-72 dBFS): in separated
+vocals, stretches of digital silence taught the model long pauses mid-sentence.
+The large slow transformer stays frozen; its output for each clip is computed
+once and kept in the dataset's `.cache/` (about 1 GB per hour of audio), so later
+runs on the same dataset start training right away. Under Advanced, **Cached
+references per clip** sets how many reference variants are kept, and **Slow
+transformer in CPU memory** cuts training's GPU memory from about 12 GB to 3.5 GB
+(it comes back for the samples, about 1 s each way). **Also
+train the slow transformer** is experimental and off by default: it needs AdamW
+with its own small learning rate, and in our tests it sounded no more like the
+voice. Training and synthesis need a 16 GB GPU; the recipe was tuned on one
+voice.
+
+A run lives in `lora/<model>/<name>/` (`voxcpm`, `dots_tts`, `gpt_sovits` or `fish_s2`). Runs
 from VoxCPM's `lora_ft_webui.py` use the same layout, so they appear too and can be
 resumed or continued. Runs and voices lying directly in `lora/` (from older
 versions, or copied in) are moved into their model's folder when the server
@@ -208,8 +235,9 @@ Select a voice in the Voice panel and choose **Export**. A LoRA zip holds only
 the weights (bfloat16 by default: half the size, same output), its configuration
 with the base model as a Hugging Face id, and a README with usage. A GPT-SoVITS
 voice exports both models in the GPT-SoVITS webui's format, with its reference
-clip and transcript. Local paths, optimizer state, logs and dataset audio are
-left out.
+clip and transcript; an S2-Pro voice includes its reference too, and its README
+states the weights' non-commercial license. Local paths, optimizer state, logs
+and other dataset audio are left out.
 
 **Import** in the Voice panel adds such a zip. **GPT-SoVITS…** imports a pair
 of weights trained in the GPT-SoVITS webui (v2, v2Pro, v2ProPlus or v4), with a
@@ -229,9 +257,11 @@ plain PyTorch loop:
 | Switching voices (VoxCPM2, dots.tts) | LoRAs of any rank are written into the running, compiled model | about 1 s instead of a 30-40 s reload |
 | dots.tts synthesis | compiled; every decoding step replayed as a CUDA graph | about 4x faster |
 | GPT-SoVITS synthesis | the GPT's decoding step as one CUDA graph with a static cache and fused layer math; v4's diffusion model compiled | about 2.5x faster (v2Pro / v2ProPlus), 1.3x (v4) |
+| S2-Pro synthesis | our own implementation: each audio frame (the slow step and the fast transformer's ten) as one CUDA graph, the steps between its linear layers fused | about 0.6 s per second of audio |
 | VoxCPM2 training | frozen weights in bfloat16 (half the memory, so batches of 4 fit 16 GB); each clip's audio encoded once; transformer layers fused | about 1.6x faster per step; 2.3x on 8 GB cards |
 | dots.tts training | each clip encoded once and cached on disk; no vocabulary logits; fused layers | about 3x faster per step |
 | GPT-SoVITS training | no per-parameter GPU syncs; features cached per clip in the dataset; v4's diffusion blocks compiled | about 1.2x faster per step; starts in seconds |
+| S2-Pro training | the frozen slow transformer's output cached per clip in the dataset; the fast transformer's layers compiled | about 2.8x faster per step; later runs skip the first pass |
 | Preparing datasets | compiled vocal separation; voice detection and speaker embeddings batched on the GPU | separation 2x, voice detection 3.5x, the other-voice check about 10x |
 
 Compiling takes a little time once per model load (and longer on the very first
@@ -259,6 +289,9 @@ The studio picks batch sizes and which models share the GPU from its memory:
 | 8 GB | yes; reference denoising on the CPU | yes, with gradient checkpointing (slower) | one model on the GPU at a time |
 | under 8 GB | no (needs about 8 GB) | no | as for 8 GB |
 
+Fish Audio S2-Pro is the exception: synthesis and training need 16 GB (its
+weights alone are 9 GB in bfloat16).
+
 Smaller cards keep the effective batch, so they train slower, not differently. A
 batch that still runs out of memory is retried in halves. Starting a training run
 unloads the synthesis model if both use the same GPU; to keep synthesizing while
@@ -284,6 +317,7 @@ whether it is downloaded, and downloads the missing ones with progress into
 | dots.tts SOAR | synthesis and LoRA training | 4.9 GB |
 | GPT-SoVITS v2Pro / v2ProPlus, G2PW | synthesis and voice training (G2PW: Chinese pronunciation) | 1.7 + 0.6 GB |
 | GPT-SoVITS v4 | synthesis and voice training at 48 kHz | 0.8 GB |
+| Fish Audio S2-Pro | synthesis and LoRA training at 44.1 kHz; research and non-commercial use only | 11 GB |
 | Qwen3-ASR 1.7B | transcribing, slicing, Compare with ASR | 4.1 GB |
 | Qwen3-ForcedAligner 0.6B | slicing and checking clips | 1.9 GB |
 | wav2vec2 Chinese | second aligner for checks | 1.3 GB |
@@ -318,6 +352,7 @@ Environment variables, all optional:
 | `POLYVOX_GSV_MODEL` | (downloaded copy) | GPT-SoVITS: a folder laid out like `lj1995/GPT-SoVITS` (v2Pro, s1v3.ckpt, encoders) |
 | `POLYVOX_GSV_G2PW_MODEL` | (downloaded copy) | GPT-SoVITS: the G2PW folder |
 | `POLYVOX_GSV_V4_MODEL` | (downloaded copy) | GPT-SoVITS v4: a folder with `s2Gv4.pth` and `vocoder.pth` |
+| `POLYVOX_S2_MODEL` | (downloaded copy) | Fish Audio S2-Pro: a folder laid out like `fishaudio/s2-pro` |
 | `POLYVOX_ASR_MODEL` | `Qwen/Qwen3-ASR-1.7B-hf` | speech recognition model |
 | `POLYVOX_ALIGN_MODEL` | `Qwen/Qwen3-ForcedAligner-0.6B-hf` | forced aligner |
 | `POLYVOX_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (one language) |
@@ -350,7 +385,7 @@ as upstream has it, with any changes listed in each package's `__init__.py`.
 ```
 models/            downloaded models (git-ignored)
 data/              datasets: <name>/train.jsonl, audio, dataset.json (git-ignored)
-lora/              training runs, LoRAs and voices: voxcpm/, dots_tts/, gpt_sovits/ (git-ignored)
+lora/              training runs, LoRAs and voices: voxcpm/, dots_tts/, gpt_sovits/, fish_s2/ (git-ignored)
 src/polyvox/
   config.py        settings from POLYVOX_* env vars
   models.py        the models used, and downloading them
@@ -360,6 +395,8 @@ src/polyvox/
     dots/          engine.py; lora.py (LoRA layers, merging); worker.py (training)
     gpt_sovits/    engine.py; synth.py (synthesis); voices.py (voice folders, webui import);
                    features.py + worker.py (training: SoVITS then GPT)
+    fish_s2/       engine.py; model.py + codec.py (our implementation); decode.py (CUDA graphs);
+                   lora.py, train.py, worker.py (training)
   data/            manifests.py (training manifests); record.py (dataset.json);
                    audio_io.py (audio without a system FFmpeg)
   prep/            dataset preparation: steps.py (the dataset page's steps), importer.py,

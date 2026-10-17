@@ -9,7 +9,7 @@
 ![Python 3.13](https://img.shields.io/badge/python-3.13-3776ab?logo=python&logoColor=white)
 ![Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-555)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76b900?logo=nvidia&logoColor=white)
-![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS-5b5bd6)
+![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS%20%7C%20S2--Pro-5b5bd6)
 ![UI](https://img.shields.io/badge/UI-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-e67e22)
 ![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
@@ -19,13 +19,14 @@
 
 一个网页应用：把原始音频整理成干净的数据集，在
 [VoxCPM2](https://github.com/OpenBMB/VoxCPM)、
-[dots.tts](https://github.com/rednote-hilab/dots.tts) 或
-[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 上微调音色，再用它说话。
+[dots.tts](https://github.com/rednote-hilab/dots.tts)、
+[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 或
+[Fish Audio S2-Pro](https://huggingface.co/fishaudio/s2-pro) 上微调音色，再用它说话。
 
 ## ✨ 亮点
 
-- 🎙️ **三种 TTS 模型，一套流程。** VoxCPM2、dots.tts 和 GPT-SoVITS（v2Pro、v2ProPlus、v4）。
-  数据集准备一次，就能训练任意一种模型。
+- 🎙️ **四种 TTS 模型，一套流程。** VoxCPM2、dots.tts、GPT-SoVITS（v2Pro、v2ProPlus、v4）和
+  Fish Audio S2-Pro。数据集准备一次，就能训练任意一种模型。
 - ✂️ **放进原始录音，得到干净的数据集。** 几个小时的音频（m4a、视频文件也可以）会自动在词与词之间
   切成片段并转写成文字；还可以去除音乐、混响和噪声。
 - 🔍 **自动找出有问题的片段。** 文本写错、字被截断、混进别人的声音、失真和唱歌都会被标记出来，
@@ -41,7 +42,7 @@
 ```mermaid
 flowchart LR
     A["🎧 你的录音<br/>或标注列表"] --> B["✂️ 准备<br/>切分 · 转写 · 检查"]
-    B --> C["🏋️ 训练<br/>VoxCPM2 · dots.tts · GPT-SoVITS"]
+    B --> C["🏋️ 训练<br/>VoxCPM2 · dots.tts · GPT-SoVITS · S2-Pro"]
     C --> D["🗣️ 合成<br/>用你的音色说话"]
 ```
 
@@ -81,9 +82,9 @@ flowchart LR
 ## 💻 运行要求
 
 - 🖥️ Windows 或 Linux。
-- 🎮 8 GB 及以上显存的 NVIDIA 显卡；16 GB 可以全速训练。Linux 上的 AMD 显卡应该可用，但未经测试。
-  没有显卡时只能准备数据集。
-- 💾 模型所需磁盘空间：每个 TTS 模型约 5 GB，数据集工具（语音识别和对齐）另需约 6 GB。
+- 🎮 8 GB 及以上显存的 NVIDIA 显卡；16 GB 可以全速训练，S2-Pro 需要 16 GB。Linux 上的 AMD 显卡
+  应该可用，但未经测试。没有显卡时只能准备数据集。
+- 💾 模型所需磁盘空间：每个 TTS 模型约 5 GB（S2-Pro 11 GB），数据集工具（语音识别和对齐）另需约 6 GB。
 
 ## 📖 了解更多
 
@@ -94,3 +95,6 @@ flowchart LR
 
 [Apache-2.0](LICENSE)。Polyvox Studio 包含来自其他项目的代码，它们遵循各自的许可证，见
 [第三方声明](THIRD_PARTY_NOTICES.md)（英文）。
+
+在「模型」页下载的模型遵循各自的许可证（页面上有标注）。Fish Audio S2-Pro 的权重，以及在这里基于它
+训练的音色，仅限研究和非商业用途（Fish Audio Research License）。
