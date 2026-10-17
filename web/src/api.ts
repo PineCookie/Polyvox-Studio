@@ -418,6 +418,8 @@ export interface TrainParams {
   gsv_version: string // the GPT-SoVITS base model trained from: v2ProPlus | v2Pro
   s2_slow: boolean // S2-Pro: also a LoRA on the slow transformer (experimental; off by default)
   s2_slow_lr: number // its own AdamW learning rate (learning_rate is then the fast transformer's)
+  s2_cached_references: number // fast-only: references cached per clip (0 = train without references)
+  s2_offload: boolean // fast-only: the slow transformer waits in CPU memory between samples
 }
 
 function postJson(url: string, body?: unknown): Promise<Response> {

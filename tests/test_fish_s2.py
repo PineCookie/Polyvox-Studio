@@ -280,6 +280,7 @@ def test_a_run_trains_the_fast_transformer_with_the_datasets_best_clips(settings
     config = engine.training_config(params, tmp_path / "run_a", tmp_path / "train.jsonl", None)
 
     assert config["lora"]["targets"] == ["fast_attn", "fast_mlp"] and config["optimizer"] == "prodigy_sf"
+    assert (config["cached_references"], config["offload"]) == (2, True)
     slow = params.model_copy(update={"s2_slow": True})
     with pytest.raises(ValueError, match="AdamW"):  # Prodigy can't give the slow layers a smaller rate
         engine.training_config(slow, tmp_path / "b", tmp_path / "t.jsonl", None)

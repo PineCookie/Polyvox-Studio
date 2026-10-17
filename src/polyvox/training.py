@@ -105,6 +105,10 @@ class TrainParams(BaseModel):
     # engines/fish_s2/lora.py), at its own AdamW learning rate (learning_rate is the fast layers').
     s2_slow: bool = False
     s2_slow_lr: float = Field(2e-5, gt=0, le=1)
+    # S2-Pro training only the fast transformer: references cached per clip (0: train without
+    # references), and the slow transformer kept in CPU memory between validation samples.
+    s2_cached_references: int = Field(2, ge=0, le=8)
+    s2_offload: bool = True
 
 
 class RunSummary(BaseModel):

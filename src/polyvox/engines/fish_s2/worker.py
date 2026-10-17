@@ -18,14 +18,15 @@ when the run was made) goes into every checkpoint as the voice's default.
 
 Clips are encoded once (the codec then leaves the GPU). Training only the fast
 transformer (the default), the frozen slow transformer's states are computed
-once per clip, without and with two references picked once
+once per clip, without and with a few references picked once (config
+"cached_references", default 2)
 (train.reference_picks, train.slow_states), instead of every step. Both go into
 a cache shared by the dataset's runs (config "cache_file", <dataset>/.cache/;
 entries per clip as GPT-SoVITS's features: gpt_sovits.features.clip_key), so
 another run on the same clips (other LoRA settings, a resume) starts training at
 once. Training and validation losses then need only the cached states, so the
 slow transformer (~7.7 GB) waits in CPU memory and comes back to the GPU only
-to speak the validation samples (~1 s each way). The fast layers' training
+to speak the validation samples (~1 s each way; config "offload", default on). The fast layers' training
 forward is compiled (Trainer ``fused``; config "compile").
 """
 
@@ -56,14 +57,15 @@ def clean(text: str) -> str:
 
 
 def cache_meta(model_dir: Path) -> dict:
-    """What every cache entry depends on besides its clip."""
-    from .train import CACHED_REFERENCES, MAX_REFERENCE_CLIPS, NOISE_FLOOR_DB
+    """What every cache entry depends on besides its clip (and its reference picks, which
+    each entry keeps)."""
+    from .train import MAX_REFERENCE_CLIPS, NOISE_FLOOR_DB
 
     return {
         "version": CACHE_VERSION,
         "model": str(model_dir),
         "noise_floor_db": NOISE_FLOOR_DB,
-        "references": [CACHED_REFERENCES, MAX_REFERENCE_CLIPS],
+        "max_reference_clips": MAX_REFERENCE_CLIPS,
     }
 
 
@@ -142,7 +144,16 @@ def main() -> None:
     from . import decode, generate, prompt
     from . import lora as s2lora
     from . import model as s2model
-    from .train import REFERENCE_SHARE, Sequences, Trainer, collate, pick_reference, reference_picks, slow_states
+    from .train import (
+        CACHED_REFERENCES,
+        REFERENCE_SHARE,
+        Sequences,
+        Trainer,
+        collate,
+        pick_reference,
+        reference_picks,
+        slow_states,
+    )
 
     vram.apply_limit("cuda")
     stop = threading.Event()
@@ -202,10 +213,17 @@ def main() -> None:
     offloaded = False
     if not slow:  # the frozen slow transformer's states, once per clip and reference pick
         # Training clips clone from other training clips; validation clips from any of the run's.
-        n = len(train_keys)
-        picks = reference_picks(train_keys) + reference_picks(keys)[n:]
+        n, count = len(train_keys), int(config.get("cached_references", CACHED_REFERENCES))
+        picks = reference_picks(train_keys, count) + reference_picks(keys, count)[n:]
         wanted = [[[keys[j] for j in pick] for pick in clip_picks] for clip_picks in picks]
-        todo = [i for i, k in enumerate(keys) if store[k].get("refs") != wanted[i]]
+
+        def cached_for(i: int) -> bool:
+            """A clip's picks come one by one from its own sequence: an entry made with
+            more picks holds these as its first ones."""
+            refs = store[keys[i]].get("refs")
+            return refs is not None and refs[:count] == wanted[i] and len(refs) >= count
+
+        todo = [i for i in range(len(keys)) if not cached_for(i)]
         if todo:
             t0 = time.time()
             states = slow_states(trainer, seq, train_clips + val_clips, picks, todo, stop=stop)
@@ -220,15 +238,16 @@ def main() -> None:
             log(f"Slow transformer states of {len(todo)} clips computed in {time.time() - t0:.0f} s.")
         if len(todo) < len(keys):
             log(f"Slow transformer states of {len(keys) - len(todo)} clips from the dataset's cache.")
-        cache = [store[k]["states"] for k in train_keys]
-        val_cache = [store[k]["states"] for k in val_keys]
-        # Until samples need it, the slow transformer waits in CPU memory: training and
-        # validation run on the cached states alone.
-        for part in model.slow_parts():
-            part.to("cpu")
-        torch.cuda.empty_cache()
-        offloaded = True
-        log(f"Slow transformer moved to the CPU; {torch.cuda.memory_allocated() / 2**30:.1f} GB left on the GPU.")
+        cache = [store[k]["states"][: count + 1] for k in train_keys]  # without a reference, then each pick
+        val_cache = [store[k]["states"][: count + 1] for k in val_keys]
+        if config.get("offload", True):
+            # Until samples need it, the slow transformer waits in CPU memory: training and
+            # validation run on the cached states alone.
+            for part in model.slow_parts():
+                part.to("cpu")
+            torch.cuda.empty_cache()
+            offloaded = True
+            log(f"Slow transformer moved to the CPU; {torch.cuda.memory_allocated() / 2**30:.1f} GB left on the GPU.")
     peaks = {"preparing": 0.0, "training": 0.0, "samples": 0.0}
 
     def peak(phase: str) -> None:
@@ -420,8 +439,11 @@ def main() -> None:
         for _ in range(accum):
             picked = batches.next()
             if cache:
-                # Without a reference, or with one of the clip's cached ones.
-                variants = [rng.randint(1, len(cache[i]) - 1) if rng.random() < REFERENCE_SHARE else 0 for i in picked]
+                # Without a reference, or with one of the clip's cached ones (if any are).
+                variants = [
+                    rng.randint(1, len(cache[i]) - 1) if len(cache[i]) > 1 and rng.random() < REFERENCE_SHARE else 0
+                    for i in picked
+                ]
                 hidden = torch.cat([cache[i][v] for i, v in zip(picked, variants, strict=True)]).to("cuda")
                 codes = torch.cat([train_clips[i]["codes"].long().T for i in picked]).to("cuda")
                 terms = {"codes": trainer.code_loss(hidden, codes)}

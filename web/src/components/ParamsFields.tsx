@@ -42,8 +42,10 @@ export function ParamsFields({
   const voxcpm = params.engine === DEFAULT_ENGINE // token budget and projections are VoxCPM's
   // Which networks get LoRA, and data loader workers: VoxCPM's and dots.tts's (S2-Pro trains its fast transformer).
   const layerChoice = voxcpm || params.engine === 'dots_tts'
-  const slow = params.engine === 'fish_s2' && params.s2_slow
   const lora = !fullFinetune
+  const slow = params.engine === 'fish_s2' && params.s2_slow
+  // S2-Pro training only its fast transformer: from cached slow transformer states.
+  const cachedS2 = lora && params.engine === 'fish_s2' && !params.s2_slow
   const showEngine = engines.length > 1 || !voxcpm
   const engineOptions = engines.some((e) => e.id === params.engine)
     ? engines
@@ -194,6 +196,19 @@ export function ParamsFields({
           {lora && numberField('valid_interval', { min: 1 })}
           {numberField('log_interval', { min: 1 })}
           {lora && layerChoice && numberField('num_workers', { min: 0, max: 16 })}
+          {cachedS2 && numberField('s2_cached_references', { min: 0, max: 8 })}
+          {cachedS2 && (
+            <div className="toggles">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={params.s2_offload}
+                  onChange={(e) => onChange?.('s2_offload', e.target.checked)}
+                />{' '}
+                {t.params.s2_offload}
+              </label>
+            </div>
+          )}
           {lora && layerChoice && (
             <div className="toggles">
               {flag('enable_lm')}
@@ -202,6 +217,7 @@ export function ParamsFields({
             </div>
           )}
         </div>
+        {cachedS2 && <p className="muted hint">{t.s2CacheHint}</p>}
       </details>
     </fieldset>
   )

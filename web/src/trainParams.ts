@@ -43,6 +43,8 @@ export const DEFAULT_PARAMS: Params = {
   gsv_version: 'v2ProPlus',
   s2_slow: false,
   s2_slow_lr: 2e-5, // the slow transformer's tested AdamW rate (the fast one's: 5e-4)
+  s2_cached_references: 2,
+  s2_offload: true,
 }
 
 // Prodigy finds its own step size: learning_rate is a multiplier, 1 by its authors' advice.
@@ -154,5 +156,7 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     gsv_version: typeof config.version === 'string' ? config.version : d.gsv_version,
     s2_slow: Array.isArray(lora.targets) && lora.targets.includes('slow_attn'),
     s2_slow_lr: num(config.slow_learning_rate, d.s2_slow_lr),
+    s2_cached_references: num(config.cached_references, d.s2_cached_references),
+    s2_offload: flag(config.offload, d.s2_offload),
   }
 }

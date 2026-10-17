@@ -334,6 +334,8 @@ class FishS2Engine(Engine):
                 "targets": [*s2lora.DEFAULT_TARGETS, *(s2lora.SLOW_TARGETS if params.s2_slow else ())],
             },
             "compile": self.settings.optimize is not False,  # fuse the fast layers' training forward
+            "cached_references": params.s2_cached_references,
+            "offload": params.s2_offload,
             # Codes and slow transformer states, shared by the dataset's runs (hidden folders aren't datasets).
             "cache_file": str(dataset.parent / ".cache" / "fish_s2.pt"),
             # The slow transformer's own AdamW rate (learning_rate is the fast layers').

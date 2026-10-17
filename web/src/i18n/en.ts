@@ -789,7 +789,11 @@ export const en = {
     s2_slow: 'Also train the slow transformer (experimental)',
     s2_fast_lr: 'Learning rate · fast transformer',
     s2_slow_lr: 'Learning rate · slow transformer',
+    s2_cached_references: 'Cached references per clip',
+    s2_offload: 'Slow transformer in CPU memory while training',
   },
+  s2CacheHint:
+    'The frozen slow transformer’s output is computed once per clip (kept in the dataset’s cache for later runs): without a reference, and with this many references of 1–3 other clips each. More gives more variety, for a longer first pass; 0 trains without references. With the slow transformer in CPU memory, training needs about 3.5 GB of GPU memory instead of 12 (it comes back for the samples, about 1 s each way).',
   s2SlowHint:
     'Adds a LoRA on the slow transformer’s attention, with AdamW and its own small learning rate (tested: 5e-4 fast, 2e-5 slow; Prodigy can’t give one part a smaller rate). About twice as slow; in our tests it sounded no more like the voice, and at higher rates it cut sentences short and left long silences. Compare its checkpoints with a run without it.',
   optimizers: {
