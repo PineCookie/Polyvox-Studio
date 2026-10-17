@@ -29,6 +29,11 @@ from .model import DualAR, rope_table, rotate
 NOISE_FLOOR_DB = -72.0  # dBFS of white noise added to training clips (and to trained voices' references)
 REFERENCE_SHARE = 0.5  # of training sequences that clone from other clips of the voice
 MAX_REFERENCE_CLIPS = 3
+# Training only the fast transformer: references cached per clip (slow_states), and the
+# padded positions the slow transformer runs at a time to make the cache.
+CACHED_REFERENCES = 2
+CACHE_TOKENS = 3072
+FRAME_ROUND = 64  # training batches' frame counts are rounded up to a multiple of this
 _ENDS = "。！？，.!?,"
 
 
@@ -54,13 +59,64 @@ class Sequences:
         return torch.cat([head, frames, end], 1), head.shape[1]
 
 
-def pick_reference(clips: list[dict], exclude: int, rng: random.Random) -> tuple[Tensor, str]:
-    """1..MAX_REFERENCE_CLIPS other clips of the voice: codes and transcripts joined."""
-    others = [j for j in range(len(clips)) if j != exclude]
-    chosen = rng.sample(others, min(len(others), rng.randint(1, MAX_REFERENCE_CLIPS)))
+def joined_reference(clips: list[dict], chosen: list[int]) -> tuple[Tensor, str]:
+    """Clips' codes and transcripts joined into one reference."""
     codes = torch.cat([clips[j]["codes"].long() for j in chosen], 1)
     text = "".join(t if t[-1:] in _ENDS else t + "。" for t in (clips[j]["text"].strip() for j in chosen))
     return codes, text
+
+
+def pick_reference(clips: list[dict], exclude: int, rng: random.Random) -> tuple[Tensor, str]:
+    """1..MAX_REFERENCE_CLIPS other clips of the voice: codes and transcripts joined."""
+    others = [j for j in range(len(clips)) if j != exclude]
+    return joined_reference(clips, rng.sample(others, min(len(others), rng.randint(1, MAX_REFERENCE_CLIPS))))
+
+
+def reference_picks(keys: list[str], references: int = CACHED_REFERENCES) -> list[list[list[int]]]:
+    """Per clip, ``references`` picks of 1..MAX_REFERENCE_CLIPS other clips (indices), the
+    same for the same clips in any run: seeded by the clip's key, drawn from the clips
+    in key order."""
+    order = sorted(range(len(keys)), key=lambda j: keys[j])
+    picks = []
+    for i, key in enumerate(keys):
+        rng = random.Random(int(key[:12], 16))
+        others = [j for j in order if j != i]
+        picks.append(
+            [rng.sample(others, min(len(others), rng.randint(1, MAX_REFERENCE_CLIPS))) for _ in range(references)]
+        )
+    return picks
+
+
+def slow_states(
+    trainer: Trainer, seq: Sequences, clips: list[dict], picks: list[list[list[int]]], todo: list[int],
+    tokens: int = CACHE_TOKENS, stop=None,
+) -> dict[int, list[Tensor]] | None:  # fmt: skip
+    """For training only the fast transformer, whose input the frozen slow one gives the
+    same way every epoch: for each clip in ``todo``, the slow states before its frames
+    (CPU, [frames, dim]): [0] without a reference, then one per pick (reference_picks)
+    rather than a new pick each time the clip comes up. Sequences of similar length
+    run together, ``tokens`` padded positions at a time. None: stopped."""
+    jobs = []
+    for i in todo:
+        c = clips[i]
+        jobs.append((i, 0, *seq.rows(c["text"], c["codes"], None)))
+        for v, chosen in enumerate(picks[i], 1):
+            jobs.append((i, v, *seq.rows(c["text"], c["codes"], joined_reference(clips, chosen))))
+    jobs.sort(key=lambda j: j[2].shape[1])  # similar lengths together: little padding
+    out = {i: [None] * (len(picks[i]) + 1) for i in todo}
+    device = trainer.model.embeddings.weight.device
+    k = 0
+    while k < len(jobs):
+        if stop is not None and stop.is_set():
+            return None
+        chunk = [jobs[k]]  # ascending lengths: the last one added is the longest
+        while k + len(chunk) < len(jobs) and (len(chunk) + 1) * jobs[k + len(chunk)][2].shape[1] <= tokens:
+            chunk.append(jobs[k + len(chunk)])
+        frames = trainer.slow_frames(*collate([(rows, start) for _, _, rows, start in chunk], device))
+        for (i, v, _, _), f in zip(chunk, frames, strict=True):
+            out[i][v] = f.cpu()
+        k += len(chunk)
+    return out
 
 
 def collate(items: list[tuple[Tensor, int]], device) -> tuple[Tensor, list[tuple[int, int]]]:
@@ -128,24 +184,32 @@ def fast_layer(layer, x: Tensor, table: Tensor) -> Tensor:
     return x + layer.feed_forward(layer.ffn_norm(x))
 
 
-def fast_forward(m: DualAR, x: Tensor, table: Tensor, recompute: bool) -> Tensor:
-    """x [N, codebooks, dim] -> code logits [N, codebooks, codebook_size]; ``recompute``:
-    activations recomputed in the backward pass (every frame of a batch at once is
-    a lot of positions)."""
+def recomputed_fast_layer(layer, x: Tensor, table: Tensor) -> Tensor:
+    """fast_layer with its activations recomputed in the backward pass (every frame of
+    a batch at once is a lot of positions)."""
+    return checkpoint(fast_layer, layer, x, table, use_reentrant=False)
+
+
+def fast_forward(m: DualAR, x: Tensor, table: Tensor, layer_fn=fast_layer) -> Tensor:
+    """x [N, codebooks, dim] -> code logits [N, codebooks, codebook_size]; ``layer_fn``
+    runs each layer while training with gradients (plain fast_layer otherwise)."""
+    run = layer_fn if torch.is_grad_enabled() else fast_layer
     for layer in m.fast_layers:
-        if recompute and torch.is_grad_enabled():
-            x = checkpoint(fast_layer, layer, x, table, use_reentrant=False)
-        else:
-            x = fast_layer(layer, x, table)
+        x = run(layer, x, table)
     return m.fast_output(m.fast_norm(x))
 
 
 class Trainer:
     """``slow``: the slow transformer trains too (a LoRA on it, lora.py "slow_attn"):
     it runs with gradients, and its choice of each frame's semantic token and of
-    the end is scored as well, among the tokens the decoder chooses from."""
+    the end is scored as well, among the tokens the decoder chooses from.
 
-    def __init__(self, model: DualAR, end_token: int, slow: bool = False, recompute: bool = True):
+    ``fused``: the fast layers' training forward (with its recomputation) as one
+    torch.compile'd function for every layer and batch size, which fuses the small
+    operations around the matrix products. If compiling fails before a fused call
+    has worked, training goes on unfused."""
+
+    def __init__(self, model: DualAR, end_token: int, slow: bool = False, recompute: bool = True, fused: bool = False):
         c = model.config
         dev = model.embeddings.weight.device
         self.model, self.slow, self.recompute = model, slow, recompute
@@ -154,6 +218,53 @@ class Trainer:
         self.allowed = torch.cat(
             [torch.arange(c.semantic_begin, c.semantic_end + 1, device=dev), torch.tensor([end_token], device=dev)]
         )
+        self._layer = recomputed_fast_layer if recompute else fast_layer
+        self._compiled = None
+        self._fused_worked = False
+        if fused:
+            from ..base import fuse_settings
+
+            fuse_settings()
+            self._compiled = torch.compile(self._layer, dynamic=True)
+
+    def _fast_layer(self, layer, x: Tensor, table: Tensor) -> Tensor:
+        if self._compiled is not None:
+            try:
+                out = self._compiled(layer, x, table)
+                self._fused_worked = True
+                return out
+            except Exception as e:
+                if self._fused_worked or isinstance(e, torch.OutOfMemoryError):
+                    raise
+                import logging
+
+                logging.getLogger(__name__).warning("Fusing the fast layers failed (%r); running them unfused.", e)
+                self._compiled = None
+        return self._layer(layer, x, table)
+
+    def slow_frames(self, tokens: Tensor, spans: list[tuple[int, int]]) -> list[Tensor]:
+        """The slow transformer's normalized hidden state before each target frame, per
+        sequence ([frames, dim]; without gradients): what the fast transformer starts from."""
+        with torch.no_grad():
+            hidden = slow_forward(self.model, tokens, self.slow_table)
+        return [hidden[i, start - 1 : start + n - 1] for i, (start, n) in enumerate(spans)]
+
+    def code_loss(self, hidden: Tensor, codes: Tensor) -> tuple[Tensor, int]:
+        """(summed cross-entropy of codes 1..9, how many) of frames: ``hidden`` [N, dim] the
+        slow state before each, ``codes`` [N, codebooks] their codes."""
+        m, c = self.model, self.model.config
+        n = len(codes)
+        if torch.is_grad_enabled():
+            # Frame counts rounded up (padding frames left out of the loss): fewer distinct
+            # tensor sizes, so the memory allocator reuses its blocks instead of piling them up.
+            pad = -n % FRAME_ROUND
+            hidden, codes = F.pad(hidden, (0, 0, 0, pad)), F.pad(codes, (0, 0, 0, pad))
+        x = torch.cat([hidden[:, None], m.fast_embeddings(codes[:, :-1])], 1)
+        logits = fast_forward(m, x, self.fast_table, self._fast_layer)[:, 1:].float()
+        targets = codes[:, 1:].clone()
+        targets[n:] = -100  # ignored by cross_entropy
+        loss = F.cross_entropy(logits.reshape(-1, c.codebook_size), targets.reshape(-1), reduction="sum")
+        return loss, n * (c.codebooks - 1)
 
     def losses(self, tokens: Tensor, spans: list[tuple[int, int]]) -> dict[str, tuple[Tensor, int]]:
         """{"codes": (summed cross-entropy of the target frames' codes 1..9, how many)}, and
@@ -166,12 +277,7 @@ class Trainer:
         dev = tokens.device
         batch = torch.cat([torch.full((n,), i) for i, (_, n) in enumerate(spans)]).to(dev)
         frame = torch.cat([torch.arange(start, start + n) for start, n in spans]).to(dev)
-        codes = tokens[batch, 1:, frame]  # [N, codebooks]
-        x = torch.cat([hidden[batch, frame - 1][:, None], m.fast_embeddings(codes[:, :-1])], 1)
-        logits = fast_forward(m, x, self.fast_table, self.recompute)[:, 1:].float()
-        targets = codes[:, 1:]
-        out = {"codes": (F.cross_entropy(logits.reshape(-1, c.codebook_size), targets.reshape(-1), reduction="sum"),
-                         targets.numel())}  # fmt: skip
+        out = {"codes": self.code_loss(hidden[batch, frame - 1], tokens[batch, 1:, frame])}
         if self.slow:
             # Each frame's semantic token, then the end: predicted from the position before.
             end = len(self.allowed) - 1

@@ -12,16 +12,24 @@ step_NNNNNNN_<i>.wav (spoken with the run's reference) and reference_<i>.wav.
 The stop file (or the server exiting) saves a checkpoint and ends the run.
 Steps count optimizer updates, 1..num_iters.
 
-Clips are encoded once (the codec then leaves the GPU) and cached in the run
-folder. Half of the training sequences clone from 1-3 other clips of the voice,
-as synthesis usually does; the run's reference (a few good clips joined, picked
+Half of the training sequences clone from 1-3 other clips of the voice, as
+synthesis usually does; the run's reference (a few good clips joined, picked
 when the run was made) goes into every checkpoint as the voice's default.
+
+Clips are encoded once (the codec then leaves the GPU). Training only the fast
+transformer (the default), the frozen slow transformer's states are computed
+once per clip, without and with two references picked once
+(train.reference_picks, train.slow_states), instead of every step. Both go into
+a cache shared by the dataset's runs (config "cache_file", <dataset>/.cache/;
+entries per clip as GPT-SoVITS's features: gpt_sovits.features.clip_key), so
+another run on the same clips (other LoRA settings, a resume) starts training at
+once. The fast layers' training forward is compiled (Trainer ``fused``; config
+"compile").
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import random
 import re
@@ -32,27 +40,28 @@ from pathlib import Path
 
 import yaml
 
-from ..dots.worker import Batches, cached, format_metrics, log, make_optimizer, rates, watch_for_stop
+from ..dots.worker import Batches, format_metrics, log, make_optimizer, rates, watch_for_stop
 from .lora import REFERENCE_JSON, REFERENCE_WAV
 
 SAMPLES = 2  # validation clips whose texts are spoken at each validation
 SAMPLE_SEED = 42
 SAMPLE_MAX_FRAMES = 1024
-CACHE_VERSION = 1  # bump when the encoding changes
+CACHE_VERSION = 1  # bump when what the cache holds changes (encoding, slow states)
 
 
 def clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def cache_key(manifest: Path, model_path: str) -> dict:
-    from .train import NOISE_FLOOR_DB
+def cache_meta(model_dir: Path) -> dict:
+    """What every cache entry depends on besides its clip."""
+    from .train import CACHED_REFERENCES, MAX_REFERENCE_CLIPS, NOISE_FLOOR_DB
 
     return {
         "version": CACHE_VERSION,
-        "manifest": hashlib.sha1(manifest.read_bytes()).hexdigest(),
-        "model": str(model_path),
+        "model": str(model_dir),
         "noise_floor_db": NOISE_FLOOR_DB,
+        "references": [CACHED_REFERENCES, MAX_REFERENCE_CLIPS],
     }
 
 
@@ -71,19 +80,28 @@ def encode_audio(codec, path: Path | str, seed: int):
     return codec.encode(with_noise_floor(mono, seed)).to(torch.int16).cpu()
 
 
-def encode(codec, records: list[dict], stop: threading.Event, what: str) -> list[dict]:
+def encode(codec, store: dict, records: list[dict], keys: list[str], stop: threading.Event) -> int:
+    """Encode the clips ``store`` (the cache, by clip key) lacks; returns how many."""
     import torch
 
-    out, t0 = [], time.time()
+    todo = [i for i, k in enumerate(keys) if k not in store]
+    t0 = time.time()
     with torch.no_grad():
-        for i, r in enumerate(records):
+        for n, i in enumerate(todo):
             if stop.is_set():
                 break
-            out.append({"text": clean(r["text"]), "codes": encode_audio(codec, r["audio"], i)})
-            if (i + 1) % 200 == 0:
-                log(f"Encoding {what}: {i + 1} / {len(records)} clips")
-    log(f"Encoded {len(out)} {what} clips in {time.time() - t0:.0f} s.")
-    return out
+            key = keys[i]  # its noise floor seeded by the clip: the same in every run
+            store[key] = {
+                "audio": str(records[i]["audio"]),
+                "codes": encode_audio(codec, records[i]["audio"], int(key[:8], 16)),
+            }
+            if (n + 1) % 200 == 0:
+                log(f"Encoding: {n + 1} / {len(todo)} clips")
+    if todo:
+        log(f"Encoded {len(todo)} clips in {time.time() - t0:.0f} s.")
+    if len(todo) < len(keys):
+        log(f"{len(keys) - len(todo)} clips encoded earlier (the dataset's cache).")
+    return len(todo)
 
 
 def write_reference(run_dir: Path, config: dict) -> tuple[Path, str]:
@@ -117,11 +135,12 @@ def main() -> None:
     from polyvox import vram
     from polyvox.data import audio_io, manifests
 
+    from ..gpt_sovits.features import clip_key, load_cache, save_cache
     from . import codec as s2codec
     from . import decode, generate, prompt
     from . import lora as s2lora
     from . import model as s2model
-    from .train import REFERENCE_SHARE, Sequences, Trainer, collate, pick_reference
+    from .train import REFERENCE_SHARE, Sequences, Trainer, collate, pick_reference, reference_picks, slow_states
 
     vram.apply_limit("cuda")
     stop = threading.Event()
@@ -149,25 +168,25 @@ def main() -> None:
     train_records = [dict(e) for e in manifests.read_manifest(Path(config["train_manifest"]))[0]]
     val_path = Path(config["val_manifest"]) if config.get("val_manifest") else None
     val_records = [dict(e) for e in manifests.read_manifest(val_path)[0]] if val_path and val_path.is_file() else []
-    cache_dir = run_dir / "cache"
-    train_clips = cached(
-        cache_dir / "codes_train.pt",
-        cache_key(Path(config["train_manifest"]), str(model_dir)),
-        lambda: encode(codec, train_records, stop, "training"),
-        len(train_records),
-    )
-    val_clips = (
-        cached(
-            cache_dir / "codes_val.pt",
-            cache_key(val_path, str(model_dir)),
-            lambda: encode(codec, val_records, stop, "validation"),
-            len(val_records),
-        )
-        if val_records
-        else []
-    )
-    if len(train_clips) < 2:
+    if len(train_records) < 2:
         raise SystemExit("S2-Pro training needs at least 2 clips.")
+    cache_file = Path(config.get("cache_file") or run_dir / "cache" / "fish_s2.pt")
+    meta = cache_meta(model_dir)
+    store = load_cache(cache_file, meta)
+    records = train_records + val_records
+    keys = [clip_key(r) for r in records]
+    changed = encode(codec, store, records, keys, stop)
+    if stop.is_set():
+        save_cache(cache_file, meta, store, records, keys)  # what was done stays
+        log("Stopped.")
+        return
+    train_keys, val_keys = keys[: len(train_records)], keys[len(train_records) :]
+    train_clips = [
+        {"text": clean(r["text"]), "codes": store[k]["codes"]} for r, k in zip(train_records, train_keys, strict=True)
+    ]
+    val_clips = [
+        {"text": clean(r["text"]), "codes": store[k]["codes"]} for r, k in zip(val_records, val_keys, strict=True)
+    ]
     reference_wav, reference_text = write_reference(run_dir, config)
     with torch.no_grad():
         reference = (encode_audio(codec, reference_wav, 0), reference_text)
@@ -176,7 +195,33 @@ def main() -> None:
 
     slow = any(t in s2lora.SLOW_TARGETS for t in targets)
     seq = Sequences(tokenizer, model, end_token)
-    trainer = Trainer(model, end_token, slow=slow)
+    trainer = Trainer(model, end_token, slow=slow, fused=bool(config.get("compile", True)))
+    cache = None
+    if not slow:  # the frozen slow transformer's states, once per clip and reference pick
+        picks = reference_picks(train_keys)
+        wanted = [[[train_keys[j] for j in pick] for pick in clip_picks] for clip_picks in picks]
+        todo = [i for i, k in enumerate(train_keys) if store[k].get("refs") != wanted[i]]
+        if todo:
+            t0 = time.time()
+            states = slow_states(trainer, seq, train_clips, picks, todo, stop=stop)
+            torch.cuda.empty_cache()
+            if states is None:
+                save_cache(cache_file, meta, store, records, keys)
+                log("Stopped.")
+                return
+            for i, clip_states in states.items():
+                store[train_keys[i]] |= {"states": clip_states, "refs": wanted[i]}
+            changed += len(todo)
+            log(f"Slow transformer states of {len(todo)} clips computed in {time.time() - t0:.0f} s.")
+        if len(todo) < len(train_keys):
+            log(f"Slow transformer states of {len(train_keys) - len(todo)} clips from the dataset's cache.")
+        cache = [store[k]["states"] for k in train_keys]
+    if changed:
+        t0 = time.time()
+        save_cache(cache_file, meta, store, records, keys)
+        log(
+            f"Saved the dataset's S2-Pro cache ({cache_file.stat().st_size / 2**20:.0f} MB) in {time.time() - t0:.0f} s."
+        )
     batch_size, accum = int(config["batch_size"]), int(config["grad_accum_steps"])
     batches = Batches(list(range(len(train_clips))), batch_size, seed=0)  # batches of clip indices
     epoch_steps = max(1.0, batches.per_epoch / accum)
@@ -323,8 +368,16 @@ def main() -> None:
     t_log, window = time.time(), {}
     while step < num_iters and not stop.is_set():
         for _ in range(accum):
-            items = [item(train_clips, i, rng, rng.random() < REFERENCE_SHARE) for i in batches.next()]
-            terms = trainer.losses(*collate(items, "cuda"))
+            picked = batches.next()
+            if cache:
+                # Without a reference, or with one of the clip's cached ones.
+                variants = [rng.randint(1, len(cache[i]) - 1) if rng.random() < REFERENCE_SHARE else 0 for i in picked]
+                hidden = torch.cat([cache[i][v] for i, v in zip(picked, variants, strict=True)]).to("cuda")
+                codes = torch.cat([train_clips[i]["codes"].long().T for i in picked]).to("cuda")
+                terms = {"codes": trainer.code_loss(hidden, codes)}
+            else:
+                items = [item(train_clips, i, rng, rng.random() < REFERENCE_SHARE) for i in picked]
+                terms = trainer.losses(*collate(items, "cuda"))
             (sum(s / n for s, n in terms.values()) / accum).backward()
             for k, (s, n) in terms.items():
                 acc = window.setdefault(f"loss/{k}", [0.0, 0])

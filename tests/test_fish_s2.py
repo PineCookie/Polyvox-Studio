@@ -171,6 +171,37 @@ def test_the_lora_trains_only_itself_and_merges_into_the_weights():
         )
 
 
+def test_reference_picks_follow_the_clips_not_their_order():
+    keys = [f"{i:02x}" * 20 for i in range(6)]
+    picks = train.reference_picks(keys, references=2)
+    assert all(len(p) == 2 and all(1 <= len(c) <= 3 and i not in c for c in p) for i, p in enumerate(picks))
+    shuffled = keys[::-1]  # another run listing the same clips in another order
+    again = train.reference_picks(shuffled, references=2)
+    as_keys = lambda ks, ps: {ks[i]: [[ks[j] for j in c] for c in p] for i, p in enumerate(ps)}  # noqa: E731
+    assert as_keys(keys, picks) == as_keys(shuffled, again)
+
+
+def test_cached_slow_states_score_as_live_ones():
+    m = tiny_model()
+    seq, trainer = train.Sequences(Letters(), m, END), train.Trainer(m, END)
+    torch.manual_seed(4)
+    clips = [{"text": t, "codes": torch.randint(0, 32, (3, n))} for t, n in (("一二", 3), ("三四五", 5), ("六", 2))]
+    picks = train.reference_picks([f"{i}" * 12 for i in range(3)], references=2)
+
+    cache = train.slow_states(trainer, seq, clips, picks, todo=[0, 2], tokens=300)  # several runs of the slow model
+
+    assert sorted(cache) == [0, 2]
+    for i in (0, 2):
+        c = clips[i]
+        references = [None, *(train.joined_reference(clips, chosen) for chosen in picks[i])]
+        assert len(cache[i]) == 3
+        for variant, reference in enumerate(references):
+            live, n = trainer.losses(*train.collate([seq.rows(c["text"], c["codes"], reference)], "cpu"))["codes"]
+            cached, n2 = trainer.code_loss(cache[i][variant], c["codes"].long().T)
+            assert cache[i][variant].shape == (c["codes"].shape[1], 32) and n == n2
+            assert torch.allclose(live, cached, rtol=1e-5)
+
+
 def test_the_slow_transformer_trains_only_when_asked():
     m = tiny_model()
     loras = s2lora.attach(m, rank=2, alpha=2.0, targets=(*s2lora.DEFAULT_TARGETS, *s2lora.SLOW_TARGETS))
