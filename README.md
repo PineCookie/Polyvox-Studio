@@ -23,6 +23,8 @@ A web app that turns raw audio into a clean dataset, fine-tunes a voice on
 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) or
 [Fish Audio S2-Pro](https://huggingface.co/fishaudio/s2-pro), and speaks with it.
 
+![Synthesize: a trained voice with its own reference clip, inline tags and the session's history](docs/images/screenshots/synthesize-en.png)
+
 ## ✨ Highlights
 
 - 🎙️ **Four TTS models, one workflow.** VoxCPM2, dots.tts, GPT-SoVITS (v2Pro,
@@ -45,18 +47,35 @@ A web app that turns raw audio into a clean dataset, fine-tunes a voice on
 
 ## 🧭 How it works
 
-```mermaid
-flowchart LR
-    A["🎧 Your recordings<br/>or transcript lists"] --> B["✂️ Prepare<br/>slice · transcribe · check"]
-    B --> C["🏋️ Train<br/>VoxCPM2 · dots.tts · GPT-SoVITS · S2-Pro"]
-    C --> D["🗣️ Synthesize<br/>with your voice"]
-```
+<table>
+  <tr>
+    <td width="40%" valign="top">
+      <b>1. Prepare</b><br />
+      Create a dataset, add a folder of recordings or a transcript list, and
+      run the steps. Each step shows what still needs it and works only on
+      that.
+    </td>
+    <td><img src="docs/images/screenshots/dataset-en.png" width="100%" alt="A dataset's steps: sources, clean up, slicing, transcribing, checks, tidying" /></td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <b>2. Review</b><br />
+      Fix or drop the clips it flags, worst first. Every word sits where the
+      aligner placed it; the ones it doubts are marked.
+    </td>
+    <td><img src="docs/images/screenshots/review-en.png" width="100%" alt="A flagged clip opened: the words the aligner doubts are marked on the waveform" /></td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <b>3. Train</b><br />
+      Pick a model and start. Listen to the samples as checkpoints arrive;
+      the similarity chart shows which sound most like the speaker.
+    </td>
+    <td><img src="docs/images/screenshots/training-en.png" width="100%" alt="A training run: loss chart and speaker similarity per checkpoint" /></td>
+  </tr>
+</table>
 
-1. **Prepare:** create a dataset, add a folder of recordings or a transcript
-   list, and run the steps. Fix or drop the clips it flags.
-2. **Train:** pick a model and start. Listen to the samples as checkpoints
-   arrive, and keep the one that sounds best.
-3. **Synthesize:** choose your voice, type, and generate.
+**4. Synthesize:** choose your voice, type, and generate (the screenshot at the top).
 
 ## ⚡ Speed
 

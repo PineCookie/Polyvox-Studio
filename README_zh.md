@@ -23,6 +23,8 @@
 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 或
 [Fish Audio S2-Pro](https://huggingface.co/fishaudio/s2-pro) 上微调音色，再用它说话。
 
+![合成：训练好的音色、它自带的参考音频、行内标签和本次的历史记录](docs/images/screenshots/synthesize-zh.png)
+
 ## ✨ 亮点
 
 - 🎙️ **四种 TTS 模型，一套流程。** VoxCPM2、dots.tts、GPT-SoVITS（v2Pro、v2ProPlus、v4）和
@@ -39,16 +41,31 @@
 
 ## 🧭 使用流程
 
-```mermaid
-flowchart LR
-    A["🎧 你的录音<br/>或标注列表"] --> B["✂️ 准备<br/>切分 · 转写 · 检查"]
-    B --> C["🏋️ 训练<br/>VoxCPM2 · dots.tts · GPT-SoVITS · S2-Pro"]
-    C --> D["🗣️ 合成<br/>用你的音色说话"]
-```
+<table>
+  <tr>
+    <td width="40%" valign="top">
+      <b>1. 准备</b><br />
+      新建数据集，添加一个录音文件夹或标注列表，运行各个步骤。每一步都会显示还有哪些需要处理，并且只处理这些。
+    </td>
+    <td><img src="docs/images/screenshots/dataset-zh.png" width="100%" alt="数据集的步骤：来源、清理、切分、转写、检查、整理" /></td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <b>2. 审阅</b><br />
+      按问题从重到轻，修正或删除被标记的片段。每个字都显示在对齐得到的位置上，不确定的字会被标出。
+    </td>
+    <td><img src="docs/images/screenshots/review-zh.png" width="100%" alt="打开一个被标记的片段：对齐不确定的字在波形上被标出" /></td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <b>3. 训练</b><br />
+      选择模型并开始。检查点陆续生成时试听样本；相似度曲线显示哪些最像本人。
+    </td>
+    <td><img src="docs/images/screenshots/training-zh.png" width="100%" alt="训练过程：损失曲线和每个检查点的声音相似度" /></td>
+  </tr>
+</table>
 
-1. **准备**：新建数据集，添加一个录音文件夹或标注列表，运行各个步骤。修正或删除被标记的片段。
-2. **训练**：选择模型并开始。检查点陆续生成时试听样本，留下听起来最好的那个。
-3. **合成**：选择你的音色，输入文字，生成。
+**4. 合成**：选择你的音色，输入文字，生成（见顶部的截图）。
 
 ## ⚡ 速度
 
