@@ -324,6 +324,34 @@ input[type='file']::file-selector-button {
   gap: 8px;
 }
 
+/* Reference clips from a dataset: player, transcript, remove. */
+.reference-clips {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reference-clips .file-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.reference-clips .file-row button {
+  white-space: nowrap;
+}
+
+.reference-clip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 8px;
+}
+
+.reference-clip .voice-meta {
+  grid-column: 1 / -1;
+  padding-left: 36px; /* under the waveform, past the play button */
+}
+
 /* Non-verbal tag buttons under the text box. */
 .tag-row {
   display: flex;

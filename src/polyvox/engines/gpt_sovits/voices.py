@@ -16,14 +16,14 @@ unless another is given):
 from __future__ import annotations
 
 import json
-import random
 import re
 import shutil
 from pathlib import Path
 
 import numpy as np
 
-from ...data import audio_io, manifests
+from ...data import audio_io, references
+from ...data.references import text_quality  # noqa: F401  (part of this module's API)
 from .synth import REF_MAX_S, REF_MIN_S, V4, VERSIONS, sovits_version
 
 ENGINE = "gpt_sovits"
@@ -34,7 +34,6 @@ CONFIG_FILE = "lora_config.json"  # as lora_library reads it for every engine
 REFERENCE_WAV = "reference.wav"
 REFERENCE_JSON = "reference.json"
 VOICE_NAME = r"^[^\W_][\w.-]{0,79}$"  # as run and package names
-PICK_RANGE_S = (4.0, 10.0)  # a default reference picked from a dataset
 
 
 def read_reference(voice_dir: Path) -> tuple[Path, str] | None:
@@ -66,55 +65,10 @@ def write_reference(voice_dir: Path, source: Path, text: str, origin: str = "") 
     (voice_dir / REFERENCE_JSON).write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-HESITATIONS = "嗯呃唔额"  # never words or sentence particles (unlike 啊 / 哦 in 这样啊)
-MIN_CONTENT_CHARS = 10  # enough words for the GPT to continue from
-_CLAUSES = re.compile(r"[，。！？、；：,.!?;:…~—\s]+")
-# A stutter: 2-4 characters said twice in a row (也是也是); single ones (谢谢, 看看) are words.
-_REPEAT = re.compile(r"(\w{2,4})\1")
-
-
-def text_quality(text: str) -> tuple[bool, bool]:
-    """(free of hesitations, enough content) of a transcript: a reference with
-    嗯 / 呃, filler-only clauses (哈哈，) or stutters tends to make the voice
-    start its sentences with them, and a few words give the GPT little to go on."""
-    from ...prep.fillers import FILLER_CHARS
-
-    clauses = [c for c in _CLAUSES.split(text) if c]
-    filler_only = [c for c in clauses if all(ch in FILLER_CHARS for ch in c)]
-    hesitant = bool(filler_only) or any(ch in HESITATIONS for ch in text) or bool(_REPEAT.search(text))
-    content = sum(ch not in HESITATIONS for c in clauses if c not in filler_only for ch in c)
-    return not hesitant, content >= MIN_CONTENT_CHARS
-
-
 def pick_reference(manifest: Path, root: Path | None = None, seed: int = 0) -> tuple[Path, str]:
-    """A good default reference from a dataset, among clips of 4-10 s not
-    dropped: preferably without hesitations and with enough words
-    (text_quality), then checked without flags (align.json) with the best
-    score, then nearest 6 s. Raises ValueError when no clip fits."""
-    entries, _ = manifests.training_entries(manifest, root)
-    manifest_dir = manifest.resolve().parent
-    checks = manifests.read_sidecar(manifest_dir / manifests.ALIGN_FILE).get("clips", {})
-    candidates = []
-    for entry in entries:
-        try:
-            seconds, _ = audio_io.info(entry["audio"])
-        except (OSError, RuntimeError, ValueError):
-            continue
-        if not PICK_RANGE_S[0] <= seconds <= PICK_RANGE_S[1]:
-            continue
-        check = checks.get(manifests.row_key(entry["audio"], manifest_dir))
-        if check and check.get("text") != manifests.text_key(entry["text"]):
-            check = None  # made for an earlier transcript
-        if check and check.get("flags"):
-            continue
-        score = check.get("score") if check else None
-        candidates.append((*text_quality(entry["text"]), score is not None, score or 0.0, -abs(seconds - 6.0), entry))
-    if not candidates:
-        raise ValueError(f"No clip of {PICK_RANGE_S[0]:g}-{PICK_RANGE_S[1]:g} s without flags in this dataset.")
-    best = max(c[:-1] for c in candidates)
-    tied = [c[-1] for c in candidates if c[:-1] == best]
-    entry = random.Random(seed).choice(tied)
-    return Path(entry["audio"]), entry["text"]
+    """A good default reference from a dataset (references.pick); ValueError when no clip fits."""
+    (clip,) = references.pick(manifest, 1, root, seed)
+    return clip.audio, clip.text
 
 
 def write_config(voice_dir: Path, version: str, base_model: str = BASE_REPO, **extra) -> None:

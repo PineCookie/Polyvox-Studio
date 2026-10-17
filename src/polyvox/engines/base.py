@@ -62,6 +62,9 @@ class Capabilities:
     training: bool = True  # New run offers it
     # Training updates every weight (no LoRA rank, no optimizer choice).
     full_finetune: bool = False
+    # Takes further clips of the voice (SynthesisRequest.extra_references) besides
+    # the reference; other engines get several clips joined into one reference.
+    several_references: bool = False
 
 
 @dataclass
@@ -71,6 +74,8 @@ class SynthesisRequest:
     lora_id: str | None = None
     reference_wav: Path | None = None
     prompt_text: str | None = None  # transcript of reference_wav
+    # More clips of the same voice (engines with capabilities.several_references).
+    extra_references: list[Path] = field(default_factory=list)
     seed: int | None = None
     # Values for the engine's Params, by name; missing ones take their defaults.
     options: dict = field(default_factory=dict)

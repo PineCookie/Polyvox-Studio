@@ -77,6 +77,12 @@ export const en = {
   transcribe: 'Transcribe',
   transcribing: 'Transcribing…',
   transcribeTitle: 'Fill in the transcript with speech recognition (Qwen3-ASR)',
+  referenceFromFile: 'A clip',
+  referenceFromDataset: 'Clips from a dataset',
+  otherClips: 'Other clips',
+  removeReferenceClip: 'Remove this clip',
+  referenceClipsHint: (count: number, seconds: number) =>
+    `${count} ${count === 1 ? 'clip' : 'clips'}, ${seconds.toFixed(0)} s, used together with their transcripts: several clips clone a voice better than one`,
   advanced: 'Advanced',
   // Synthesis settings by the engine's param name (engines/*.py); unknown names show as they are.
   paramLabels: {

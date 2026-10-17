@@ -76,6 +76,12 @@ export const zh: Messages = {
   transcribe: '识别',
   transcribing: '识别中…',
   transcribeTitle: '用语音识别（Qwen3-ASR）填写文本',
+  referenceFromFile: '一段音频',
+  referenceFromDataset: '数据集中的多段音频',
+  otherClips: '换一批',
+  removeReferenceClip: '移除这段',
+  referenceClipsHint: (count, seconds) =>
+    `${count} 段，共 ${seconds.toFixed(0)} 秒，连同文本一起使用：多段音频比一段克隆得更像`,
   advanced: '高级',
   paramLabels: {
     cfg_value: '引导强度',

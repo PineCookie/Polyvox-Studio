@@ -8,6 +8,8 @@ import { useT } from '../i18n'
 import { forgetPeaks } from '../peaks'
 import { AudioPlayer } from './AudioPlayer'
 import { FilePicker } from './FilePicker'
+import { ReferenceClips } from './ReferenceClips'
+import type { ClipChoice } from './ReferenceClips'
 import { ProgressBar } from './RunList'
 
 // VoxCPM2's non-verbal tags, as its cookbook spells them ([laughing], not
@@ -128,6 +130,8 @@ export function SynthesisPanel({
   const [control, setControl] = useState('')
   const [referenceAudio, setReferenceAudio] = useState<File | null>(null)
   const [promptText, setPromptText] = useState('')
+  const [referenceSource, setReferenceSource] = useState<'file' | 'dataset'>('file')
+  const [clipChoice, setClipChoice] = useState<ClipChoice>({ dataset: '', clips: [] })
   // Settings changed by hand, per engine (each keeps its own while switching voices).
   const [changed, setChanged] = useState<Record<string, EngineOptions>>({})
   const [transcribing, setTranscribing] = useState(false)
@@ -153,8 +157,10 @@ export function SynthesisPanel({
     [referenceUrl],
   )
 
+  const useClips = referenceSource === 'dataset' && clipChoice.clips.length > 0
+  const hasReference = referenceSource === 'file' ? !!referenceAudio : useClips
   // Engines that always clone a clip need one: chosen here, or the voice's own.
-  const needsReference = !!caps?.reference_required && !referenceAudio && voiceReference === null
+  const needsReference = !!caps?.reference_required && !hasReference && voiceReference === null
   const canSubmit = !busy && !!engine && !engine.unavailable && text.trim().length > 0 && !needsReference
 
   async function transcribeReference() {
@@ -176,8 +182,12 @@ export function SynthesisPanel({
     onGenerate({
       text,
       control: caps?.style ? control : '',
-      referenceAudio: caps?.reference_audio ? referenceAudio : null,
+      referenceAudio: caps?.reference_audio && referenceSource === 'file' ? referenceAudio : null,
       promptText: caps?.reference_transcript ? promptText : '',
+      referenceClips:
+        caps?.reference_audio && useClips
+          ? { dataset: clipChoice.dataset, indices: clipChoice.clips.map((c) => c.index) }
+          : null,
       options,
       seed,
     })
@@ -272,19 +282,37 @@ export function SynthesisPanel({
                   : t.referenceRequired}
             </span>
           </legend>
-          {caps?.reference_required && !referenceAudio && voiceReference !== null && (
+          <div className="segmented" role="radiogroup">
+            <label>
+              <input type="radio" checked={referenceSource === 'file'} onChange={() => setReferenceSource('file')} />{' '}
+              {t.referenceFromFile}
+            </label>
+            <label>
+              <input
+                type="radio"
+                checked={referenceSource === 'dataset'}
+                onChange={() => setReferenceSource('dataset')}
+              />{' '}
+              {t.referenceFromDataset}
+            </label>
+          </div>
+          {caps?.reference_required && !hasReference && voiceReference !== null && (
             <p className="muted hint">{t.usesVoiceReference(voiceReference)}</p>
           )}
-          <FilePicker
-            file={referenceAudio}
-            onChange={(f) => (f ? setReferenceAudio(f) : clearReference())}
-            accept="audio/*"
-            label={t.chooseAudio}
-            empty={t.orDropFile}
-          >
-            {referenceUrl && <AudioPlayer url={referenceUrl} />}
-          </FilePicker>
-          {referenceAudio && caps?.reference_transcript !== false && (
+          {referenceSource === 'dataset' ? (
+            <ReferenceClips value={clipChoice} onChange={setClipChoice} onError={onError} />
+          ) : (
+            <FilePicker
+              file={referenceAudio}
+              onChange={(f) => (f ? setReferenceAudio(f) : clearReference())}
+              accept="audio/*"
+              label={t.chooseAudio}
+              empty={t.orDropFile}
+            >
+              {referenceUrl && <AudioPlayer url={referenceUrl} />}
+            </FilePicker>
+          )}
+          {referenceSource === 'file' && referenceAudio && caps?.reference_transcript !== false && (
             <div className="file-row">
               <input
                 value={promptText}

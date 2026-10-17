@@ -44,6 +44,7 @@ class FakeVoice:
 
     def __init__(self, key):
         self.key = key
+        self.model_version = key[1] if key and key[0] == "base" else "v2ProPlus"
 
 
 class FakePipeline:
@@ -63,11 +64,13 @@ class FakePipeline:
         self.references.append((str(wav), text))
         return ("ref", str(wav), text)
 
-    def synthesize(self, voice, ref, text, options, seed, on_token=None, on_phase=None):
+    def synthesize(self, voice, ref, text, options, seed, on_token=None, on_phase=None, timbre=()):
         on_phase("compiling")  # as a first call in a process
         for _ in range(4):
             on_token()
-        self.calls.append({"voice": voice.key, "ref": ref, "text": text, "options": options, "seed": seed})
+        self.calls.append(
+            {"voice": voice.key, "ref": ref, "text": text, "options": options, "seed": seed, "timbre": list(timbre)}
+        )
         return np.zeros(320, dtype=np.float32)
 
 
@@ -128,6 +131,23 @@ def test_a_given_reference_and_the_base_model(engine, pipeline, tmp_path):
         engine.synthesize(SynthesisRequest(text="hi", reference_wav=clip, options={"cfg_value": 2.0}))
     with pytest.raises(ValueError, match="empty"):
         engine.synthesize(SynthesisRequest(text=" 。 ", reference_wav=clip))
+
+
+def test_more_clips_add_their_timbre_except_on_v4(engine, pipeline, tmp_path):
+    import dataclasses
+
+    engine.settings = dataclasses.replace(engine.settings, gsv_v4_model=str(tmp_path / "v4"))
+    first, second, third = (tone(tmp_path / f"{n}.wav", 5.0) for n in ("first", "second", "third"))
+    request = SynthesisRequest(text="你好", reference_wav=first, prompt_text="示例。", extra_references=[second, third])
+
+    engine.synthesize(request)
+
+    assert pipeline.references == [(str(first), "示例。"), (str(second), None), (str(third), None)]  # timbre only
+    assert pipeline.calls[0]["ref"][1] == str(first)
+    assert [r[1] for r in pipeline.calls[0]["timbre"]] == [str(second), str(third)]
+    request.options = {"base_version": "v4"}
+    engine.synthesize(request)
+    assert pipeline.calls[1]["timbre"] == []  # v4 averages no timbre: the first clip only
 
 
 def test_other_engines_checkpoints_are_refused(engine, lora_dir, tmp_path):

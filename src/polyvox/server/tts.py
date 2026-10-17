@@ -4,19 +4,38 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import tempfile
+from pathlib import Path
 from typing import Annotated
 
 import soundfile as sf
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from pydantic import ValidationError
 
 from .. import engines, vram
-from ..data import audio_io
+from ..data import audio_io, manifests, references
 from ..prep.asr import load_audio
-from .context import Studio, save_upload
+from .context import Studio, checked, found, save_upload
+from .schemas import ReferenceClipsIn
+
+
+def temporary_wav() -> Path:
+    fd, name = tempfile.mkstemp(prefix="polyvox_reference_", suffix=".wav")
+    os.close(fd)
+    return Path(name)
 
 
 def router(s: Studio) -> APIRouter:
     api = APIRouter()
+
+    def dataset_clips(value: str) -> list[references.Clip]:
+        try:
+            chosen = ReferenceClipsIn.model_validate_json(value)
+        except ValidationError as e:
+            raise HTTPException(422, f"Invalid reference_clips: {e.errors()[0]['msg']}") from e
+        manifest = found(manifests.resolve, s.settings.data_dir, chosen.dataset)
+        return checked(references.clips, manifest, chosen.indices, manifests.legacy_root(s.settings.data_dir))
 
     @api.post("/api/tts", responses={200: {"content": {"audio/wav": {}}}})
     def tts(
@@ -34,6 +53,8 @@ def router(s: Studio) -> APIRouter:
         denoise: Annotated[bool | None, Form()] = None,
         seed: Annotated[int | None, Form()] = None,
         reference_audio: Annotated[UploadFile | None, File()] = None,
+        # Instead of reference_audio: dataset clips with their transcripts, as JSON (ReferenceClipsIn).
+        reference_clips: Annotated[str | None, Form()] = None,
     ) -> Response:
         tts_engine = s.registry.get(engine)
         if tts_engine is None:
@@ -50,12 +71,26 @@ def router(s: Studio) -> APIRouter:
             cfg_value=cfg_value, inference_timesteps=inference_timesteps, normalize=normalize, denoise=denoise
         )
         values |= {k: v for k, v in legacy.items() if v is not None}
+        clips = dataset_clips(reference_clips) if reference_clips else []
+        if clips and reference_audio:
+            raise HTTPException(422, "Give reference audio or dataset clips, not both.")
         if s.profile.exclusive and (running := s.jobs.running("import") or s.jobs.running("check")):
             raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
         s.make_room_for_tts(tts_engine)
-        # As WAV when soundfile can't read it (e.g. m4a): voxcpm can't without a system FFmpeg.
-        ref_path = audio_io.to_wav(save_upload(reference_audio)) if reference_audio else None
+        temporary: list[Path] = []  # removed afterwards (never the dataset's own clips)
+        ref_path, extra = None, []
         try:
+            if clips and tts_engine.capabilities.several_references:
+                (first, *rest) = clips
+                ref_path, prompt_text, extra = first.audio, first.text, [c.audio for c in rest]
+            elif clips:  # one reference made of them all: several clips clone a voice better than one
+                ref_path = temporary_wav()
+                temporary.append(ref_path)
+                prompt_text = references.join(clips, ref_path)
+            elif reference_audio:
+                # As WAV when soundfile can't read it (e.g. m4a): voxcpm can't without a system FFmpeg.
+                ref_path = audio_io.to_wav(save_upload(reference_audio))
+                temporary.append(ref_path)
             result = tts_engine.synthesize(
                 engines.SynthesisRequest(
                     text=text,
@@ -63,6 +98,7 @@ def router(s: Studio) -> APIRouter:
                     lora_id=lora_id or None,
                     reference_wav=ref_path,
                     prompt_text=prompt_text,
+                    extra_references=extra,
                     seed=seed,
                     options=values,
                 )
@@ -81,8 +117,8 @@ def router(s: Studio) -> APIRouter:
                 "models) or try a shorter text.",
             ) from e
         finally:
-            if ref_path:
-                ref_path.unlink(missing_ok=True)
+            for path in temporary:
+                path.unlink(missing_ok=True)
 
         buf = io.BytesIO()
         sf.write(buf, result.audio, result.sample_rate, format="WAV")

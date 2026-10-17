@@ -9,12 +9,13 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from ..data import manifests
+from ..data import manifests, references
 from ..prep import checks
 from ..prep.asr import SAMPLE_RATE as ASR_RATE
 from ..prep.asr import language_of, load_audio
 from .context import Studio, checked, found, has_checks
 from .schemas import (
+    MAX_REFERENCE_CLIPS,
     ClipCheckIn,
     ClipDetailOut,
     ClipDropIn,
@@ -25,6 +26,7 @@ from .schemas import (
     ClipTrimIn,
     DatasetReportOut,
     HeardOut,
+    ReferenceClipOut,
     WordOut,
 )
 
@@ -185,6 +187,19 @@ def router(s: Studio) -> APIRouter:
             if detail.asr
             else None,
         )
+
+    @api.get("/api/dataset-references")
+    def dataset_references(
+        id: str,
+        count: int = Query(3, ge=1, le=MAX_REFERENCE_CLIPS),
+        exclude: Annotated[list[int] | None, Query()] = None,
+    ) -> list[ReferenceClipOut]:
+        """The ``count`` best clips of a dataset to clone its voice from
+        (references.pick), leaving out the ``exclude`` indices: e.g. others than those shown."""
+        manifest = found(manifests.resolve, settings.data_dir, id)
+        root = manifests.legacy_root(settings.data_dir)
+        picked = checked(references.pick, manifest, count, root, 0, frozenset(exclude or ()))
+        return [ReferenceClipOut(index=c.index, text=c.text, seconds=round(c.seconds, 2)) for c in picked]
 
     @api.get("/api/dataset-audio")
     def dataset_audio(index: int, id: str | None = None, run: str | None = None) -> FileResponse:

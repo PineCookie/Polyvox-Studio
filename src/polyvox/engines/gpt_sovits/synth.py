@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -328,23 +328,28 @@ class Pipeline:
         seed: int,
         on_token: Callable[[], None] | None = None,
         on_phase: Callable[[str], None] | None = None,
+        timbre: Sequence[Reference] = (),
     ) -> np.ndarray:
         """Mono float audio of ``text`` in the reference's voice (at
         voice.sample_rate); ``on_token`` is called for each semantic token the
         GPT makes, ``on_phase("compiling")`` before a wait for torch.compile
         (the first call of a compiled part in this process) and
-        ``on_phase("generating")`` after the DiT's."""
+        ``on_phase("generating")`` after the DiT's. ``timbre``: more clips of the
+        voice whose timbre SoVITS averages with the reference's (upstream's
+        inp_refs; v2 family only, v4 ignores them)."""
         chunks = split_text(text)
         if not chunks:
             raise ValueError("Text to synthesize is empty.")
         self._on_phase = on_phase or (lambda phase: None)
         try:
             with counting_tokens(on_token):
-                return self._synthesize(voice, ref, chunks, options, seed)
+                return self._synthesize(voice, ref, chunks, options, seed, [ref, *timbre])
         finally:
             self._on_phase = lambda phase: None
 
-    def _synthesize(self, voice: Voice, ref: Reference, chunks: list[str], options: Options, seed: int) -> np.ndarray:
+    def _synthesize(
+        self, voice: Voice, ref: Reference, chunks: list[str], options: Options, seed: int, timbre: list[Reference]
+    ) -> np.ndarray:
         pause = np.zeros(int(voice.sample_rate * PAUSE_S), dtype=np.float32)
         torch.manual_seed(seed)
         out: list[np.ndarray] = []
@@ -384,9 +389,9 @@ class Pipeline:
                     audio = voice.sovits.decode(
                         semantic,
                         torch.LongTensor(phones).to(self.device)[None],
-                        [ref.spec],
+                        [r.spec for r in timbre],
                         speed=options.speed,
-                        sv_emb=[ref.sv_emb],
+                        sv_emb=[r.sv_emb for r in timbre],
                     )[0][0].float()
             peak = float(audio.abs().max())
             if peak > 1:  # as upstream: avoid clipping

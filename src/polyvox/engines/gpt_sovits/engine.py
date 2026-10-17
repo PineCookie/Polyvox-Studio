@@ -69,6 +69,7 @@ class GptSovitsEngine(Engine):
         lora_hot_swap=False,
         reference_required=True,
         full_finetune=True,
+        several_references=True,  # SoVITS averages their timbre (v2 family; v4 uses the first)
     )
     params = (
         Param("temperature", "float", 1.0, 0.05, 2.0, 0.05),
@@ -147,11 +148,17 @@ class GptSovitsEngine(Engine):
                     ref = pipeline.reference(voice, req.reference_wav, req.prompt_text)
                 else:
                     ref = self._default_reference(pipeline, voice, *default_ref)
+                # Timbre only (no transcript): spectrogram and speaker embedding.
+                timbre = [
+                    pipeline.reference(voice, wav, None) for wav in req.extra_references if voice.model_version != V4
+                ]
                 seed = req.seed if req.seed is not None else random.randrange(2**31)
                 chars = len(re.sub(r"\W", "", text))
                 self._progress.expected = max(MIN_TOKENS, round(chars * self._tokens_per_char))
                 self._progress.phase = "generating"
-                audio = pipeline.synthesize(voice, ref, text, options, seed, on_token=self._count, on_phase=self._phase)
+                audio = pipeline.synthesize(
+                    voice, ref, text, options, seed, on_token=self._count, on_phase=self._phase, timbre=timbre
+                )
                 if chars >= LEARN_MIN_CHARS and options.speed == 1.0:
                     observed = self._progress.step / chars
                     self._tokens_per_char = 0.7 * self._tokens_per_char + 0.3 * observed

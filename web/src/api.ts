@@ -100,8 +100,28 @@ export interface SynthesisParams {
   loraId: string | null
   referenceAudio: File | null
   promptText: string
+  // Instead of referenceAudio: dataset clips (with their transcripts) used together.
+  referenceClips: ReferenceClips | null
   options: EngineOptions // the engine's params by name
   seed: number | null
+}
+
+export interface ReferenceClips {
+  dataset: string
+  indices: number[]
+}
+
+export interface ReferenceClip {
+  index: number
+  text: string
+  seconds: number
+}
+
+/** A dataset's best clips to clone its voice from, leaving out `exclude` (indices). */
+export async function pickReferenceClips(dataset: string, count: number, exclude: number[]): Promise<ReferenceClip[]> {
+  const q = new URLSearchParams({ id: dataset, count: String(count) })
+  for (const index of exclude) q.append('exclude', String(index))
+  return (await request(`/api/dataset-references?${q}`)).json()
 }
 
 export interface SynthesisOutput {
@@ -265,7 +285,9 @@ export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
   form.set('text', p.text)
   form.set('control', p.control)
   if (p.loraId) form.set('lora_id', p.loraId)
-  if (p.referenceAudio) {
+  if (p.referenceClips) {
+    form.set('reference_clips', JSON.stringify(p.referenceClips))
+  } else if (p.referenceAudio) {
     form.set('reference_audio', p.referenceAudio)
     if (p.promptText.trim()) form.set('prompt_text', p.promptText)
   }

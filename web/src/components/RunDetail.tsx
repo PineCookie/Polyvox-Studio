@@ -4,7 +4,6 @@ import type { Lora, RunDetail as Run, Similarity } from '../api'
 import { useFolded } from '../folded'
 import { formatDuration, formatStep, formatValue } from '../format'
 import { useT } from '../i18n'
-import { usePeaks } from '../peaks'
 import { DatasetReview } from './DatasetReview'
 import { FoldPanel } from './Fold'
 import type { Fold } from './Fold'
@@ -13,10 +12,10 @@ import { LrChart } from './LrChart'
 import { paramsFromConfig } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { ProgressBar, StatusPill } from './RunList'
+import { SampleCell } from './SampleCell'
 import { SimilarityChart } from './SimilarityChart'
 import type { SimilarityPoint } from './SimilarityChart'
 import { SubTabs } from './SubTabs'
-import { Waveform } from './Waveform'
 
 interface Props {
   run: Run
@@ -467,46 +466,5 @@ function ConfigFiles({ config }: { config: Record<string, unknown> }) {
         </div>
       ))}
     </dl>
-  )
-}
-
-/** Play button and waveform of one sample (click the waveform to play from there). */
-function SampleCell({
-  url,
-  playing,
-  audio,
-  score,
-  onPlay,
-}: {
-  url: string
-  playing: boolean
-  audio: HTMLAudioElement | null
-  score?: number
-  onPlay: (at?: number) => void
-}) {
-  const t = useT()
-  const shape = usePeaks(url)
-  return (
-    <div className="sample-cell">
-      <button
-        type="button"
-        className="ghost small"
-        onClick={() => onPlay()}
-        aria-label={playing ? t.pause : t.playLabel}
-      >
-        {playing ? '❚❚' : '▶'}
-      </button>
-      {shape ? (
-        <Waveform peaks={shape.peaks} seconds={shape.seconds} speech={null} audio={audio} onSeek={onPlay} />
-      ) : (
-        <span className="sample-wave-placeholder" />
-      )}
-      {shape && <span className="muted hint">{t.seconds(shape.seconds.toFixed(1))}</span>}
-      {score !== undefined && (
-        <span className="muted hint sample-score" title={t.similarityCellTitle}>
-          {score.toFixed(2)}
-        </span>
-      )}
-    </div>
   )
 }

@@ -183,6 +183,22 @@ class ClipRangeIn(BaseModel):
     end: float = Field(gt=0)
 
 
+MAX_REFERENCE_CLIPS = 5
+
+
+class ReferenceClipsIn(BaseModel):
+    """Clips of a dataset to clone the voice from (/api/tts reference_clips, as JSON)."""
+
+    dataset: str
+    indices: list[int] = Field(min_length=1, max_length=MAX_REFERENCE_CLIPS)
+
+
+class ReferenceClipOut(BaseModel):
+    index: int
+    text: str
+    seconds: float
+
+
 class ImportPreviewOut(BaseModel):
     kind: str
     source: str
