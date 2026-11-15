@@ -71,7 +71,7 @@ def test_convert_quantizes_experts_and_dense_linears_and_copies_the_rest(tmp_pat
     assert ((restored - expert).norm() / expert.norm()) < 0.12  # 4-bit error on Gaussian weights ~0.10
     dense = DENSE.removesuffix(".weight")
     assert bool((out[dense + ".qzeros"] == convert.ZERO_POINTS).all())
-    assert torch.equal(out[dense + ".g_idx"], torch.arange(256, dtype=torch.int32) // 128)
+    assert torch.equal(out[dense + ".g_idx"], torch.arange(256, dtype=torch.int32) // convert.DENSE_GROUP)
     # The shared expert and the norm are copied unchanged; the expert's scales aren't kept.
     assert torch.equal(out[SHARED], b[SHARED]) and EXPERT + "_scale_inv" not in out and EXPERT not in out
     assert stats["experts"]["tensors"] == 1 and stats["dense"]["tensors"] == 1
@@ -368,3 +368,14 @@ def test_a_voices_prompt_part_is_kept_and_reused():
             )
             assert cache.layers[3].keys.shape[2] == len(r)
         assert len(m.prefixes) == 1
+
+
+def test_dense_linears_can_have_smaller_groups(tmp_path):
+    fake_fp8_checkpoint(tmp_path / "fp8")
+    convert.convert(tmp_path / "fp8", tmp_path / "int4", device="cpu", dense_group=32)
+    out = read_all(tmp_path / "int4")
+    dense = DENSE.removesuffix(".weight")
+    assert out[dense + ".scales"].shape == (256 // 32, 256) and out[dense + ".qzeros"].shape[0] == 256 // 32
+    assert out[EXPERT.removesuffix(".weight") + ".scales"].shape == (384 // 128, 256)  # experts keep 128
+    config = json.loads((tmp_path / "int4" / "config.json").read_text())["quantization_config"]
+    assert config["dense"]["group_size"] == 32 and config["experts"]["group_size"] == 128

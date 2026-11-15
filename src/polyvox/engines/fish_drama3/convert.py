@@ -1,15 +1,17 @@
 """The official Drama 3 checkpoint (block-FP8 routed experts, bf16 elsewhere) -> 4-bit weights.
 
-Quantized to INT4 (symmetric, one scale per 128 weights along the input dimension, round to
+Quantized to INT4 (symmetric, one scale per group of weights along the input dimension, round to
 nearest after a search over 20 clip ratios per group; no calibration data):
-- the routed experts (FP8 with 128 x 128 block scales, dequantized first);
-- the full-attention q / k / v / o and linear-attention in_proj_qkv / in_proj_z / out_proj.
+- the routed experts (FP8 with 128 x 128 block scales, dequantized first), groups of 128;
+- the full-attention q / k / v / o and linear-attention in_proj_qkv / in_proj_z / out_proj,
+  groups of 32: these have outlier weights, and finer groups cut their worst error by a third
+  for 60 MB more (groups of 128 would make the community builds' layout exactly).
 The shared experts stay bf16 (4 bits there breaks the model: its gate and up errors multiply).
 Everything else is copied unchanged.
 
 Layout as the community drama-3-int4 builds (sglang-omni's GPTQ readers load it): experts as
 ``qweight`` int32 [K/8, N] (value k at bits 4 * (k % 8) of word k // 8, stored + 8) and
-``scales`` fp16 [K/128, N]; dense linears also get ``qzeros`` (all 8) and a sorted ``g_idx``.
+``scales`` fp16 [K/G, N]; dense linears also get ``qzeros`` (all 8) and a sorted ``g_idx``.
 """
 
 from __future__ import annotations
@@ -22,7 +24,8 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 
-GROUP = 128
+GROUP = 128  # the experts'
+DENSE_GROUP = 32
 CLIPS = (1.0, 0.81, 20)  # torch.linspace: amax / 7 down to 0.81 x that
 EXPERT = re.compile(r"\.mlp\.experts\.\d+\.(gate|up|down)_proj\.weight$")
 DENSE = re.compile(r"\.layers\.\d+\.(self_attn\.(q|k|v|o)_proj|linear_attn\.(in_proj_qkv|in_proj_z|out_proj))\.weight$")
@@ -95,7 +98,13 @@ def dequant(qweight, scales, dtype=None):
     return w.to(dtype or torch.bfloat16)
 
 
-def convert(src: Path, dst: Path, progress: Callable[[float], None] | None = None, device: str | None = None) -> dict:
+def convert(
+    src: Path,
+    dst: Path,
+    progress: Callable[[float], None] | None = None,
+    device: str | None = None,
+    dense_group: int = DENSE_GROUP,
+) -> dict:
     """Write the 4-bit model of ``src`` into ``dst`` (built in ``dst.build`` and renamed when
     complete). ``progress(fraction)`` may raise to cancel. Returns the quantization error stats."""
     import torch
@@ -168,14 +177,14 @@ def convert(src: Path, dst: Path, progress: Callable[[float], None] | None = Non
                 put(base + ".scales", sc)
             elif DENSE.search(key):
                 raw = get(key)
-                if raw.dtype != torch.bfloat16 or raw.shape[1] % GROUP:
+                if raw.dtype != torch.bfloat16 or raw.shape[1] % dense_group:
                     raise ValueError(f"{key}: unexpected {raw.dtype} {tuple(raw.shape)}")
                 w = raw.to(device).float()
-                q, s = quantize(w)
+                q, s = quantize(w, dense_group)
                 n, k = w.shape
                 qw, sc = pack(q), s.t().contiguous().half()
-                qz = torch.full((k // GROUP, math.ceil(n / 8)), ZERO_POINTS, dtype=torch.int32)
-                gi = torch.arange(k, dtype=torch.int32) // GROUP
+                qz = torch.full((k // dense_group, math.ceil(n / 8)), ZERO_POINTS, dtype=torch.int32)
+                gi = torch.arange(k, dtype=torch.int32) // dense_group
                 record(
                     "dense", w, q, s, raw.numel() * 2, qw.numel() * 4 + qz.numel() * 4 + sc.numel() * 2 + gi.numel() * 4
                 )
@@ -204,7 +213,7 @@ def convert(src: Path, dst: Path, progress: Callable[[float], None] | None = Non
     config["quantization_config"] = {
         "quant_method": "drama3-int4", "bits": 4, "group_size": GROUP, "sym": True, "desc_act": False,
         "experts": {"quant_method": "gptq", "bits": 4, "group_size": GROUP, "sym": True},
-        "dense": {"quant_method": "gptq_marlin", "bits": 4, "group_size": GROUP, "sym": True, "desc_act": False,
+        "dense": {"quant_method": "gptq_marlin", "bits": 4, "group_size": dense_group, "sym": True, "desc_act": False,
                   "targets": DENSE_TARGETS},
     }  # fmt: skip
     (work / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")

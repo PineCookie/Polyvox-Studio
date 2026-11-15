@@ -1,9 +1,10 @@
-"""Triton kernels for the 4-bit routed experts.
+"""Triton kernels for the 4-bit weights (routed experts, and the dense linears: Int4Linear).
 
 ``int4_gemv``: rows of x times 4-bit weights picked per row (an expert's slot in a stack), reading
 the packed weights directly: int32 [S, K/8, N] (value k at bits 4 * (k % 8) of word k // 8, stored
-+ 8) with fp16 scales [S, K/128, N]. One program covers BLOCK_N outputs of one row and walks K in
-groups of 128 (one scale row each); each packed word is read once.
++ 8) with fp16 scales [S, K/G, N] (G: 128 or another power of two from 8). One program covers
+BLOCK_N outputs of one row and walks K a scale group at a time; each packed word is read once.
+The routed kernel's experts are always in groups of 128.
 """
 
 from __future__ import annotations
@@ -21,45 +22,62 @@ def _int4_gemv(
     x_row_ptr,  # [R] int32: the x row of each output row
     slot_ptr,  # [R] int32: the weight slot of each output row
     qw_ptr,  # [S, K/8, N] int32
-    sc_ptr,  # [S, K/128, N] fp16
-    out_ptr,  # [R, N] fp32
+    sc_ptr,  # [S, K/G, N] fp16
+    out_ptr,  # [SPLIT, R, N] fp32: partial sums over a K range each
     K,
     N,
     BLOCK_N: tl.constexpr,
+    WORDS: tl.constexpr,  # packed words per group: G / 8
+    SPLIT: tl.constexpr,  # K ranges in programs of their own (small outputs)
 ):
     row = tl.program_id(0)
     offs_n = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
+    part_id = tl.program_id(2)
     mask_n = offs_n < N
     x_row = tl.load(x_row_ptr + row)
     slot = tl.load(slot_ptr + row).to(tl.int64)
-    words = tl.arange(0, 16)  # 16 packed words = one group of 128 weights
+    words = tl.arange(0, WORDS)
+    groups = K // (WORDS * 8)
+    per = groups // SPLIT
     qw_base = qw_ptr + slot * (K // 8) * N
-    sc_base = sc_ptr + slot * (K // 128) * N
+    sc_base = sc_ptr + slot * groups * N
     x_base = x_ptr + x_row.to(tl.int64) * K
-    acc = tl.zeros((16, BLOCK_N), dtype=tl.float32)
-    for g in range(0, K // 128):
-        w = tl.load(qw_base + (g * 16 + words)[:, None] * N + offs_n[None, :], mask=mask_n[None, :], other=0)
+    acc = tl.zeros((WORDS, BLOCK_N), dtype=tl.float32)
+    for g in range(part_id * per, part_id * per + per):
+        w = tl.load(qw_base + (g * WORDS + words)[:, None] * N + offs_n[None, :], mask=mask_n[None, :], other=0)
         s = tl.load(sc_base + g * N + offs_n, mask=mask_n, other=0.0).to(tl.float32)
-        part = tl.zeros((16, BLOCK_N), dtype=tl.float32)
+        part = tl.zeros((WORDS, BLOCK_N), dtype=tl.float32)
         for j in tl.static_range(8):
-            xj = tl.load(x_base + g * 128 + words * 8 + j).to(tl.float32)
+            xj = tl.load(x_base + g * WORDS * 8 + words * 8 + j).to(tl.float32)
             q = ((w >> (4 * j)) & 0xF).to(tl.float32) - 8.0
             part += xj[:, None] * q
         acc += part * s[None, :]
-    tl.store(out_ptr + row * N + offs_n, tl.sum(acc, axis=0), mask=mask_n)
+    rows = tl.num_programs(0)
+    tl.store(out_ptr + (part_id * rows + row) * N + offs_n, tl.sum(acc, axis=0), mask=mask_n)
+
+
+def _split(programs: int, groups: int) -> int:
+    """K ranges per output block so that at least about 128 programs run (a power of two dividing
+    ``groups``); wider outputs aren't split (the partial sums cost more than they gain)."""
+    split = 1
+    while programs * split < 128 and groups % (split * 2) == 0 and groups // (split * 2) >= 2:
+        split *= 2
+    return split
 
 
 @triton.jit
-def _int4_dequant(qw_ptr, sc_ptr, out_ptr, K, N, BLOCK_W: tl.constexpr, BLOCK_N: tl.constexpr):
-    """[S, K/8, N] int32 + [S, K/128, N] fp16 -> [S, K, N] bf16; one program per BLOCK_W packed rows."""
+def _int4_dequant(qw_ptr, sc_ptr, out_ptr, K, N, BLOCK_W: tl.constexpr, BLOCK_N: tl.constexpr, WORDS: tl.constexpr):
+    """[S, K/8, N] int32 + [S, K/G, N] fp16 -> [S, K, N] bf16; one program per BLOCK_W packed rows."""
     wrow = tl.program_id(0) * BLOCK_W + tl.arange(0, BLOCK_W)  # over S * K/8
     offs_n = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
     mask_n = offs_n < N
     w = tl.load(qw_ptr + wrow.to(tl.int64)[:, None] * N + offs_n[None, :], mask=mask_n[None, :], other=0)
     kw = K // 8
     slot = wrow // kw
-    group = (wrow % kw) // 16
-    s = tl.load(sc_ptr + (slot * (K // 128) + group).to(tl.int64)[:, None] * N + offs_n[None, :], mask=mask_n[None, :])
+    group = (wrow % kw) // WORDS
+    s = tl.load(
+        sc_ptr + (slot * (kw // WORDS) + group).to(tl.int64)[:, None] * N + offs_n[None, :], mask=mask_n[None, :]
+    )
     s = s.to(tl.float32)
     base = (slot.to(tl.int64) * K + (wrow % kw).to(tl.int64) * 8)[:, None] * N + offs_n[None, :]
     for j in tl.static_range(8):
@@ -67,15 +85,23 @@ def _int4_dequant(qw_ptr, sc_ptr, out_ptr, K, N, BLOCK_W: tl.constexpr, BLOCK_N:
         tl.store(out_ptr + base + j * N, (q * s).to(tl.bfloat16), mask=mask_n[None, :])
 
 
+def _words(qweight: torch.Tensor, scales: torch.Tensor) -> int:
+    """Packed words per scale group (16 for groups of 128)."""
+    words = qweight.shape[-2] // scales.shape[-2]
+    assert words * scales.shape[-2] == qweight.shape[-2] and words & (words - 1) == 0, (qweight.shape, scales.shape)
+    return words
+
+
 def int4_dequant(qweight: torch.Tensor, scales: torch.Tensor) -> torch.Tensor:
-    """[S, K/8, N] int32 + [S, K/128, N] fp16 -> W [S, K, N] bf16."""
+    """[S, K/8, N] int32 + [S, K/G, N] fp16 -> W [S, K, N] bf16."""
     s, kw, n = qweight.shape
     k = kw * 8
     out = torch.empty(s, k, n, device=qweight.device, dtype=torch.bfloat16)
     block_w, block_n = 16, 128
     _int4_dequant[(triton.cdiv(s * kw, block_w), triton.cdiv(n, block_n))](
-        qweight.contiguous(), scales.contiguous(), out, k, n, BLOCK_W=block_w, BLOCK_N=block_n, num_warps=4
-    )
+        qweight.contiguous(), scales.contiguous(), out, k, n,
+        BLOCK_W=block_w, BLOCK_N=block_n, WORDS=_words(qweight, scales), num_warps=4,
+    )  # fmt: skip
     return out
 
 
@@ -89,13 +115,16 @@ def _int4_gemv_routed(
     sc_ptr,  # [S, K/128, N] fp16
     host_qw_ptr,  # [E, K/8, N] int32 (pinned CPU memory, read over PCIe)
     host_sc_ptr,  # [E, K/128, N] fp16
-    out_ptr,  # [R, N] fp32
+    out_ptr,  # [SPLIT, R, N] fp32
     K,
     N,
     BLOCK_N: tl.constexpr,
+    SPLIT: tl.constexpr,
 ):
     row = tl.program_id(0)
     offs_n = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
+    part_id = tl.program_id(2)
+    per = (K // 128) // SPLIT
     mask_n = offs_n < N
     x_row = tl.load(x_row_ptr + row)
     expert = tl.load(expert_ptr + row)
@@ -109,7 +138,7 @@ def _int4_gemv_routed(
     words = tl.arange(0, 16)
     x_base = x_ptr + x_row.to(tl.int64) * K
     acc = tl.zeros((16, BLOCK_N), dtype=tl.float32)
-    for g in range(0, K // 128):
+    for g in range(part_id * per, part_id * per + per):
         w = tl.load(qw_base + (g * 16 + words)[:, None] * N + offs_n[None, :], mask=mask_n[None, :], other=0)
         s = tl.load(sc_base + g * N + offs_n, mask=mask_n, other=0.0).to(tl.float32)
         part = tl.zeros((16, BLOCK_N), dtype=tl.float32)
@@ -118,7 +147,8 @@ def _int4_gemv_routed(
             q = ((w >> (4 * j)) & 0xF).to(tl.float32) - 8.0
             part += xj[:, None] * q
         acc += part * s[None, :]
-    tl.store(out_ptr + row * N + offs_n, tl.sum(acc, axis=0), mask=mask_n)
+    rows = tl.num_programs(0)
+    tl.store(out_ptr + (part_id * rows + row) * N + offs_n, tl.sum(acc, axis=0), mask=mask_n)
 
 
 class HostPointer:
@@ -140,23 +170,49 @@ def int4_gemv_routed(x, x_rows, experts, table, qweight, scales, host_qweight: H
     k = x.shape[1]
     n = qweight.shape[2]
     rows = experts.numel()
-    out = torch.empty(rows, n, device=x.device, dtype=torch.float32)
     block_n = 64
-    _int4_gemv_routed[(rows, triton.cdiv(n, block_n))](
-        x, x_rows, experts, table, qweight, scales, host_qweight, host_scales, out, k, n, BLOCK_N=block_n, num_warps=4
-    )
-    return out
+    blocks = triton.cdiv(n, block_n)
+    split = _split(rows * blocks, k // 128)
+    out = torch.empty(split, rows, n, device=x.device, dtype=torch.float32)
+    _int4_gemv_routed[(rows, blocks, split)](
+        x, x_rows, experts, table, qweight, scales, host_qweight, host_scales, out, k, n,
+        BLOCK_N=block_n, SPLIT=split, num_warps=4,
+    )  # fmt: skip
+    return out[0] if split == 1 else out.sum(0)
 
 
 def int4_gemv(x: torch.Tensor, x_rows: torch.Tensor, slots: torch.Tensor, qweight: torch.Tensor, scales: torch.Tensor):
     """out[r] = x[x_rows[r]] @ W[slots[r]] (fp32 [R, N]); W [S, K, N] stored as ``qweight`` / ``scales``."""
     k = x.shape[1]
     n = qweight.shape[2]
-    assert qweight.shape[1] * 8 == k and scales.shape[1] * GROUP == k, (x.shape, qweight.shape, scales.shape)
+    assert qweight.shape[1] * 8 == k, (x.shape, qweight.shape)
     rows = slots.numel()
-    out = torch.empty(rows, n, device=x.device, dtype=torch.float32)
+    words = _words(qweight, scales)
     block_n = 64
-    _int4_gemv[(rows, triton.cdiv(n, block_n))](
-        x.contiguous(), x_rows, slots, qweight, scales, out, k, n, BLOCK_N=block_n, num_warps=4
-    )
-    return out
+    blocks = triton.cdiv(n, block_n)
+    split = _split(rows * blocks, k // (words * 8))
+    out = torch.empty(split, rows, n, device=x.device, dtype=torch.float32)
+    _int4_gemv[(rows, blocks, split)](
+        x.contiguous(), x_rows, slots, qweight, scales, out, k, n, BLOCK_N=block_n, WORDS=words, SPLIT=split,
+        num_warps=4,
+    )  # fmt: skip
+    return out[0] if split == 1 else out.sum(0)
+
+
+class Int4Linear(torch.nn.Module):
+    """A linear layer (no bias) kept in 4 bits: ``qweight`` int32 [K/8, N], ``scales`` fp16 [K/G, N].
+    One token reads the packed weights (int4_gemv); more unpack them first."""
+
+    def __init__(self, qweight: torch.Tensor, scales: torch.Tensor):
+        super().__init__()
+        self.qweight, self.scales = qweight[None], scales[None]
+        self.in_features, self.out_features = qweight.shape[0] * 8, qweight.shape[1]
+        self.zero = torch.zeros(1, dtype=torch.int32, device=qweight.device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        flat = x.reshape(-1, self.in_features)
+        if flat.shape[0] == 1:
+            out = int4_gemv(flat, self.zero, self.zero, self.qweight, self.scales).to(x.dtype)
+        else:
+            out = flat @ int4_dequant(self.qweight, self.scales)[0].to(x.dtype)
+        return out.view(*x.shape[:-1], self.out_features)

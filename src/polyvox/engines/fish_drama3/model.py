@@ -503,7 +503,8 @@ def load(
     with torch.device("meta"):
         m.backbone = Qwen3_5MoeTextModel(m.text_config)
     prefix = "model.language_model."
-    state = {}
+    state, packed = {}, {}
+    on_cuda = str(device).startswith("cuda")
     for key in weight_map:
         if not key.startswith(prefix) or ".experts." in key:
             continue
@@ -514,8 +515,11 @@ def load(
             base = key.removesuffix(".qweight")
             if not any(base.endswith(d) for d in DENSE):
                 raise ValueError(f"unexpected 4-bit tensor {key}")
-            w = dequant(get(key).to(device), get(base + ".scales").to(device))  # [K, N]
-            state[name.removesuffix(".qweight") + ".weight"] = w.T.contiguous()
+            qweight, scales = get(key).to(device), get(base + ".scales").to(device)
+            if on_cuda:  # kept in 4 bits (kernels.Int4Linear)
+                packed[name.removesuffix(".qweight")] = (qweight, scales)
+            else:
+                state[name.removesuffix(".qweight") + ".weight"] = dequant(qweight, scales).T.contiguous()
         else:
             state[name] = get(key).to(device)
     stacks = []
@@ -526,6 +530,12 @@ def load(
                 keys = [f"{prefix}layers.{i}.mlp.experts.{e}.{proj}.{suffix}" for e in range(m.text_config.num_experts)]
                 parts[f"{short}_{kind}"] = torch.stack([get(k) for k in keys]).pin_memory()
         stacks.append(parts)
+    if packed:
+        from .kernels import Int4Linear
+
+        for name, (qweight, scales) in packed.items():
+            parent, attr = name.rsplit(".", 1)
+            setattr(m.backbone.get_submodule(parent), attr, Int4Linear(qweight, scales))
     missing, unexpected = m.backbone.load_state_dict(state, strict=False, assign=True)
     missing = [k for k in missing if ".experts." not in k]
     if missing or unexpected:
