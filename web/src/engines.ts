@@ -27,6 +27,7 @@ const NAMES: Record<string, string> = {
   dots_tts: 'dots.tts',
   gpt_sovits: 'GPT-SoVITS',
   fish_s2: 'Fish Audio S2-Pro',
+  fish_drama3: 'Fish Audio Drama 3',
 }
 
 export function engineName(id: string, engines: Engine[] = []): string {

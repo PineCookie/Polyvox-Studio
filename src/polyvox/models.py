@@ -20,6 +20,18 @@ POLL_S = 0.5
 
 
 @dataclass(frozen=True)
+class Source:
+    """The files a model is built from (downloaded into their own folder); ``build`` names
+    "module:function"(source dir, model dir, progress(fraction)), which writes the model's
+    folder complete or not at all. The source folder is removed after a build unless ``keep``."""
+
+    folder: str
+    files: tuple[str, ...]
+    build: str
+    keep: bool = False
+
+
+@dataclass(frozen=True)
 class ModelSpec:
     setting: str  # the config.Settings field it fills
     name: str
@@ -35,6 +47,9 @@ class ModelSpec:
     hub: str = "huggingface"  # or "modelscope" (no endpoint choice there)
     # A zip in the repo that holds ``files`` (one top folder, dropped when unpacking).
     archive: str | None = None
+    revision: str | None = None  # a pinned commit of the repo (None: its main branch)
+    # Built from other files of the repo (``files`` are then the build's, ``size_mb`` the download's).
+    source: Source | None = None
 
     def path(self, models_dir: Path) -> Path:
         folder = models_dir / self.folder
@@ -152,6 +167,43 @@ MODELS: tuple[ModelSpec, ...] = (
         ),
         11_000,
         license="Fish Audio Research License (non-commercial)",
+    ),
+    ModelSpec(
+        "drama3_model",
+        "Fish Audio Drama 3",
+        "Text to speech (44.1 kHz), zero-shot cloning: the official weights, converted to 4 bits "
+        "(22 GB) on this computer after the download",
+        "fishaudio/drama-3",
+        "fishaudio__drama-3__int4",
+        (
+            "config.json",
+            "model.safetensors.index.json",
+            "codec.pth",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "chat_template.jinja",
+            "LICENSE",
+            "quant_stats.json",
+        ),
+        39_600,
+        license="Fish Audio Community License (free below USD 500k yearly revenue; no hosted services)",
+        revision="78e5ab79e49aa9a25abe8799eff2c4d73a1c3216",
+        source=Source(
+            "fishaudio__drama-3",
+            (
+                "config.json",
+                "model.safetensors.index.json",
+                *(f"model-{i:05d}-of-00015.safetensors" for i in range(1, 16)),
+                "codec.pth",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "special_tokens_map.json",
+                "chat_template.jinja",
+                "LICENSE",
+            ),
+            "polyvox.engines.fish_drama3.convert:build",
+        ),
     ),
     ModelSpec(
         "gsv_g2pw_model",
@@ -380,13 +432,14 @@ def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, pro
     """Download the files of ``spec`` that are missing into its folder, from
     ``endpoint`` (default: huggingface.co). Interrupted files resume. When
     ``progress`` raises (cancel), the file in flight finishes in the background."""
-    from huggingface_hub import HfApi, hf_hub_download
-
     progress = progress or (lambda done, total: None)
     endpoint = endpoint or None
     folder = models_dir / spec.folder
-    folder.mkdir(parents=True, exist_ok=True)
     mb = 1 << 20
+    if spec.source:
+        _download_and_build(spec, models_dir, endpoint, progress)
+        return
+    folder.mkdir(parents=True, exist_ok=True)
     received = _Received()
     if spec.hub == "modelscope":  # one call; its callback counts the bytes (total: the listed size)
         from modelscope import snapshot_download
@@ -408,15 +461,37 @@ def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, pro
             shutil.rmtree(target, ignore_errors=True)
         progress(spec.size_mb, spec.size_mb)
         return
-    info = HfApi(endpoint=endpoint).model_info(spec.repo, files_metadata=True)
+    _fetch_hf(
+        spec.repo, spec.revision, folder, spec.files, endpoint, lambda done, total: progress(done // mb, total // mb)
+    )
+
+
+def _fetch_hf(
+    repo: str,
+    revision: str | None,
+    folder: Path,
+    files: tuple[str, ...],
+    endpoint: str | None,
+    report: Callable[[int, int], None],
+) -> None:
+    """Download the ``files`` of ``repo`` missing in ``folder``; ``report(bytes done, bytes in all)``
+    may raise to cancel (the file in flight finishes in the background)."""
+    from huggingface_hub import HfApi, hf_hub_download
+
+    if all((folder / f).is_file() for f in files):  # nothing to fetch: no need to ask the hub
+        total = sum((folder / f).stat().st_size for f in files)
+        report(total, total)
+        return
+    info = HfApi(endpoint=endpoint).model_info(repo, revision=revision, files_metadata=True)
     sizes = {s.rfilename: s.size or 0 for s in info.siblings}
-    missing = [f for f in spec.files if f not in sizes]
+    missing = [f for f in files if f not in sizes]
     if missing:
-        raise FileNotFoundError(f"{spec.repo} has no {', '.join(missing)}.")
-    total = sum(sizes[f] for f in spec.files)
-    done = sum(sizes[f] for f in spec.files if (folder / f).is_file())
+        raise FileNotFoundError(f"{repo} has no {', '.join(missing)}.")
+    total = sum(sizes[f] for f in files)
+    done = sum(sizes[f] for f in files if (folder / f).is_file())
+    received = _Received()
     bar = received.hf_bar()
-    for name in spec.files:
+    for name in files:
         if (folder / name).is_file():
             continue
         # Downloaded on a thread so progress (and cancelling) can be polled meanwhile:
@@ -424,12 +499,38 @@ def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, pro
         received.reset()
 
         def fetch(name: str = name) -> None:
-            hf_hub_download(spec.repo, name, local_dir=folder, endpoint=endpoint, tqdm_class=bar)
+            hf_hub_download(repo, name, local_dir=folder, endpoint=endpoint, revision=revision, tqdm_class=bar)
 
-        def report(name: str = name, done: int = done) -> None:
-            in_flight = min(max(received.bytes, _partial_bytes(folder)), sizes[name])
-            progress((done + in_flight) // mb, total // mb)
+        def poll(name: str = name, done: int = done) -> None:
+            report(done + min(max(received.bytes, _partial_bytes(folder)), sizes[name]), total)
 
-        _polled(fetch, report, f"download-{spec.folder}")
+        _polled(fetch, poll, f"download-{folder.name}")
         done += sizes[name]
-        progress(done // mb, total // mb)
+        report(done, total)
+
+
+BUILD_SHARE = 0.25  # of the download, how much of the progress bar a build takes
+
+
+def _download_and_build(spec: ModelSpec, models_dir: Path, endpoint: str | None, progress: Progress) -> None:
+    """Download ``spec.source`` (resuming), build the model's folder from it, then remove it."""
+    import importlib
+
+    source = spec.source
+    assert source is not None
+    src = models_dir / source.folder
+    src.mkdir(parents=True, exist_ok=True)
+    mb = 1 << 20
+    downloaded = [spec.size_mb * mb]
+
+    def report(done: int, total: int) -> None:
+        downloaded[0] = total
+        progress(done // mb, int(total * (1 + BUILD_SHARE)) // mb)
+
+    _fetch_hf(spec.repo, spec.revision, src, source.files, endpoint, report)
+    total = downloaded[0]
+    module, name = source.build.split(":")
+    build = getattr(importlib.import_module(module), name)
+    build(src, models_dir / spec.folder, lambda f: report(total + int(total * BUILD_SHARE * f), total))
+    if not source.keep:
+        shutil.rmtree(src, ignore_errors=True)

@@ -28,6 +28,7 @@ __all__ = [
 
 def classes() -> dict[str, type[Engine]]:
     from .dots.engine import DotsEngine
+    from .fish_drama3.engine import FishDrama3Engine
     from .fish_s2.engine import FishS2Engine
     from .gpt_sovits.engine import GptSovitsEngine
     from .voxcpm.engine import VoxCPMEngine
@@ -37,6 +38,7 @@ def classes() -> dict[str, type[Engine]]:
         DotsEngine.id: DotsEngine,
         GptSovitsEngine.id: GptSovitsEngine,
         FishS2Engine.id: FishS2Engine,
+        FishDrama3Engine.id: FishDrama3Engine,
     }
 
 

@@ -27,7 +27,7 @@ model; a voice with several checkpoints lets you pick one. Then:
 - **Reference audio**: each model shows its own inputs. VoxCPM2 has a
   Reference (who it sounds like) and a Prompt (speech it continues from, with
   its transcript); dots.tts one clip; GPT-SoVITS a prompt clip and timbre clips;
-  S2-Pro a reference with its transcript. Each can be an upload or **Dataset
+  S2-Pro and Drama 3 a reference with its transcript. Each can be an upload or **Dataset
   clips**: three of a dataset's best clips (change them with **Other clips**),
   joined into one for models that take a single clip. **Transcribe** fills in a
   transcript. On every model, about 20 s of reference clones clearly better
@@ -42,6 +42,13 @@ picked from its dataset, that you can change in the Voice panel.
 The first generation after a model loads takes longer while the model is
 compiled (about 30 s for VoxCPM2, a minute for dots.tts, a few seconds for
 S2-Pro; several minutes the very first time); later ones are fast.
+
+**Fish Audio Drama 3** clones zero-shot only (no training yet) and is still slow
+here: about 5 s per second of audio. It is a 35B mixture of experts, of which
+3B work for each frame: its routed experts (17 GB in 4 bits) stay in the
+computer's memory, and as many as fit are kept on the GPU. Its tags are any
+direction in brackets, like S2-Pro's. A take that runs far longer than its text
+is drawn again once.
 
 ## Preparing datasets
 
@@ -291,7 +298,8 @@ The studio picks batch sizes and which models share the GPU from its memory:
 | under 8 GB | no (needs about 8 GB) | no | as for 8 GB |
 
 Fish Audio S2-Pro is the exception: synthesis needs 16 GB (its weights alone are
-9 GB in bfloat16) and training 12 GB.
+9 GB in bfloat16) and training 12 GB. Fish Audio Drama 3 needs a 12 GB GPU and
+32 GB of RAM; a larger GPU keeps more of its experts and runs faster.
 
 Smaller cards keep the effective batch, so they train slower, not differently. A
 batch that still runs out of memory is retried in halves. Starting a training run
@@ -319,6 +327,7 @@ whether it is downloaded, and downloads the missing ones with progress into
 | GPT-SoVITS v2Pro / v2ProPlus, G2PW | synthesis and voice training (G2PW: Chinese pronunciation) | 1.7 + 0.6 GB |
 | GPT-SoVITS v4 | synthesis and voice training at 48 kHz | 0.8 GB |
 | Fish Audio S2-Pro | synthesis and LoRA training at 44.1 kHz; research and non-commercial use only | 11 GB |
+| Fish Audio Drama 3 | zero-shot synthesis at 44.1 kHz; the official weights (39 GB) are downloaded, converted to 4 bits on your computer, then removed; Fish Audio Community License | 22 GB |
 | Qwen3-ASR 1.7B | transcribing, slicing, Compare with ASR | 4.1 GB |
 | Qwen3-ForcedAligner 0.6B | slicing and checking clips | 1.9 GB |
 | wav2vec2 Chinese | second aligner for checks | 1.3 GB |
@@ -354,6 +363,7 @@ Environment variables, all optional:
 | `POLYVOX_GSV_G2PW_MODEL` | (downloaded copy) | GPT-SoVITS: the G2PW folder |
 | `POLYVOX_GSV_V4_MODEL` | (downloaded copy) | GPT-SoVITS v4: a folder with `s2Gv4.pth` and `vocoder.pth` |
 | `POLYVOX_S2_MODEL` | (downloaded copy) | Fish Audio S2-Pro: a folder laid out like `fishaudio/s2-pro` |
+| `POLYVOX_DRAMA3_MODEL` | (converted copy) | Fish Audio Drama 3: a 4-bit build (`python -m polyvox.engines.fish_drama3.convert` makes one from `fishaudio/drama-3`) |
 | `POLYVOX_ASR_MODEL` | `Qwen/Qwen3-ASR-1.7B-hf` | speech recognition model |
 | `POLYVOX_ALIGN_MODEL` | `Qwen/Qwen3-ForcedAligner-0.6B-hf` | forced aligner |
 | `POLYVOX_CTC_ALIGN_MODEL` | `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn` | wav2vec2 CTC aligner (one language) |

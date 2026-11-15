@@ -11,6 +11,7 @@ next to the code. Changes made to vendored code are listed in each package's
 | dots.tts | `src/polyvox/vendor/dots_tts/` | [rednote-hilab/dots.tts](https://github.com/rednote-hilab/dots.tts) 0.3.1 | Apache-2.0, Copyright dots.tts Team, RedNote ([text](src/polyvox/vendor/dots_tts/LICENSE)) |
 | GPT-SoVITS | `src/polyvox/vendor/gpt_sovits/` | [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | MIT, Copyright RVC-Boss ([text](src/polyvox/vendor/gpt_sovits/LICENSE)) |
 | x-transformers (rotary embeddings) | `src/polyvox/vendor/gpt_sovits/f5_tts/rotary.py` | [lucidrains/x-transformers](https://github.com/lucidrains/x-transformers) 2.17.10 | MIT, Copyright Phil Wang ([text](src/polyvox/vendor/gpt_sovits/f5_tts/LICENSE-x-transformers)) |
+| Fish Audio Drama 3 model and prompt (ported) | `src/polyvox/engines/fish_drama3/model.py`, `prompt.py` | [sgl-project/sglang-omni](https://github.com/sgl-project/sglang-omni) (`sglang_omni/models/fishaudio_drama3`) | Apache-2.0 (the same text as this project's [LICENSE](LICENSE)) |
 | BS / Mel-Band RoFormer | `src/polyvox/vendor/roformer/` | [ZFTurbo/Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) | MIT, Copyright Roman Solovyev (ZFTurbo) ([text](src/polyvox/vendor/roformer/LICENSE)) |
 
 The GPT-SoVITS code includes parts its repository took from other projects (such
@@ -31,3 +32,10 @@ code. Its weights, downloaded in the Models tab, are under the Fish Audio
 Research License: research and non-commercial use only, a commercial license
 from Fish Audio otherwise. Voices trained here on S2-Pro (LoRAs) work only with
 those weights, so the same terms apply to using them.
+
+Fish Audio Drama 3 (`src/polyvox/engines/fish_drama3/`) follows sglang-omni's
+implementation (see above); it contains no Fish Audio code. Its weights, downloaded
+from `fishaudio/drama-3` in the Models tab and converted to 4 bits on your computer,
+are under the Fish Audio Community License: free for research, non-commercial use
+and businesses below USD 500,000 yearly revenue, no hosted services; read the
+license file that comes with them.
