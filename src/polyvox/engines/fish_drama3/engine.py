@@ -42,6 +42,7 @@ MAX_FRAMES = 1024  # per part of the text (~48 s)
 CAP_FACTOR = 3.0  # a take longer than this x the expected frames has run away
 CAP_MIN = 96  # frames (~4.5 s): short texts vary most
 PART_CHARS = 150
+KEPT_CLIPS = 4  # reference clips whose codes are kept
 
 
 @dataclass
@@ -100,18 +101,28 @@ class Runtime:
             return int((free - RESERVE_GB * 2**30) // per_expert)
 
         self.model = model.load(model_dir, device, budget, graphs)
+        self._codes: dict[str, object] = {}  # recent reference clips' codes, by content
         logger.info("Drama 3 ready in %.1f s", time.time() - t0)
 
     def encode(self, wav: Path):
+        """The clip's codes; the same audio again (each request's upload is a new file) is not
+        encoded again, and so keeps the model's kept states for it (model.prefill)."""
+        import hashlib
+
         import torch
         import torchaudio
 
         from ...data import audio_io
 
+        key = hashlib.sha1(Path(wav).read_bytes()).hexdigest()
+        if key in self._codes:
+            return self._codes[key]
         audio, rate = audio_io.read(wav)
         mono = torch.from_numpy(np.asarray(audio.mean(axis=0) if audio.ndim == 2 else audio, dtype=np.float32))
         mono = torchaudio.functional.resample(mono.to(self.device), rate, self.codec.sample_rate)
-        return self.codec.encode(mono).cpu()
+        codes = self.codec.encode(mono).cpu()
+        self._codes = {**dict(list(self._codes.items())[-(KEPT_CLIPS - 1) :]), key: codes}
+        return codes
 
 
 class FishDrama3Engine(Engine):
@@ -211,13 +222,14 @@ class FishDrama3Engine(Engine):
                 self._progress.phase = "generating" if decoder is None or decoder.warm else "compiling"
                 takes = []
                 for part, want in zip(parts, expected, strict=True):
-                    rows = prompt.build(m.tokenizer, part, references, m.semantic_begin)
+                    head, tail = prompt.parts(m.tokenizer, part, references, m.semantic_begin)
+                    rows = torch.cat((head, tail))
                     cap = frame_cap(want)
                     for attempt in range(2):  # a take that runs to its cap is drawn again once
                         self._progress.attempt = attempt
                         start = self._progress.step
                         torch.manual_seed(seed + attempt)
-                        codes = m.generate(rows, sampling, cap, self._count)
+                        codes = m.generate(rows, sampling, cap, self._count, head=len(head))
                         if codes.shape[1] < cap:
                             break
                         logger.warning("Drama 3: a take ran to its cap (%d frames for ~%d); drawing again", cap, want)

@@ -241,6 +241,7 @@ class Decoder:
         sampling: Sampling = DEFAULT_SAMPLING,
         max_frames: int = 1024,
         on_frame: Callable[[], None] | None = None,
+        head: int = 0,
     ) -> Tensor:
         """As Drama3.generate_reference: codes [10, n] after the prompt ``rows``."""
         m = self.m
@@ -251,7 +252,7 @@ class Decoder:
         self.temperature.fill_(sampling.temperature)
         self.top_p.fill_(sampling.top_p)
         self.top_k.fill_(sampling.top_k)
-        h, cache = m.prefill(rows)
+        h, cache = m.prefill(rows, head)
         self.backbone.load(cache, n)
         del cache
         m.plan_experts()  # the experts the prompt used most

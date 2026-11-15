@@ -44,6 +44,8 @@ STREAM_CHUNK = 48  # experts copied at a time when the cache can't hold a call's
 RECENT = 16  # frames a repeated semantic token is looked for in
 CAPACITY = 4096  # sequence positions: references, text and 1024 frames
 CODES, CODEBOOK = 10, 4096
+PREFIXES = 2  # voices whose prompt states are kept
+ROUTED_TOKENS = 48  # up to this many tokens, experts are read per token (no layer-wide copies)
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,8 @@ class Experts(nn.Module):
         slots and the rest streamed from CPU memory."""
         if hidden.shape[0] == 1:
             return self.routed(hidden, top_k_index[0], top_k_weights[0])
+        if self.fast and hidden.shape[0] <= ROUTED_TOKENS:  # a text after kept references: per token
+            return self.routed_tokens(hidden, top_k_index, top_k_weights)
         out = torch.zeros_like(hidden)
         flat = top_k_index.flatten()
         self.counts.index_add_(0, flat, torch.ones_like(flat, dtype=torch.float32))
@@ -212,6 +216,23 @@ class Experts(nn.Module):
             act = (F.silu(gate) * up).to(hidden.dtype).float()
             down = torch.einsum("ei,eid->ed", act, w["down"])
         return (down * weights.float()[:, None]).sum(0, keepdim=True).to(hidden.dtype)
+
+    def routed_tokens(self, hidden, top_k_index, top_k_weights):
+        """A few tokens [T, dim]: each (token, expert) pair read as in ``routed`` (CUDA)."""
+        from .kernels import int4_gemv_routed
+
+        t, k = top_k_index.shape
+        ids = top_k_index.flatten()
+        self.counts.index_add_(0, ids, torch.ones_like(ids, dtype=torch.float32))
+        ids = ids.to(torch.int32)
+        tokens = torch.arange(t, dtype=torch.int32, device=hidden.device).repeat_interleave(k)
+        rows = torch.arange(t * k, dtype=torch.int32, device=hidden.device)
+        g, h = self.gpu, self.host
+        gate = int4_gemv_routed(hidden, tokens, ids, self.table, g["gate_q"], g["gate_s"], h["gate_q"], h["gate_s"])
+        up = int4_gemv_routed(hidden, tokens, ids, self.table, g["up_q"], g["up_s"], h["up_q"], h["up_s"])
+        act = (F.silu(gate) * up).to(hidden.dtype)
+        down = int4_gemv_routed(act, rows, ids, self.table, g["down_q"], g["down_s"], h["down_q"], h["down_s"])
+        return (down.view(t, k, -1) * top_k_weights.float()[:, :, None]).sum(1).to(hidden.dtype)
 
     @staticmethod
     def _run(parts, experts, hidden, groups, out):
@@ -309,6 +330,7 @@ class Drama3(nn.Module):
     def __init__(self):
         super().__init__()
         self.decoder = None
+        self.prefixes: dict[str, tuple] = {}  # a voice's prompt part -> the states after it (prefill)
 
     # frames [T, 11]: the main token, then codes 0..9
     def is_semantic(self, ids):
@@ -342,19 +364,56 @@ class Drama3(nn.Module):
             codes.append(sample_fn(F.linear(h, head)) if sample_fn is not None else label_frames[:, 2 + r])
         return torch.stack(codes, -1)
 
-    def prefill(self, rows: torch.Tensor):
+    def _pass(self, rows, start: int, cache):
+        """Rows at positions start.. through the backbone (``cache`` holds the ones before):
+        their hidden states [T, dim]."""
+        positions = torch.arange(start, start + rows.shape[0], device=self.device)[None]
+        out = self.backbone(
+            inputs_embeds=self.backbone_input(rows)[None], position_ids=positions, past_key_values=cache, use_cache=True
+        )
+        return out.last_hidden_state[0]
+
+    def prefill(self, rows: torch.Tensor, head: int = 0):
         """The prompt through the backbone (transformers' modules) and the tower; returns
-        (the last row's hidden state [1, dim], the backbone's cache)."""
+        (the last row's hidden state [1, dim], the backbone's cache). The state after the first
+        ``head`` rows (a voice's references: the same for each text it speaks) is kept, so the
+        next prompt with the same ones starts after them."""
+        import copy
+        import hashlib
+
         from transformers.cache_utils import DynamicCache
 
         n = rows.shape[0]
         if n + 2 > CAPACITY:
             raise ValueError(f"The prompt is too long for Drama 3 ({n} positions).")
-        cache = DynamicCache(config=self.text_config)
-        out = self.backbone(inputs_embeds=self.backbone_input(rows)[None], past_key_values=cache, use_cache=True)
-        hidden = out.last_hidden_state[0]
-        if n > 1:  # the tower over the prompt: row p embeds frame p + 1
-            self.tower(hidden[:-1], torch.arange(n - 1, device=self.device), rows[:-1], rows[1:], n - 1)
+        towers = (*self.shared, *self.residual)
+        if not 1 < head < n:
+            cache = DynamicCache(config=self.text_config)
+            hidden = self._pass(rows, 0, cache)
+            if n > 1:  # the tower over the prompt: row p embeds frame p + 1
+                self.tower(hidden[:-1], torch.arange(n - 1, device=self.device), rows[:-1], rows[1:], n - 1)
+            return hidden[-1:], cache
+        key = hashlib.sha1(rows[:head].cpu().numpy().tobytes()).hexdigest()
+        prefix = self.prefixes.pop(key, None)
+        if prefix is None:
+            cache = DynamicCache(config=self.text_config)
+            hidden = self._pass(rows[:head], 0, cache)
+            self.tower(
+                hidden[:-1], torch.arange(head - 1, device=self.device), rows[: head - 1], rows[1:head], head - 1
+            )
+            kv = [(t.k[: head - 1].clone(), t.v[: head - 1].clone()) for t in towers]
+            prefix = (cache, hidden[-1:].clone(), kv)
+        else:
+            for t, (k, v) in zip(towers, prefix[2], strict=True):
+                t.k[: head - 1].copy_(k)
+                t.v[: head - 1].copy_(v)
+        self.prefixes[key] = prefix  # most recent last
+        while len(self.prefixes) > PREFIXES:
+            self.prefixes.pop(next(iter(self.prefixes)))
+        cache = copy.deepcopy(prefix[0])
+        hidden = self._pass(rows[head:], head, cache)
+        before = torch.cat((prefix[1], hidden[:-1]))  # the hidden states at positions head - 1 .. n - 2
+        self.tower(before, torch.arange(head - 1, n - 1, device=self.device), rows[head - 1 : -1], rows[head:], n - 1)
         return hidden[-1:], cache
 
     def plan_experts(self) -> float:
@@ -369,16 +428,20 @@ class Drama3(nn.Module):
         sampling: Sampling = DEFAULT_SAMPLING,
         max_frames: int = 1024,
         on_frame: Callable[[], None] | None = None,
+        head: int = 0,
     ) -> torch.Tensor:
-        return self.decoder.generate(rows, sampling, max_frames, on_frame)
+        """``head``: the rows the references make up (prompt.parts): their states are kept."""
+        return self.decoder.generate(rows, sampling, max_frames, on_frame, head)
 
     @torch.inference_mode()
-    def generate_reference(self, rows, sampling: Sampling = DEFAULT_SAMPLING, max_frames: int = 1024) -> torch.Tensor:
+    def generate_reference(
+        self, rows, sampling: Sampling = DEFAULT_SAMPLING, max_frames: int = 1024, head: int = 0
+    ) -> torch.Tensor:
         """Plain decoding through transformers' modules (tests compare the decoder with it)."""
         dev = self.device
         rows = rows.to(dev)
         n = rows.shape[0]
-        h, cache = self.prefill(rows)
+        h, cache = self.prefill(rows, head)
         t, k, p = sampling.temperature, sampling.top_k, sampling.top_p
         recent = torch.full((RECENT,), -1, device=dev)
         frames, frame_in, pos = [], rows[-1:], n - 1

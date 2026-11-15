@@ -44,7 +44,8 @@ compiled (about 30 s for VoxCPM2, a minute for dots.tts, a few seconds for
 S2-Pro; several minutes the very first time); later ones are fast.
 
 **Fish Audio Drama 3** clones zero-shot only (no training yet), at about 0.8 s
-per second of audio on a 16 GB GPU. It is a 35B mixture of experts, of which 3B
+per second of audio on a 16 GB GPU. The model's state after a reference is
+kept, so the lines after the first one with the same reference start sooner. It is a 35B mixture of experts, of which 3B
 work for each frame: its routed experts (17 GB in 4 bits) stay in the computer's
 memory, and the most used ones are also kept on the GPU (the rest are read over
 PCIe as needed). Its tags are any

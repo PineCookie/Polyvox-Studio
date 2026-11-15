@@ -192,7 +192,7 @@ class FakeModel:
         self.runaway = runaway
         self.calls = []
 
-    def generate(self, rows, sampling, max_frames, on_frame):
+    def generate(self, rows, sampling, max_frames, on_frame, head=0):
         self.calls.append(max_frames)
         n = max_frames if self.runaway and len(self.calls) % 2 == 1 else 20
         for _ in range(n):
@@ -340,3 +340,31 @@ def test_planning_holds_the_most_used_experts():
     assert torch.allclose(
         layer.routed(hidden, picked, weights), dense_moe(layer.cpu, hidden, picked[None], weights[None]), atol=1e-4
     )
+
+
+@torch.inference_mode()
+def test_a_voices_prompt_part_is_kept_and_reused():
+    """The prompt in two passes (references kept, then the text) gives the full pass's state and
+    tower caches; a second text with the same references starts from the kept states."""
+    m = tiny_drama3()
+    rows = tiny_prompt(m, 14)
+    head = 9
+    towers = (*m.shared, *m.residual)
+
+    def full(r):
+        m.prefixes.clear()
+        h, cache = m.prefill(r)
+        return h, [t.k[: len(r) - 1].clone() for t in towers], cache
+
+    for text_rows in (rows[head:], torch.cat((rows[head : head + 2], rows[head + 3 :]))):
+        r = torch.cat((rows[:head], text_rows))
+        want_h, want_k, want_cache = full(r)
+        for _ in range(2):  # kept, then reused
+            h, cache = m.prefill(r, head)
+            assert torch.allclose(h, want_h, atol=1e-5)
+            assert all(torch.allclose(t.k[: len(r) - 1], k, atol=1e-5) for t, k in zip(towers, want_k, strict=True))
+            assert torch.allclose(
+                cache.layers[0].recurrent_states[0], want_cache.layers[0].recurrent_states[0], atol=1e-5
+            )
+            assert cache.layers[3].keys.shape[2] == len(r)
+        assert len(m.prefixes) == 1

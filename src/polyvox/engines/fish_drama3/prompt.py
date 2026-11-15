@@ -21,16 +21,25 @@ def build(tokenizer, text: str, references, semantic_begin: int):
     """[rows, 11] int64 for ``text`` cloned from ``references`` [(transcript, codes [10, T])]."""
     import torch
 
-    segments: list = ["<|im_start|>system\n", TTS_REF if references else TTS]
+    return torch.cat(parts(tokenizer, text, references, semantic_begin))
+
+
+def parts(tokenizer, text: str, references, semantic_begin: int):
+    """build's rows in two: the part that depends only on the references (the system turn and
+    the user turn's start: the same for every text a voice speaks), then the text's."""
+    import torch
+
+    head: list = ["<|im_start|>system\n", TTS_REF if references else TTS]
     for i, (transcript, codes) in enumerate(references):
-        segments += [f"\n\n[Reference {i + 1}]\nText: {speaker_tagged(transcript)}\nSpeech: ", codes]
-    segments += [
-        "<|im_end|>\n",
-        "<|im_start|>user\n",
-        speaker_tagged(text),
-        "<|im_end|>\n",
-        "<|im_start|>assistant\n<|voice|>",
-    ]
+        head += [f"\n\n[Reference {i + 1}]\nText: {speaker_tagged(transcript)}\nSpeech: ", codes]
+    head += ["<|im_end|>\n", "<|im_start|>user\n"]
+    tail = [speaker_tagged(text), "<|im_end|>\n", "<|im_start|>assistant\n<|voice|>"]
+    return torch.cat(_rows(tokenizer, head, semantic_begin)), torch.cat(_rows(tokenizer, tail, semantic_begin))
+
+
+def _rows(tokenizer, segments, semantic_begin: int):
+    import torch
+
     rows = []
     for s in segments:
         if isinstance(s, str):
@@ -41,4 +50,4 @@ def build(tokenizer, text: str, references, semantic_begin: int):
             c = s.long()
             r = torch.cat([c[:1] + semantic_begin, c]).T
         rows.append(r)
-    return torch.cat(rows)
+    return rows
