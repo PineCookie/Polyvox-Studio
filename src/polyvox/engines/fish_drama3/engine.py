@@ -46,7 +46,7 @@ PART_CHARS = 150
 
 @dataclass
 class Progress:
-    phase: str = "idle"  # idle | loading | preparing | generating
+    phase: str = "idle"  # idle | loading | preparing | compiling | generating
     step: int = 0  # audio frames so far
     expected: int | None = None
     attempt: int = 0
@@ -84,7 +84,7 @@ def frame_cap(expected: int) -> int:
 class Runtime:
     """The loaded model and codec."""
 
-    def __init__(self, model_dir: Path, device: str):
+    def __init__(self, model_dir: Path, device: str, graphs: bool = True):
         import torch
 
         from ..fish_s2 import codec
@@ -99,7 +99,7 @@ class Runtime:
             free = min(torch.cuda.mem_get_info(device)[0], limit)
             return int((free - RESERVE_GB * 2**30) // per_expert)
 
-        self.model = model.load(model_dir, device, budget)
+        self.model = model.load(model_dir, device, budget, graphs)
         logger.info("Drama 3 ready in %.1f s", time.time() - t0)
 
     def encode(self, wav: Path):
@@ -206,7 +206,9 @@ class FishDrama3Engine(Engine):
                 chars = [len(re.sub(r"\W", "", p)) for p in parts]
                 expected = [max(MIN_FRAMES, round(c * self._frames_per_char)) for c in chars]
                 self._progress.expected = sum(expected)
-                self._progress.phase = "generating"
+                # The first frames of a process wait for the frame graph to be recorded (Triton compiles).
+                decoder = getattr(m, "decoder", None)
+                self._progress.phase = "generating" if decoder is None or decoder.warm else "compiling"
                 takes = []
                 for part, want in zip(parts, expected, strict=True):
                     rows = prompt.build(m.tokenizer, part, references, m.semantic_begin)
@@ -232,11 +234,13 @@ class FishDrama3Engine(Engine):
                 self._progress.phase = "idle"
 
     def _count(self) -> None:
+        self._progress.phase = "generating"
         self._progress.step += 1
 
     def _ensure_runtime(self) -> Runtime:
         if self._runtime is None:
-            self._runtime = self._loader(Path(self.settings.model_path(self.model_setting)), self.device)
+            graphs = self.settings.optimize is not False
+            self._runtime = self._loader(Path(self.settings.model_path(self.model_setting)), self.device, graphs)
         return self._runtime
 
     def training_config(self, params, run_dir, train_manifest, val_manifest) -> dict:

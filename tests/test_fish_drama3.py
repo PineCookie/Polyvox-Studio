@@ -147,8 +147,8 @@ def dense_moe(stacks, hidden, index, weights):
 
 @pytest.mark.parametrize("slots", [0, 2, 6])
 def test_cached_and_streamed_experts_compute_the_same(slots):
-    """Whatever the cache holds (nothing, fewer than a call needs, all), the layer's output is the
-    experts' weighted sum; later calls find what the cache kept."""
+    """Whatever the GPU slots hold (nothing, some, all), the layer's output is the experts'
+    weighted sum; planning between calls moves the used ones into the slots."""
     stacks = expert_stacks()
     layer = model.Experts(stacks, slots, "cpu")
     for _ in range(3):
@@ -156,15 +156,8 @@ def test_cached_and_streamed_experts_compute_the_same(slots):
         index = torch.stack([torch.randperm(6)[:2] for _ in range(5)])
         weights = torch.rand(5, 2)
         assert torch.allclose(layer(hidden, index, weights), dense_moe(stacks, hidden, index, weights), atol=1e-4)
-    assert len(layer.held) == slots and (layer.hits == 0) == (slots == 0)
-
-
-def test_the_cache_keeps_the_most_recently_used_experts():
-    layer = model.Experts(expert_stacks(), 2, "cpu")
-    hidden, weights = torch.randn(1, 128), torch.ones(1, 1)
-    for e in (0, 1, 0, 2):  # 1 is the least recently used when 2 comes
-        layer(hidden, torch.tensor([[e]]), weights)
-    assert list(layer.held) == [0, 2] and (layer.hits, layer.misses) == (1, 3)
+        layer.plan()
+    assert len(layer.held) == slots
 
 
 class Letters:
@@ -250,3 +243,100 @@ def test_the_engine_needs_its_model_and_a_transcript(settings, monkeypatch, tmp_
     with pytest.raises(ValueError, match="trained voices"):
         tts.synthesize(SynthesisRequest(text="你好。", lora_id="voxcpm/someone"))
     assert engine.frame_cap(1000) == engine.MAX_FRAMES and engine.frame_cap(50) == 150
+
+
+def tiny_drama3(slots=0):
+    """A made-up Drama 3 small enough for the CPU: 3 Gated DeltaNet layers and one attention layer,
+    6 experts in 4 bits, a 2-layer tower at the real codebook size."""
+    from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeTextConfig
+    from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeTextModel
+
+    from polyvox.engines.fish_drama3.decode import Decoder
+
+    torch.manual_seed(3)
+    dim, begin = 128, 300
+    cfg = Qwen3_5MoeTextConfig(
+        hidden_size=dim, num_hidden_layers=4, num_attention_heads=4, num_key_value_heads=2, head_dim=32,
+        linear_num_key_heads=2, linear_num_value_heads=4, linear_key_head_dim=16, linear_value_head_dim=16,
+        num_experts=6, num_experts_per_tok=2, moe_intermediate_size=128, shared_expert_intermediate_size=64,
+        vocab_size=begin + 4100, layer_types=["linear_attention"] * 3 + ["full_attention"],
+        rope_parameters={"rope_type": "default", "rope_theta": 1e7, "partial_rotary_factor": 0.25},
+    )  # fmt: skip
+    cfg._attn_implementation = "sdpa"
+    m = model.Drama3()
+    m.device, m.text_config = "cpu", cfg
+    m.backbone = Qwen3_5MoeTextModel(cfg).eval().requires_grad_(False)
+    for p in m.backbone.parameters():  # livelier than the default init, so differences show
+        p.data.normal_(0, 0.08)
+    m.semantic_begin, m.semantic_end, m.eos = begin, begin + 4095, begin + 4096
+    m.candidates = torch.tensor([*range(begin, begin + 4096), m.eos])
+    m.head = torch.randn(4097, dim) * 0.3
+    m.codebook_embeddings = torch.randn(10 * 4096, dim) * 0.1
+    m.offsets = torch.arange(10) * 4096
+    shape = model.TowerShape(heads=2, kv_heads=1, head_dim=32, rotary_dim=8)
+
+    def tower_layer():
+        r = lambda *s: torch.randn(*s) * 0.08  # noqa: E731
+        w = {"emb": r(4096, dim), "enorm": r(dim), "hnorm": r(dim), "eh_proj": r(dim, 2 * dim),
+             "final_layernorm": r(dim), "attention_norm": r(dim), "ffn_norm": r(dim), "wqkv": r(6 * 32, dim),
+             "wo": r(dim, 64), "q_norm": r(32), "k_norm": r(32), "w1": r(256, dim), "w2": r(dim, 256), "w3": r(256, dim)}  # fmt: skip
+        return model.TowerLayer(w, shape, capacity=256)
+
+    m.shared, m.residual = [tower_layer() for _ in range(2)], [tower_layer() for _ in range(9)]
+    m.shared = m.shared[:1] + m.shared[1:]
+    m.heads = [torch.randn(4096, dim) * 0.3 for _ in range(9)]
+    m.decoder = Decoder(m, graphs=False)
+    for layer in m.backbone.layers:
+        layer.mlp.experts = model.Experts(expert_stacks(experts=6, hidden=dim, inner=128), slots, "cpu")
+    return m
+
+
+def tiny_prompt(m, n=12):
+    rows = torch.zeros(n, 11, dtype=torch.long)
+    rows[:5, 0] = torch.randint(0, 250, (5,))
+    codes = torch.randint(0, 4096, (n - 5, 10))
+    rows[5:, 0], rows[5:, 1:] = codes[:, 0] + m.semantic_begin, codes
+    return rows
+
+
+@torch.inference_mode()
+def test_the_decoding_step_matches_the_backbone():
+    """After the prompt, our step for a new frame gives transformers' hidden state, for several frames."""
+    m = tiny_drama3()
+    rows = tiny_prompt(m)
+    _, cache = m.prefill(rows)
+    step = m.decoder.backbone
+    step.load(cache, rows.shape[0])
+    frame = rows[-1:].clone()
+    for pos in range(rows.shape[0], rows.shape[0] + 3):
+        frame[0, 1:] = torch.randint(0, 4096, (10,))
+        frame[0, 0] = frame[0, 1] + m.semantic_begin
+        x = m.backbone_input(frame)
+        want = m.backbone(inputs_embeds=x[None], past_key_values=cache, use_cache=True).last_hidden_state[0]
+        got = step.step(x, torch.tensor([pos]), 64)
+        assert torch.allclose(got, want, atol=2e-5, rtol=1e-4), (got - want).abs().max()
+
+
+@torch.inference_mode()
+def test_the_decoder_speaks_as_plain_decoding(monkeypatch):
+    """Greedy (one candidate) the decoder's frames equal the reference loop's."""
+    m = tiny_drama3()
+    monkeypatch.setattr(model, "REDRAW", model.Sampling(1.0, 0.95, 1))
+    m.decoder.redraw[2].fill_(1)
+    rows = tiny_prompt(m)
+    greedy = model.Sampling(1.0, 0.9, 1)
+    want = m.generate_reference(rows, greedy, 6)
+    got = m.generate(rows, greedy, 6)
+    assert got.shape == want.shape == (10, 6) and torch.equal(got, want)
+
+
+def test_planning_holds_the_most_used_experts():
+    layer = model.Experts(expert_stacks(), 2, "cpu")
+    layer.counts.copy_(torch.tensor([5.0, 0, 9, 1, 0, 7]))
+    assert layer.plan() == pytest.approx(16 / 22)
+    assert set(layer.held) == {2, 5} and layer.table.tolist().count(-1) == 4
+    hidden, weights = torch.randn(1, 128), torch.tensor([0.6, 0.4])
+    picked = torch.tensor([2, 3])
+    assert torch.allclose(
+        layer.routed(hidden, picked, weights), dense_moe(layer.cpu, hidden, picked[None], weights[None]), atol=1e-4
+    )

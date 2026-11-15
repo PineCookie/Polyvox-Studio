@@ -1,12 +1,14 @@
 """Drama 3's model, run from the 4-bit build (convert.py).
 
 - Backbone: Qwen3.5-35B-A3B (40 layers, 3 Gated DeltaNet : 1 gated full attention, 256 routed
-  experts of which 8 per token, plus a gated shared expert) through transformers' qwen3_5_moe
-  modules (the checkpoint keys are theirs). Its 4-bit attention linears are dequantized to bf16
-  once. At audio rows its input is (token embedding + code-0 embedding) / sqrt(2).
-- Routed experts (16.6 GB in 4 bits): pinned CPU memory, with a cache of slots per layer on the
-  GPU (as many as fit, least recently used out); what the router picks and the cache lacks is
-  copied over for the call.
+  experts of which 8 per token, plus a gated shared expert). The prompt goes through
+  transformers' qwen3_5_moe modules (the checkpoint keys are theirs); decoding is decode.py's
+  own step on the same weights. The 4-bit attention linears are dequantized to bf16 once. At
+  audio rows its input is (token embedding + code-0 embedding) / sqrt(2).
+- Routed experts (16.6 GB in 4 bits): pinned CPU memory, the most used of them also in GPU slots
+  (as many as fit). A decoding step reads each picked expert from its slot, or straight from
+  CPU memory over PCIe (kernels.py), so nothing waits on the CPU; ``plan`` refreshes which
+  experts are held from their use (the prompt's, then the frames').
 - Tower: 4 shared + 9 residual layers predicting codes 1..9 of each frame from the backbone's
   state (layer r embeds code r; its head gives code r + 1).
 - Sampling: temperature / top-p / top-k; a semantic token seen in the last 16 frames is drawn
@@ -21,7 +23,6 @@ import json
 import logging
 import math
 import time
-from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,8 @@ DENSE = ("q_proj", "k_proj", "v_proj", "o_proj", "in_proj_qkv", "in_proj_z", "ou
 PARTS = (("gate_proj", "gate"), ("up_proj", "up"), ("down_proj", "down"))
 STREAM_CHUNK = 48  # experts copied at a time when the cache can't hold a call's
 RECENT = 16  # frames a repeated semantic token is looked for in
+CAPACITY = 4096  # sequence positions: references, text and 1024 frames
+CODES, CODEBOOK = 10, 4096
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ class Sampling:
 
 
 DEFAULT_SAMPLING = Sampling()  # Fish's defaults
+REDRAW = Sampling(1.0, 0.95, 30)  # a repeated semantic token is drawn again with these
 
 
 def sample(logits: torch.Tensor, temperature: float, top_k: int, top_p: float) -> torch.Tensor:
@@ -65,71 +69,168 @@ def sample(logits: torch.Tensor, temperature: float, top_k: int, top_p: float) -
     return order.gather(-1, choice).squeeze(-1)
 
 
+_STAGING: dict[str, torch.Tensor] = {}
+_WHOLE: dict[str, torch.Tensor] = {}
+
+
+def _staging(name: str, like: torch.Tensor) -> torch.Tensor:
+    """A pinned buffer of STREAM_CHUNK experts shaped like ``like`` (shared by all layers)."""
+    buf = _STAGING.get(name)
+    shape = (STREAM_CHUNK, *like.shape[1:])
+    if buf is None or buf.shape != shape or buf.dtype != like.dtype:
+        buf = torch.empty(shape, dtype=like.dtype, pin_memory=torch.cuda.is_available())
+        _STAGING[name] = buf
+    return buf
+
+
+def _on_gpu(stacks: dict[str, torch.Tensor], device) -> dict[str, torch.Tensor]:
+    """A layer's whole expert stacks copied into GPU buffers shared by all layers (stream-ordered:
+    the next layer's copy waits for this one's work)."""
+    out = {}
+    for k, v in stacks.items():
+        buf = _WHOLE.get(k)
+        if buf is None or buf.shape != v.shape or buf.dtype != v.dtype or buf.device != torch.device(device):
+            buf = _WHOLE[k] = torch.empty_like(v, device=device)
+        out[k] = buf.copy_(v, non_blocking=True)
+    return out
+
+
+def release_buffers() -> None:
+    """Free the shared staging buffers (unloading the model)."""
+    _WHOLE.clear()
+    _STAGING.clear()
+
+
 class Experts(nn.Module):
     """One layer's routed experts: 4-bit stacks in pinned CPU memory ({gate,up,down}_{q,s},
-    [E, ...]) and ``slots`` of them on the GPU."""
+    [E, ...]), ``slots`` of them also on the GPU (``table``: an expert's slot, or -1)."""
 
     def __init__(self, stacks: dict[str, torch.Tensor], slots: int, device):
         super().__init__()
         self.cpu = stacks
         self.device = device
         self.slots = slots
+        self.experts = next(iter(stacks.values())).shape[0]
         self.gpu = {k: torch.empty((slots, *v.shape[1:]), dtype=v.dtype, device=device) for k, v in stacks.items()}
-        self.held: OrderedDict[int, int] = OrderedDict()  # expert -> slot, least recently used first
-        self.hits = self.misses = 0
+        self.held: dict[int, int] = {}  # expert -> slot
+        self.table = torch.full((self.experts,), -1, dtype=torch.int32, device=device)
+        self.counts = torch.zeros(self.experts, dtype=torch.float32, device=device)  # use since the last plan
+        self.fast = str(device).startswith("cuda")
+        if self.fast:
+            from .kernels import HostPointer
 
-    def _take(self, expert: int, keep: set[int]) -> int | None:
-        """A slot for ``expert`` (copied in), or None when every slot holds one of ``keep``."""
-        if len(self.held) < self.slots:
-            slot = len(self.held)
-        else:
-            victim = next((e for e in self.held if e not in keep), None)
-            if victim is None:
-                return None
-            slot = self.held.pop(victim)
-        for k, v in self.cpu.items():
-            self.gpu[k][slot].copy_(v[expert], non_blocking=True)
-        self.held[expert] = slot
-        return slot
+            self.host = {k: HostPointer(v) for k, v in stacks.items()}
+        self.rows = torch.arange(64, dtype=torch.int32, device=device)
+        self.zeros = torch.zeros(64, dtype=torch.int32, device=device)
+
+    def plan(self, decay: float = 0.5) -> float:
+        """Hold the most used experts in the GPU slots (outside a graph: it reads the counts).
+        Returns the share of the use the held experts cover."""
+        if not self.slots:
+            return 0.0
+        counts = self.counts.cpu()
+        total = float(counts.sum())
+        want = counts.topk(min(self.slots, self.experts)).indices.tolist()
+        keep = {e: s for e, s in self.held.items() if e in set(want)}
+        free = [s for s in range(self.slots) if s not in set(keep.values())]
+        for e in want:
+            if e not in keep:
+                slot = free.pop()
+                for k, v in self.cpu.items():
+                    self.gpu[k][slot].copy_(v[e], non_blocking=True)
+                keep[e] = slot
+        self.held = keep
+        table = torch.full((self.experts,), -1, dtype=torch.int32)
+        table[list(keep)] = torch.tensor(list(keep.values()), dtype=torch.int32)
+        self.table.copy_(table)
+        covered = float(counts[list(keep)].sum()) / total if total else 0.0
+        self.counts.mul_(decay)
+        return covered
 
     def forward(self, hidden, top_k_index, top_k_weights):
+        """Any number of tokens (the prompt): rows grouped by expert, the held experts from their
+        slots and the rest streamed from CPU memory."""
+        if hidden.shape[0] == 1:
+            return self.routed(hidden, top_k_index[0], top_k_weights[0])
         out = torch.zeros_like(hidden)
-        ids = top_k_index.unique().tolist()
-        wanted = set(ids)
-        cached, streamed = [], []
-        for e in ids:
-            if e in self.held:
-                self.held.move_to_end(e)
-                cached.append((e, self.held[e]))
-                self.hits += 1
-            else:
-                self.misses += 1
-                slot = self._take(e, wanted) if self.slots else None
-                if slot is None:
-                    streamed.append(e)
-                else:
-                    cached.append((e, slot))
+        flat = top_k_index.flatten()
+        self.counts.index_add_(0, flat, torch.ones_like(flat, dtype=torch.float32))
+        order = flat.argsort(stable=True)
+        counts = torch.bincount(flat, minlength=self.experts).tolist()  # one sync for the layer
+        tokens, gates = order // top_k_index.shape[1], top_k_weights.flatten()[order]
+        groups, start = {}, 0
+        for e, c in enumerate(counts):
+            if c:
+                groups[e] = (tokens[start : start + c], gates[start : start + c])
+                start += c
+        cached = [(e, self.held[e]) for e in groups if e in self.held]
+        streamed = [e for e in groups if e not in self.held]
         if cached:
             index = torch.tensor([s for _, s in cached], device=self.device)
             self._run({k: v.index_select(0, index) for k, v in self.gpu.items()}, [e for e, _ in cached],
-                      hidden, top_k_index, top_k_weights, out)  # fmt: skip
+                      hidden, groups, out)  # fmt: skip
+        # Many missing (a prompt needs nearly every expert): the layer's whole stack to the GPU at once.
+        whole = _on_gpu(self.cpu, self.device) if len(streamed) > STREAM_CHUNK else None
         for i in range(0, len(streamed), STREAM_CHUNK):
             chunk = streamed[i : i + STREAM_CHUNK]
             rows = torch.tensor(chunk)
-            parts = {k: v[rows].to(self.device, non_blocking=True) for k, v in self.cpu.items()}
-            self._run(parts, chunk, hidden, top_k_index, top_k_weights, out)
+            parts = {}
+            for k, v in self.cpu.items():
+                if whole is not None:
+                    parts[k] = whole[k].index_select(0, rows.to(self.device))
+                else:  # gathered into pinned memory: a fast copy (indexing makes pageable)
+                    stage = _staging(k, v)[: len(chunk)]
+                    torch.index_select(v, 0, rows, out=stage)
+                    parts[k] = stage.to(self.device)  # waits: the staging buffer is reused
+            self._run(parts, chunk, hidden, groups, out)
         return out
 
+    def routed(self, hidden, experts, weights):
+        """One token [1, dim] through its experts [k] with their weights [k]. On CUDA nothing is
+        decided on the CPU (graph-safe): each expert is read from its slot or from CPU memory."""
+        k = experts.shape[0]
+        self.counts.index_add_(0, experts, torch.ones_like(weights, dtype=torch.float32))
+        if self.fast:
+            from .kernels import int4_gemv_routed
+
+            ids = experts.to(torch.int32)
+            g, h = self.gpu, self.host
+            gate = int4_gemv_routed(
+                hidden, self.zeros[:k], ids, self.table, g["gate_q"], g["gate_s"], h["gate_q"], h["gate_s"]
+            )
+            up = int4_gemv_routed(hidden, self.zeros[:k], ids, self.table, g["up_q"], g["up_s"], h["up_q"], h["up_s"])
+            act = (F.silu(gate) * up).to(hidden.dtype)
+            down = int4_gemv_routed(
+                act, self.rows[:k], ids, self.table, g["down_q"], g["down_s"], h["down_q"], h["down_s"]
+            )
+        else:  # reference path (CPU): the experts' weights unpacked
+            picked = experts.cpu()
+            w = {n: dequant(self.cpu[n + "_q"][picked], self.cpu[n + "_s"][picked], torch.float32).to(hidden.device)
+                 for n in ("gate", "up", "down")}  # fmt: skip
+            x = hidden[0].float()
+            gate, up = torch.einsum("d,edi->ei", x, w["gate"]), torch.einsum("d,edi->ei", x, w["up"])
+            act = (F.silu(gate) * up).to(hidden.dtype).float()
+            down = torch.einsum("ei,eid->ed", act, w["down"])
+        return (down * weights.float()[:, None]).sum(0, keepdim=True).to(hidden.dtype)
+
     @staticmethod
-    def _run(parts, experts, hidden, top_k_index, top_k_weights, out):
-        wg = dequant(parts["gate_q"], parts["gate_s"], hidden.dtype)
-        wu = dequant(parts["up_q"], parts["up_s"], hidden.dtype)
-        wd = dequant(parts["down_q"], parts["down_s"], hidden.dtype)
+    def _run(parts, experts, hidden, groups, out):
+        """``groups``: expert -> (its rows of ``hidden``, their router weights)."""
+        if hidden.is_cuda and hidden.dtype == torch.bfloat16:
+            from .kernels import int4_dequant as unpack
+        else:
+
+            def unpack(q, s):
+                return dequant(q, s, hidden.dtype)
+
+        wg = unpack(parts["gate_q"], parts["gate_s"])
+        wu = unpack(parts["up_q"], parts["up_s"])
+        wd = unpack(parts["down_q"], parts["down_s"])
         for j, e in enumerate(experts):
-            tok, pos = torch.where(top_k_index == e)
+            tok, gate = groups[e]
             x = hidden[tok]
             y = (F.silu(x @ wg[j]) * (x @ wu[j])) @ wd[j]
-            out.index_add_(0, tok, (y * top_k_weights[tok, pos, None]).to(out.dtype))
+            out.index_add_(0, tok, (y * gate[:, None]).to(out.dtype))
 
 
 def gemma_norm(x, w, eps=1e-6):
@@ -137,46 +238,58 @@ def gemma_norm(x, w, eps=1e-6):
     return (x32 * torch.rsqrt(x32.pow(2).mean(-1, keepdim=True) + eps) * (1.0 + w.float())).to(x.dtype)
 
 
+@dataclass(frozen=True)
+class TowerShape:
+    heads: int = 16
+    kv_heads: int = 2
+    head_dim: int = 256
+    rotary_dim: int = 64
+    base: float = 1e7
+
+
+DRAMA3_TOWER = TowerShape()
+
+
 class TowerLayer(nn.Module):
     """One codebook layer: mixes the code embedding with the previous state, then a gated GQA
     attention (its own cache over the sequence) and a SwiGLU MLP, Gemma-style norms."""
 
-    def __init__(self, w: dict[str, torch.Tensor], heads=16, kv_heads=2, head_dim=256, rotary_dim=64, base=1e7):
+    def __init__(self, w: dict[str, torch.Tensor], shape: TowerShape = DRAMA3_TOWER, capacity: int = CAPACITY):
         super().__init__()
-        self.w, self.h, self.kvh, self.d, self.rd = w, heads, kv_heads, head_dim, rotary_dim
-        self.inv = 1.0 / base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim)
-        self.k: torch.Tensor | None = None  # [T, kv_heads, head_dim]
-        self.v: torch.Tensor | None = None
-
-    def reset(self):
-        self.k = self.v = None
+        s = self.shape = shape
+        self.w = w
+        dev, dtype = w["wqkv"].device, w["wqkv"].dtype
+        inv = 1.0 / s.base ** (torch.arange(0, s.rotary_dim, 2, dtype=torch.float32, device=dev) / s.rotary_dim)
+        ang = torch.arange(capacity, dtype=torch.float32, device=dev)[:, None] * inv
+        self.cos, self.sin = ang.cos(), ang.sin()  # [capacity, rotary_dim / 2]
+        self.k = torch.zeros(capacity, s.kv_heads, s.head_dim, dtype=dtype, device=dev)
+        self.v = torch.zeros_like(self.k)
+        self.span = torch.arange(capacity, device=dev)
 
     def rotate(self, x, positions):  # interleaved pairs on the first rotary_dim dims; x [T, H, d]
-        ang = positions.float()[:, None] * self.inv.to(x.device)
-        cos, sin = ang.cos()[:, None], ang.sin()[:, None]
-        r = x[..., : self.rd].float()
+        rd = self.shape.rotary_dim
+        cos, sin = self.cos.index_select(0, positions)[:, None], self.sin.index_select(0, positions)[:, None]
+        r = x[..., :rd].float()
         even, odd = r[..., 0::2], r[..., 1::2]
         rot = torch.stack((even * cos - odd * sin, odd * cos + even * sin), -1).flatten(-2)
-        return torch.cat((rot.to(x.dtype), x[..., self.rd :]), -1)
+        return torch.cat((rot.to(x.dtype), x[..., rd:]), -1)
 
-    def forward(self, hidden, emb, positions):
-        """hidden [T, dim] (the previous layer's output), emb [T, dim]; appends these T
-        positions to the cache and attends causally."""
-        w = self.w
+    def forward(self, hidden, emb, positions, window: int):
+        """hidden [T, dim] (the previous layer's output), emb [T, dim], at ``positions`` [T]
+        (written to the cache); attends over the first ``window`` positions, causally."""
+        w, s = self.w, self.shape
         mixed = F.linear(torch.cat((gemma_norm(emb, w["enorm"]), gemma_norm(hidden, w["hnorm"])), -1), w["eh_proj"])
         x = gemma_norm(mixed, w["attention_norm"])
-        qw, kw = self.h * self.d, self.kvh * self.d
+        qw, kw = s.heads * s.head_dim, s.kv_heads * s.head_dim
         q, gate, k, v = F.linear(x, w["wqkv"]).split([qw, qw, kw, kw], -1)
         t = x.shape[0]
-        q = self.rotate(gemma_norm(q.view(t, self.h, self.d), w["q_norm"]), positions)
-        k = self.rotate(gemma_norm(k.view(t, self.kvh, self.d), w["k_norm"]), positions)
-        v = v.view(t, self.kvh, self.d)
-        start = 0 if self.k is None else self.k.shape[0]
-        self.k = k if self.k is None else torch.cat((self.k, k))
-        self.v = v if self.v is None else torch.cat((self.v, v))
-        mask = torch.ones(t, self.k.shape[0], dtype=torch.bool, device=x.device).tril(start)
+        q = self.rotate(gemma_norm(q.view(t, s.heads, s.head_dim), w["q_norm"]), positions)
+        k = self.rotate(gemma_norm(k.view(t, s.kv_heads, s.head_dim), w["k_norm"]), positions)
+        self.k.index_copy_(0, positions, k)
+        self.v.index_copy_(0, positions, v.view(t, s.kv_heads, s.head_dim))
+        mask = self.span[:window][None] <= positions[:, None]
         y = F.scaled_dot_product_attention(
-            q.transpose(0, 1)[None], self.k.transpose(0, 1)[None], self.v.transpose(0, 1)[None],
+            q.transpose(0, 1)[None], self.k[:window].transpose(0, 1)[None], self.v[:window].transpose(0, 1)[None],
             attn_mask=mask, enable_gqa=True,
         )[0].transpose(0, 1).reshape(t, qw)  # fmt: skip
         residual = F.linear(y * torch.sigmoid(gate), w["wo"]) + mixed
@@ -195,13 +308,14 @@ class Drama3(nn.Module):
 
     def __init__(self):
         super().__init__()
+        self.decoder = None
 
     # frames [T, 11]: the main token, then codes 0..9
     def is_semantic(self, ids):
         return (ids >= self.semantic_begin) & (ids <= self.semantic_end)
 
     def code_sum(self, frames, first, end):
-        rows = frames[:, 1 + first : 1 + end].clamp(0, 4095) + self.offsets[first:end]
+        rows = frames[:, 1 + first : 1 + end].clamp(0, CODEBOOK - 1) + self.offsets[first:end]
         return F.embedding_bag(rows, self.codebook_embeddings, mode="sum")
 
     def backbone_input(self, frames):
@@ -209,24 +323,44 @@ class Drama3(nn.Module):
         mixed = (text + self.code_sum(frames, 1, 2).to(text.dtype)) / math.sqrt(2.0)
         return torch.where(self.is_semantic(frames[:, 0])[:, None], mixed, text)
 
-    def tower(self, hidden, positions, input_frames, label_frames, sample_fn=None):
-        """The 13 tower layers for these positions. ``label_frames`` give the codes each layer
-        embeds (teacher forcing); with ``sample_fn`` (one row) codes 1..9 are drawn."""
+    def tower(self, hidden, positions, input_frames, label_frames, window: int, sample_fn=None):
+        """The 13 tower layers at ``positions``. ``label_frames`` give the codes each layer embeds
+        (teacher forcing); with ``sample_fn`` (one row) codes 1..9 are drawn."""
         semantic = self.is_semantic(label_frames[:, 0])[:, None]
         shared_in = torch.where(self.is_semantic(input_frames[:, 0])[:, None], self.code_sum(input_frames, 2, 10), 0.0)
         h = hidden
         code0 = label_frames[:, 1]
         for i, layer in enumerate(self.shared):
-            emb = torch.where(semantic, F.embedding(code0.clamp(0, 4095), layer.w["emb"]), 0.0)
+            emb = torch.where(semantic, F.embedding(code0.clamp(0, CODEBOOK - 1), layer.w["emb"]), 0.0)
             if i == 0:  # the first shared layer also sees the input frame's codes 2..9
                 emb = emb + shared_in.to(emb.dtype)
-            h = layer(h, emb, positions)
+            h = layer(h, emb, positions, window)
         codes = [code0]
         for r, (layer, head) in enumerate(zip(self.residual, self.heads, strict=True)):
-            emb = torch.where(semantic, F.embedding(codes[-1].clamp(0, 4095), layer.w["emb"]), 0.0)
-            h = layer(h, emb, positions)
+            emb = torch.where(semantic, F.embedding(codes[-1].clamp(0, CODEBOOK - 1), layer.w["emb"]), 0.0)
+            h = layer(h, emb, positions, window)
             codes.append(sample_fn(F.linear(h, head)) if sample_fn is not None else label_frames[:, 2 + r])
         return torch.stack(codes, -1)
+
+    def prefill(self, rows: torch.Tensor):
+        """The prompt through the backbone (transformers' modules) and the tower; returns
+        (the last row's hidden state [1, dim], the backbone's cache)."""
+        from transformers.cache_utils import DynamicCache
+
+        n = rows.shape[0]
+        if n + 2 > CAPACITY:
+            raise ValueError(f"The prompt is too long for Drama 3 ({n} positions).")
+        cache = DynamicCache(config=self.text_config)
+        out = self.backbone(inputs_embeds=self.backbone_input(rows)[None], past_key_values=cache, use_cache=True)
+        hidden = out.last_hidden_state[0]
+        if n > 1:  # the tower over the prompt: row p embeds frame p + 1
+            self.tower(hidden[:-1], torch.arange(n - 1, device=self.device), rows[:-1], rows[1:], n - 1)
+        return hidden[-1:], cache
+
+    def plan_experts(self) -> float:
+        """Refresh the experts held on the GPU from their use; the mean share of use they cover."""
+        shares = [layer.mlp.experts.plan() for layer in self.backbone.layers]
+        return sum(shares) / len(shares)
 
     @torch.inference_mode()
     def generate(
@@ -236,35 +370,29 @@ class Drama3(nn.Module):
         max_frames: int = 1024,
         on_frame: Callable[[], None] | None = None,
     ) -> torch.Tensor:
-        from transformers.cache_utils import DynamicCache
+        return self.decoder.generate(rows, sampling, max_frames, on_frame)
 
+    @torch.inference_mode()
+    def generate_reference(self, rows, sampling: Sampling = DEFAULT_SAMPLING, max_frames: int = 1024) -> torch.Tensor:
+        """Plain decoding through transformers' modules (tests compare the decoder with it)."""
         dev = self.device
         rows = rows.to(dev)
-        for layer in (*self.shared, *self.residual):
-            layer.reset()
-        cache = DynamicCache(config=self.text_config)
         n = rows.shape[0]
-        hidden = self.backbone(inputs_embeds=self.backbone_input(rows)[None], past_key_values=cache, use_cache=True)
-        hidden = hidden.last_hidden_state[0]
-        positions = torch.arange(n, device=dev)
-        if n > 1:  # the tower over the prompt: row p embeds frame p + 1
-            self.tower(hidden[:-1], positions[:-1], rows[:-1], rows[1:])
+        h, cache = self.prefill(rows)
         t, k, p = sampling.temperature, sampling.top_k, sampling.top_p
         recent = torch.full((RECENT,), -1, device=dev)
-        frames, frame_in, pos, h = [], rows[-1:], n - 1, hidden[-1:]
+        frames, frame_in, pos = [], rows[-1:], n - 1
         for _ in range(max_frames):
             logits = F.linear(h, self.head)[0]
             first = self.candidates[sample(logits, t, k, p)]
-            again = self.candidates[sample(logits, 1.0, 30, 0.95)]
-            semantic = bool(self.is_semantic(first))
-            main = again if (semantic and bool((recent == first).any())) else first
+            again = self.candidates[sample(logits, REDRAW.temperature, REDRAW.top_k, REDRAW.top_p)]
+            main = again if (bool(self.is_semantic(first)) and bool((recent == first).any())) else first
             if int(main) == self.eos:
                 break
             label = torch.zeros(1, 11, dtype=torch.long, device=dev)
-            label[0, 0], label[0, 1] = main, (main - self.semantic_begin).clamp(0, 4095)
-            codes = self.tower(
-                h, torch.tensor([pos], device=dev), frame_in, label, lambda lg: sample(lg[0], t, k, p)[None]
-            )
+            label[0, 0], label[0, 1] = main, (main - self.semantic_begin).clamp(0, CODEBOOK - 1)
+            positions = torch.tensor([pos], device=dev)
+            codes = self.tower(h, positions, frame_in, label, pos + 1, lambda lg: sample(lg[0], t, k, p)[None])
             frame = torch.cat([main.view(1), codes[0]]).view(1, 11)
             frames.append(frame)
             recent = torch.cat([recent[1:], main.view(1)])
@@ -272,25 +400,22 @@ class Drama3(nn.Module):
             frame_in = frame
             out = self.backbone(inputs_embeds=self.backbone_input(frame)[None], past_key_values=cache, use_cache=True)
             h = out.last_hidden_state[0]
-            if on_frame:
-                on_frame()
         if not frames:
-            return torch.zeros(10, 0, dtype=torch.long)
+            return torch.zeros(CODES, 0, dtype=torch.long)
         return torch.cat(frames)[:, 1:].T.cpu()
 
-    def cache_stats(self) -> tuple[int, int]:
-        """(hits, misses) of the expert caches so far."""
-        layers = [layer.mlp.experts for layer in self.backbone.layers]
-        return sum(x.hits for x in layers), sum(x.misses for x in layers)
 
-
-def load(root: Path, device: str = "cuda", expert_budget: Callable[[int], int] | None = None) -> Drama3:
+def load(
+    root: Path, device: str = "cuda", expert_budget: Callable[[int], int] | None = None, graphs: bool = True
+) -> Drama3:
     """The 4-bit model in ``root``. ``expert_budget(bytes of one expert in every layer)`` -> GPU
-    slots per layer for the expert caches, asked once everything else is on the GPU (None: no cache)."""
+    slots per layer for the experts, asked once everything else is on the GPU (None: no slots)."""
     from safetensors import safe_open
     from tokenizers import Tokenizer
     from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeTextConfig
     from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeTextModel
+
+    from .decode import Decoder
 
     t0 = time.time()
     m = Drama3()
@@ -348,7 +473,7 @@ def load(root: Path, device: str = "cuda", expert_budget: Callable[[int], int] |
     m.candidates = torch.tensor([*range(m.semantic_begin, m.semantic_end + 1), m.eos], device=device)
     m.head = get("lm_head.weight").to(device)[m.candidates].contiguous()
     m.codebook_embeddings = get("audio_decoder.codebook_embeddings.weight").to(device)
-    m.offsets = torch.arange(10, device=device) * 4096
+    m.offsets = torch.arange(CODES, device=device) * CODEBOOK
 
     def tower_weights(p, emb_name):
         tl = p + "transformer_layer."
@@ -371,9 +496,10 @@ def load(root: Path, device: str = "cuda", expert_budget: Callable[[int], int] |
     ]
     m.heads = [get(f"audio_decoder_mtp.heads.{i}.weight").to(device) for i in range(9)]
     handles.clear()
+    m.decoder = Decoder(m, graphs=graphs and str(device).startswith("cuda"))
     slots = expert_budget(expert_bytes(stacks[0]) * len(stacks)) if expert_budget else 0
     slots = max(0, min(slots, m.text_config.num_experts))
     for layer, parts in zip(m.backbone.layers, stacks, strict=True):
         layer.mlp.experts = Experts(parts, slots, device)
-    logger.info("Drama 3 loaded in %.0f s; %d experts per layer cached on the GPU", time.time() - t0, slots)
+    logger.info("Drama 3 loaded in %.0f s; %d experts per layer held on the GPU", time.time() - t0, slots)
     return m
