@@ -35,7 +35,8 @@ def tiny_model() -> model.DualAR:
 def test_long_texts_are_spoken_in_parts_of_whole_sentences():
     assert text_parts("一。二！三？", limit=4) == ["一。二！", "三？"]
     assert text_parts("这是一个很长的句子。", limit=3) == ["这是一个很长的句子。"]  # never cut inside a sentence
-    assert text_parts("Hello there. How are you?") == ["Hello there.How are you?"]
+    assert text_parts("Hello there. How are you?") == ["Hello there. How are you?"]
+    assert text_parts("你好。\nHello there.\n再见。") == ["你好。 Hello there. 再见。"]
     assert text_parts("  ") == []
 
 
@@ -65,6 +66,27 @@ def test_weight_norms_fold_into_plain_weights():
     folded = codec.folded(state)
     assert sorted(folded) == ["c.bias", "c.weight"]
     assert torch.allclose(folded["c.weight"], conv.weight, atol=1e-6)
+
+
+def test_decoding_in_pieces_matches_one_pass():
+    torch.manual_seed(0)
+    up, frame = 2, 8  # 2 latent steps per frame, 4 samples per latent step
+    stack = torch.nn.Sequential(
+        codec.CausalConv(3, 4, 7, dilation=3),
+        codec.Snake(4),
+        codec.CausalTransConv(4, 4, 4, 2),
+        codec.CausalTransConv(4, 1, 4, 2),
+    ).eval()
+    z = torch.randn(1, 3, up * 37)
+    with torch.no_grad():
+        whole = stack(z)
+        pieces = codec.in_pieces(stack, z, up, frame, piece=5, context=16)
+        no_context = codec.in_pieces(stack, z, up, frame, piece=5, context=0)
+
+    assert whole.shape == pieces.shape == (1, 1, 37 * frame)
+    assert torch.allclose(pieces, whole, atol=1e-6)
+    assert not torch.allclose(no_context, whole, atol=1e-3)  # context is what makes them match
+    assert codec.in_pieces(stack, z[..., :0], up, frame).shape == (1, 1, 0)
 
 
 def test_the_frame_decoder_makes_the_same_frames_as_plain_decoding():

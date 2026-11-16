@@ -30,6 +30,7 @@ DOWNSAMPLE = (2, 2)  # in the quantizer: frames of 2048 samples
 FRAME = 2048
 CODEBOOKS = 9  # residual ones, after the semantic one
 SEMANTIC_SIZE, CODEBOOK_SIZE, CODE_DIM = 4096, 1024, 8
+DECODE_PIECE, DECODE_CONTEXT = 128, 16  # frames (the decoder's convolutions reach back < 8)
 
 
 class Snake(nn.Module):
@@ -290,9 +291,25 @@ class Codec(nn.Module):
 
     @torch.inference_mode()
     def decode(self, codes: Tensor) -> Tensor:
-        """Codes [10, T] -> mono audio [T * 2048] at 44.1 kHz."""
+        """Codes [10, T] -> mono audio [T * 2048] at 44.1 kHz.
+
+        The convolutional decoder runs over pieces of DECODE_PIECE frames, each after
+        DECODE_CONTEXT frames of the one before (its reach back is shorter: the output is
+        the same as in one pass), so its memory doesn't grow with the length: in one pass a
+        minute of audio needed ~4 GB more, and on a full GPU spilled into shared memory."""
         with full_float32():
-            return self.decoder.model(self.quantizer.decode(codes[None]))[0, 0]
+            z = self.quantizer.decode(codes[None])  # [1, 1024, 4T]: the transformer sees it whole
+            return in_pieces(self.decoder.model, z, math.prod(DOWNSAMPLE), FRAME)[0, 0]
+
+
+def in_pieces(run, z: Tensor, up: int, frame: int, piece: int = DECODE_PIECE, context: int = DECODE_CONTEXT) -> Tensor:
+    """``run`` (causal, ``frame`` samples out per ``up`` steps of ``z`` [B, C, up * T]) over
+    ``piece`` frames at a time, each after ``context`` frames of the one before."""
+    out = []
+    for a in range(0, z.shape[-1] // up, piece):
+        start = max(0, a - context)
+        out.append(run(z[..., start * up : (a + piece) * up])[..., (a - start) * frame :])
+    return torch.cat(out, -1) if out else z.new_zeros(*z.shape[:-2], 1, 0)
 
 
 @contextmanager

@@ -21,9 +21,12 @@ model; a voice with several checkpoints lets you pick one. Then:
 - **Text**, with the model's inline tags a click away: VoxCPM2's sounds and
   reactions (laugh, sigh, ...); S2-Pro's emotions, sounds, delivery and pauses,
   plus any description in brackets (**Custom…**), which acts on the words after
-  it. Tags a model doesn't know are marked in the text.
-- **Style** (VoxCPM2): describe the voice, e.g. "a calm, warm voice, speaking
-  slowly".
+  it; Drama 3's point tags ("[sighs]", at that spot) and tags around words
+  ("<whisper>…</whisper>": select the words, then pick the tag). Tags a model
+  doesn't know are marked in the text.
+- **Style**: VoxCPM2 takes a description of the voice, e.g. "a calm, warm
+  voice, speaking slowly"; Drama 3 a direction for how to say the text, e.g.
+  "with bright eager excitement".
 - **Reference audio**: each model shows its own inputs. VoxCPM2 has a
   Reference (who it sounds like) and a Prompt (speech it continues from, with
   its transcript); dots.tts one clip; GPT-SoVITS a prompt clip and timbre clips;
@@ -32,7 +35,9 @@ model; a voice with several checkpoints lets you pick one. Then:
   joined into one for models that take a single clip. **Transcribe** fills in a
   transcript. On every model, about 20 s of reference clones clearly better
   than one short clip.
-- **Advanced**: guidance, steps, seed and the model's own settings.
+- **Advanced**: guidance, steps, seed and the model's own settings; for Drama 3
+  a language hint and a length in seconds (it keeps to it closely; for a text
+  short enough for one take).
 - **History** keeps this session's clips to compare and download.
 
 GPT-SoVITS always speaks from a reference clip, and S2-Pro voices trained here
@@ -48,9 +53,9 @@ per second of audio on a 16 GB GPU. The model's state after a reference is
 kept, so the lines after the first one with the same reference start sooner. It is a 35B mixture of experts, of which 3B
 work for each frame: its routed experts (17 GB in 4 bits) stay in the computer's
 memory, and the most used ones are also kept on the GPU (the rest are read over
-PCIe as needed). Its tags are any
-direction in brackets, like S2-Pro's. A take that runs far longer than its text
-is drawn again once.
+PCIe as needed). A long text is spoken in parts of whole sentences (a line
+break ends one too), each part with the same reference, style and hints. A take
+that runs far longer than its text is drawn again once.
 
 ## Preparing datasets
 

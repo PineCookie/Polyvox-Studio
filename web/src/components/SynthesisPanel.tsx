@@ -7,7 +7,7 @@ import { formatDuration } from '../format'
 import { useT } from '../i18n'
 import { emptyInput, inputAudio, lacksTranscript } from '../referenceInputs'
 import type { InputState } from '../referenceInputs'
-import { unknownTags } from '../tags'
+import { scoped, unknownTags } from '../tags'
 import { ReferenceInputField } from './ReferenceInputField'
 import { ProgressBar } from './RunList'
 import { TagBar } from './TagBar'
@@ -166,15 +166,27 @@ export function SynthesisPanel({
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit()
   }
 
-  /** Put a tag at the cursor (or over the selection), then keep typing after it. */
+  /** Put a tag at the cursor (or over the selection), then keep typing after it. A scoped tag
+   * ("<whisper></whisper>") goes around the selection, or around the cursor to type into. */
   function insertTag(tag: string) {
     const el = textArea.current
     const start = el?.selectionStart ?? text.length
     const end = el?.selectionEnd ?? text.length
-    setText(text.slice(0, start) + tag + text.slice(end))
+    const pair = scoped(tag)
+    let next: string
+    let cursor: number
+    if (pair) {
+      const [, open, close] = pair
+      next = text.slice(0, start) + open + text.slice(start, end) + close + text.slice(end)
+      cursor = start === end ? start + open.length : end + open.length + close.length
+    } else {
+      next = text.slice(0, start) + tag + text.slice(end)
+      cursor = start + tag.length
+    }
+    setText(next)
     requestAnimationFrame(() => {
       el?.focus()
-      el?.setSelectionRange(start + tag.length, start + tag.length)
+      el?.setSelectionRange(cursor, cursor)
     })
   }
 
@@ -205,7 +217,12 @@ export function SynthesisPanel({
           <span>
             {t.style} <span className="muted">{t.optional}</span>
           </span>
-          <input value={control} onChange={(e) => setControl(e.target.value)} placeholder={t.stylePlaceholder} />
+          <input
+            value={control}
+            onChange={(e) => setControl(e.target.value)}
+            placeholder={(engine && t.stylePlaceholders[engine.id]) ?? t.stylePlaceholder}
+          />
+          {engine && t.styleHints[engine.id] && <span className="muted hint">{t.styleHints[engine.id]}</span>}
         </label>
       )}
 
@@ -250,7 +267,7 @@ export function SynthesisPanel({
                 <select value={String(options[p.name])} onChange={(e) => setOption(p.name, e.target.value)}>
                   {(p.choices ?? []).map((c) => (
                     <option key={c} value={c}>
-                      {c}
+                      {t.choiceLabels[c] ?? c}
                     </option>
                   ))}
                 </select>

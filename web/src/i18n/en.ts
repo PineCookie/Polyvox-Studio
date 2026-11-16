@@ -64,6 +64,7 @@ export const en = {
     emotion: 'Emotion',
     delivery: 'Delivery',
     pacing: 'Pauses',
+    scoped: 'Around words',
   } as Record<string, string>,
   // Chip labels by tag (without brackets); others show as written.
   tagNames: {} as Record<string, string>,
@@ -76,12 +77,21 @@ export const en = {
     voxcpm: 'A tag is a sound at that point. Use them sparingly; other bracketed words are read out.',
     fish_s2:
       'A tag acts on the words after it, until the next tag or the end of the sentence. Any description works; start with one or two.',
+    fish_drama3:
+      'A [tag] acts where it stands; an "around words" tag wraps the words selected (or the cursor). Any wording works, in either kind.',
   } as Record<string, string>,
   unknownTags: (engine: string, tags: string, count: number) =>
     `${engine} doesn't know ${tags}: it would read ${count === 1 ? 'it' : 'them'} out as words.`,
   style: 'Style',
   optional: 'optional',
   stylePlaceholder: 'e.g. a calm, warm female voice, speaking slowly',
+  // By engine id, where the style means something else than a voice description.
+  stylePlaceholders: {
+    fish_drama3: 'e.g. with bright eager excitement',
+  } as Record<string, string>,
+  styleHints: {
+    fish_drama3: 'How to say it: put before the text (each part of a long text) as a direction.',
+  } as Record<string, string>,
   referenceAudio: 'Reference audio',
   referenceOptional: 'optional · voice cloning',
   referenceRequired: 'required · this model always clones a clip (3–10 s)',
@@ -117,6 +127,10 @@ export const en = {
       'Reference',
       "Speech of the voice with its transcript; several clips are joined into one (about 20 s clones clearly better than one short clip). None: a trained voice's own reference, or a random voice with the base model.",
     ],
+    'fish_drama3.reference': [
+      'Reference',
+      'Speech of the voice with its transcript; several clips are joined into one (about 20 s clones clearly better than one short clip). None: a random voice.',
+    ],
   } as Record<string, [string, string]>,
   sourceNone: 'None',
   sourceFile: 'Upload',
@@ -144,6 +158,23 @@ export const en = {
     base_version: 'Base model version',
     sample_steps: 'Steps',
     speed: 'Speed',
+    language: 'Language',
+    duration: 'Length (s)',
+  } as Record<string, string>,
+  // Values of choice settings; others show as they are.
+  choiceLabels: {
+    auto: 'Auto',
+    zh: 'Chinese',
+    en: 'English',
+    ja: 'Japanese',
+    ko: 'Korean',
+    yue: 'Cantonese',
+    de: 'German',
+    fr: 'French',
+    es: 'Spanish',
+    it: 'Italian',
+    pt: 'Portuguese',
+    ru: 'Russian',
   } as Record<string, string>,
   paramHints: {
     cfg_value:
@@ -160,6 +191,9 @@ export const en = {
       'v2ProPlus (default), v2Pro or v4 (48 kHz; needs the reference’s transcript): the base model without a voice. Voices speak with the version they were trained from.',
     sample_steps: 'v4: detail passes per stretch of sound. 8 is the webui’s default; more is slower.',
     speed: "Speaking rate; 1 is the voice's own.",
+    language: 'A hint: the main language of the text. Auto lets the model tell.',
+    duration:
+      'Seconds the speech should take, for a text short enough for one take (about 150 characters). 0: its own pace.',
   } as Record<string, string>,
   seed: 'Seed',
   random: 'Random',

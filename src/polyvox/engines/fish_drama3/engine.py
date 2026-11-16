@@ -26,8 +26,7 @@ import numpy as np
 
 from ... import vram
 from ...config import Settings
-from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
-from ..fish_s2.engine import FishS2Engine, text_parts
+from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +40,85 @@ LEARN_MIN_CHARS = 10
 MAX_FRAMES = 1024  # per part of the text (~48 s)
 CAP_FACTOR = 3.0  # a take longer than this x the expected frames has run away
 CAP_MIN = 96  # frames (~4.5 s): short texts vary most
-PART_CHARS = 150
+PART_BYTES = 300  # longer texts are spoken in parts of about this many UTF-8 bytes (~100 Chinese characters)
+SENTENCE_ENDS = frozenset(".!?;。！？；…\n")
+CLAUSE_MARKS = frozenset(",:，：、")
+# Never cut inside: special tokens, a tag pair and what it holds, [bracketed] tags.
+PROTECTED = re.compile(r"<\|[^|>]*\|>|<([A-Za-z][\w-]*)\b[^>]*>.*?</\1>|\[[^\[\]]*\]", re.S)
 KEPT_CLIPS = 4  # reference clips whose codes are kept
+FRAMES_PER_SECOND = 44_100 / 2048  # the codec's
+# The report's examples (Table 10) and common sounds; any words in brackets work.
+TAG_GROUPS = (
+    TagGroup("sounds", ("[sighs]", "[laughs]", "[gasps]", "[clears throat]", "[pause]", "[hesitates]", "[crying]", "[whispering]")),
+    TagGroup("scoped", ("<whisper></whisper>", "<slow></slow>", "<emphasis></emphasis>")),
+)  # fmt: skip
+LANGUAGES = ("auto", "zh", "en", "ja", "ko", "yue", "de", "fr", "es", "it", "pt", "ru")
+
+
+def utf8_bytes(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def _units(text: str) -> list[tuple[str, bool]]:
+    """The text as (piece, protected): tags, spans in a tag pair and special tokens are protected."""
+    units, last = [], 0
+    for match in PROTECTED.finditer(text):
+        if match.start() > last:
+            units.append((text[last : match.start()], False))
+        units.append((match.group(0), True))
+        last = match.end()
+    if last < len(text):
+        units.append((text[last:], False))
+    return units
+
+
+def _cut(units: list[tuple[str, bool]], marks: frozenset[str], longer_than: int) -> list[tuple[str, bool]]:
+    """Free pieces longer than ``longer_than`` bytes cut after each mark (kept with the piece
+    before; a point between digits isn't a sentence end)."""
+    out = []
+    for piece, protected in units:
+        if protected or utf8_bytes(piece) <= longer_than:
+            out.append((piece, protected))
+            continue
+        start = 0
+        for i, char in enumerate(piece):
+            decimal = char == "." and 0 < i < len(piece) - 1 and piece[i - 1].isdigit() and piece[i + 1].isdigit()
+            if char in marks and not decimal:
+                out.append((piece[start : i + 1], False))
+                start = i + 1
+        if start < len(piece):
+            out.append((piece[start:], False))
+    return out
+
+
+def spoken_parts(text: str, limit: int = PART_BYTES) -> list[str]:
+    """The parts a text is spoken in, one take each, as Fish's own server cuts them: up to about
+    ``limit`` UTF-8 bytes, cut at sentence ends (a line break too), a longer sentence at clause
+    marks, then spaces, then anywhere. Tags, tagged spans ("<whisper>...</whisper>", kept whole
+    even when longer) and decimals are never cut."""
+    text = re.sub(r"[^\S\n]+", " ", text.replace("\r\n", "\n")).strip()
+    if not text:
+        return []
+    if utf8_bytes(text) <= limit:
+        return [text]
+    units = _cut(_units(text), SENTENCE_ENDS, 0)
+    for marks in (CLAUSE_MARKS, frozenset(" ")):
+        units = _cut(units, marks, limit)
+    pieces = []
+    for piece, protected in units:  # what is still too long: on character boundaries
+        while not protected and utf8_bytes(piece) > limit:
+            cut = len(piece.encode("utf-8")[:limit].decode("utf-8", "ignore"))
+            pieces.append(piece[:cut])
+            piece = piece[cut:]
+        pieces.append(piece)
+    parts, current = [], ""
+    for piece in pieces:
+        if current and utf8_bytes(current + piece) > limit:
+            parts.append(current)
+            current = ""
+        current += piece
+    parts.append(current)
+    return [p.strip() for p in parts if p.strip()]
 
 
 @dataclass
@@ -134,10 +210,10 @@ class FishDrama3Engine(Engine):
         languages=("zh", "en", "ja", "ko"),
         reference_audio=True,
         reference_transcript=True,
-        style=False,
+        style=True,  # a style prefix on each line: "[with bright eager excitement] ..."
         tags=True,
-        # Directions in brackets, in plain words; the tested ones are S2's.
-        tag_groups=FishS2Engine.capabilities.tag_groups,
+        # Point tags at a word, scoped tags around a span; any wording works (the report's Table 10).
+        tag_groups=TAG_GROUPS,
         free_tags=True,
         lora_hot_swap=False,
         training=False,
@@ -148,6 +224,8 @@ class FishDrama3Engine(Engine):
         Param("temperature", "float", 1.0, 0.1, 1.5, 0.05),
         Param("top_p", "float", 0.9, 0.1, 1.0, 0.05),
         Param("top_k", "int", 30, 1, 100, 1),
+        Param("language", "choice", "auto", choices=LANGUAGES),  # a hint: the main language
+        Param("duration", "float", 0.0, 0.0, 60.0, 0.5),  # seconds, for a one-line text; 0 = its own
     )
     model_setting = "drama3_model"
 
@@ -192,10 +270,14 @@ class FishDrama3Engine(Engine):
 
         from . import model, prompt
 
-        text = re.sub(r"\s+", " ", req.text).strip()
-        parts = text_parts(text, PART_CHARS)
+        parts = spoken_parts(req.text)
         if not parts:
             raise ValueError("Text to synthesize is empty.")
+        for part in parts:
+            prompt.check(part)
+        style = re.sub(r"\s+", " ", req.style or "").strip().strip("[]")
+        if style:  # a style prefix on every part
+            parts = [f"[{style}] {part}" for part in parts]
         if req.lora_id:
             raise ValueError("Fish Audio Drama 3 has no trained voices yet.")
         if reason := self.unavailable():
@@ -206,6 +288,12 @@ class FishDrama3Engine(Engine):
             raise ValueError("Fish Audio Drama 3 needs the reference clip's transcript.")
         options = self.options(req.options)
         sampling = model.Sampling(float(options["temperature"]), float(options["top_p"]), int(options["top_k"]))
+        language = str(options["language"])
+        seconds = float(options["duration"])
+        timed = seconds > 0 and len(parts) == 1  # a length only for a text spoken in one take
+        hints = f"[language: {language}]" if language != "auto" else ""
+        if timed:
+            hints += f" [audio tokens: {round(seconds * FRAMES_PER_SECOND)}]"
 
         with self._lock:
             self._progress = Progress(phase="loading" if self._runtime is None else "preparing", started=time.time())
@@ -214,17 +302,22 @@ class FishDrama3Engine(Engine):
                 m = rt.model
                 references = [(transcript, rt.encode(clip))] if clip is not None else []
                 seed = req.seed if req.seed is not None else random.randrange(2**31)
-                chars = [len(re.sub(r"\W", "", p)) for p in parts]
+                # Characters that are spoken (tags and directions aren't).
+                chars = [len(re.sub(r"\W", "", re.sub(r"\[[^\]]*\]|<[^>]*>", "", part))) for part in parts]
                 expected = [max(MIN_FRAMES, round(c * self._frames_per_char)) for c in chars]
+                if timed:
+                    expected = [max(MIN_FRAMES, round(seconds * FRAMES_PER_SECOND))]
                 self._progress.expected = sum(expected)
                 # The first frames of a process wait for the frame graph to be recorded (Triton compiles).
                 decoder = getattr(m, "decoder", None)
                 self._progress.phase = "generating" if decoder is None or decoder.warm else "compiling"
                 takes = []
+                # Each part is cloned from the references alone: with the earlier parts' takes in
+                # the prompt as well (as Fish's server does), the voice drifted part by part.
                 for part, want in zip(parts, expected, strict=True):
-                    head, tail = prompt.parts(m.tokenizer, part, references, m.semantic_begin)
-                    rows = torch.cat((head, tail))
                     cap = frame_cap(want)
+                    head, tail = prompt.parts(m.tokenizer, part, references, m.semantic_begin, hints)
+                    rows = torch.cat((head, tail))
                     for attempt in range(2):  # a take that runs to its cap is drawn again once
                         self._progress.attempt = attempt
                         start = self._progress.step
@@ -239,7 +332,7 @@ class FishDrama3Engine(Engine):
                 if codes.shape[1] == 0:
                     raise ValueError("Fish Audio Drama 3 made no audio for this text.")
                 audio = rt.codec.decode(codes.to(rt.device)).float().cpu().numpy()
-                if sum(chars) >= LEARN_MIN_CHARS:
+                if sum(chars) >= LEARN_MIN_CHARS and not timed:
                     self._frames_per_char = 0.7 * self._frames_per_char + 0.3 * codes.shape[1] / sum(chars)
                 return SynthesisResult(rt.codec.sample_rate, audio, seed)
             finally:

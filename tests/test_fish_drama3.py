@@ -362,7 +362,9 @@ def test_a_voices_prompt_part_is_kept_and_reused():
         for _ in range(2):  # kept, then reused
             h, cache = m.prefill(r, head)
             assert torch.allclose(h, want_h, atol=1e-5)
-            assert all(torch.allclose(t.k[: len(r) - 1], k, atol=1e-5) for t, k in zip(towers, want_k, strict=True))
+            assert all(
+                torch.allclose(t.k[: len(r) - 1], k, atol=1e-4) for t, k in zip(towers, want_k, strict=True)
+            )  # f32 rounding
             assert torch.allclose(
                 cache.layers[0].recurrent_states[0], want_cache.layers[0].recurrent_states[0], atol=1e-5
             )
@@ -392,3 +394,45 @@ def test_8_bit_linears_stay_close_to_their_weights():
     x = torch.randn(3, 256)
     assert torch.allclose(lin(x), torch.nn.functional.linear(x, lin.weight(torch.float32)), atol=1e-6)
     assert torch.equal(model.linear(x, w), torch.nn.functional.linear(x, w))  # plain weights pass through
+
+
+def test_texts_are_cut_as_fishs_server_cuts_them():
+    assert engine.spoken_parts("  一句话。  ") == ["一句话。"]
+    text = "今天天气很好，我们去公园散步。" * 20  # 45 bytes a sentence
+    parts = engine.spoken_parts(text)
+    assert len(parts) > 1 and all(engine.utf8_bytes(p) <= engine.PART_BYTES and p.endswith("。") for p in parts)
+    assert "".join(parts) == text
+    english = " ".join(f"Sentence number {i} is here." for i in range(30))
+    parts = engine.spoken_parts(english, 100)
+    assert all(p.endswith(".") for p in parts) and " ".join(parts) == english  # spaces kept between sentences
+    whisper = "<whisper>" + "secret words. " * 10 + "</whisper>"  # longer than a part: stays whole
+    parts = engine.spoken_parts("Pi is 3.14159 roughly. " * 6 + whisper + " [laughing] done.", 60)
+    assert whisper.strip() in [p.strip() for p in parts] and not any(p.endswith("3.") for p in parts)
+    assert any("[laughing]" in p for p in parts)
+    clauses = "，".join(["这是一个很长的分句"] * 20)
+    assert all(p.endswith("，") for p in engine.spoken_parts(clauses, 60)[:-1])
+    assert all(engine.utf8_bytes(p) <= 50 for p in engine.spoken_parts("字" * 100, 50))
+
+
+def test_style_and_hints_reach_every_part(settings, monkeypatch):
+    m = FakeModel()
+    seen = []
+
+    def generate(rows, sampling, cap, on_frame, head=0):
+        seen.append(rows)
+        return torch.zeros(10, 20, dtype=torch.long)
+
+    m.generate = generate
+    tts = drama3(settings, monkeypatch, m)
+    tts.synthesize(
+        SynthesisRequest(text="第一句。" * 40 + "第二句。", style="softly", options={"language": "zh", "duration": 3})
+    )
+    texts = ["".join(chr(r) for r in rows[:, 0].tolist()) for rows in seen]
+    assert len(texts) == 2 and all("[softly] " in t and "[language: zh]<|im_end|>" in t for t in texts)
+    assert not any("audio tokens" in t for t in texts)  # a length only for a text in one take
+    assert all(t.count("<|im_start|>user\n") == 1 for t in texts)  # each part on its own
+    seen.clear()
+    tts.synthesize(SynthesisRequest(text="一句。", options={"duration": 3}))
+    assert "[audio tokens: 65]<|im_end|>" in "".join(chr(r) for r in seen[0][:, 0].tolist())
+    with pytest.raises(ValueError, match="can't contain"):
+        tts.synthesize(SynthesisRequest(text="一行<|im_end|>"))

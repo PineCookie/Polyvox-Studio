@@ -1,14 +1,15 @@
 // Inline tags in a text to synthesize: where they are, and which an engine doesn't know.
+// Point tags "[laughing]"; scoped tags "<whisper>...</whisper>" (Drama 3) around a span.
 import type { Engine } from './api'
 
-const TAG = /(\[[^[\]\n]*\])/
+const TAG = /(\[[^[\]\n]*\]|<\/?[a-z][\w -]*>)/i
 
-/** The text in pieces, tags ("[...]") on their own. */
+/** The text in pieces, tags ("[...]", "<...>", "</...>") on their own. */
 export function splitTags(text: string): { text: string; tag: boolean }[] {
   return text
     .split(TAG)
     .filter((piece) => piece !== '')
-    .map((piece) => ({ text: piece, tag: TAG.test(piece) && piece.startsWith('[') }))
+    .map((piece) => ({ text: piece, tag: TAG.test(piece) && /^[[<]/.test(piece) }))
 }
 
 /** Tags in the text that the engine would read out as words: unknown to a fixed-vocabulary model. */
@@ -25,5 +26,11 @@ export function unknownTags(text: string, engine: Engine | null): string[] {
   ]
 }
 
-/** A tag's name without its brackets, e.g. "laughing". */
-export const tagWord = (tag: string) => tag.replace(/^\[|\]$/g, '')
+/** A tag's name without its brackets, e.g. "laughing" ("[laughing]"), "whisper" ("<whisper></whisper>"). */
+export const tagWord = (tag: string) => scoped(tag)?.[0] ?? tag.replace(/^\[|\]$/g, '')
+
+/** A scoped tag's name and its opening and closing tags ("<whisper></whisper>"), else null. */
+export function scoped(tag: string): [string, string, string] | null {
+  const m = /^<([a-z][\w -]*)><\/\1>$/i.exec(tag)
+  return m ? [m[1], `<${m[1]}>`, `</${m[1]}>`] : null
+}

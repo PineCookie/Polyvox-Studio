@@ -64,7 +64,9 @@ def text_parts(text: str, limit: int = PART_CHARS) -> list[str]:
         if not sentence:
             continue
         if parts and len(parts[-1]) + len(sentence) <= limit:
-            parts[-1] += sentence
+            # A space between Latin-script sentences ("Hello. How"), none between Chinese ones.
+            space = " " if parts[-1][-1].isascii() or sentence[0].isascii() else ""
+            parts[-1] += space + sentence
         else:
             parts.append(sentence)
     return parts
