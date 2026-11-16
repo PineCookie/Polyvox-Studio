@@ -851,6 +851,7 @@ export const zh: Messages = {
     gsv_g2pw_model: 'GPT-SoVITS：多音字的读音',
     gsv_v4_model: '语音合成（48 kHz）、音色训练：v4 的 SoVITS 基础模型（梅尔 DiT）和声码器',
     s2_model: '语音合成（44.1 kHz）、零样本克隆；需要 16 GB 显卡',
+    drama3_model: '语音合成（44.1 kHz）、零样本克隆：下载官方权重后，在本机转换为 4 位（22 GB）',
     denoiser_model: '合成：克隆前清理参考音频',
     asr_model: '语音识别：为片段生成文本、与文本对比',
     align_model: '检查片段与文本是否一致（11 种语言）',
