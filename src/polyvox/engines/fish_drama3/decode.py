@@ -327,7 +327,7 @@ class Decoder:
         frame = torch.cat([main.view(1), codes[0]]).view(1, CODES + 1)
         self.frame.copy_(frame)
         self.pos.add_(1)
-        self.h.copy_(self.backbone.step(m.backbone_input(frame), self.pos, window))
+        self.h.copy_(self.backbone.step(m.backbone_input(frame, audio_only=True), self.pos, window))
 
     # ------------------------------------------------------------ graphs
     @property

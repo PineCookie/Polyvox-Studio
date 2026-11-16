@@ -345,8 +345,23 @@ class Drama3(nn.Module):
         rows = frames[:, 1 + first : 1 + end].clamp(0, CODEBOOK - 1) + self.offsets[first:end]
         return F.embedding_bag(rows, self.codebook_embeddings, mode="sum")
 
-    def backbone_input(self, frames):
-        text = self.backbone.embed_tokens(frames[:, 0])
+    def embed(self, tokens, audio_only: bool = False):
+        """Token embeddings. With the table in CPU memory (load), the audio tokens and the end
+        come from their GPU rows (``audio_only``: decoding, graph-safe), others from the CPU."""
+        table = getattr(self, "audio_rows", None)
+        if table is None:
+            return self.backbone.embed_tokens(tokens)
+        audio = torch.where(
+            tokens == self.eos, table.shape[0] - 1, (tokens - self.semantic_begin).clamp(0, table.shape[0] - 2)
+        )
+        rows = table.index_select(0, audio)
+        if audio_only:
+            return rows
+        text = self.backbone.embed_tokens.weight[tokens.cpu()].to(self.device, non_blocking=True)
+        return torch.where((self.is_semantic(tokens) | (tokens == self.eos))[:, None], rows, text)
+
+    def backbone_input(self, frames, audio_only: bool = False):
+        text = self.embed(frames[:, 0], audio_only)
         mixed = (text + self.code_sum(frames, 1, 2).to(text.dtype)) / math.sqrt(2.0)
         return torch.where(self.is_semantic(frames[:, 0])[:, None], mixed, text)
 
@@ -537,7 +552,8 @@ def load(
             else:
                 state[name.removesuffix(".qweight") + ".weight"] = dequant(qweight, scales).T.contiguous()
         else:
-            state[name] = get(key).to(device)
+            # The token table (1 GB) stays in CPU memory: decoding needs only its audio rows (below).
+            state[name] = get(key).pin_memory() if name == "embed_tokens.weight" and on_cuda else get(key).to(device)
     stacks = []
     for i in range(len(m.backbone.layers)):
         parts = {}
@@ -562,6 +578,8 @@ def load(
     m.candidates = torch.tensor([*range(m.semantic_begin, m.semantic_end + 1), m.eos], device=device)
     m.head = get("lm_head.weight").to(device)[m.candidates].contiguous()
     m.codebook_embeddings = get("audio_decoder.codebook_embeddings.weight").to(device)
+    if on_cuda:  # the audio tokens' rows and the end's (Drama3.embed)
+        m.audio_rows = m.backbone.embed_tokens.weight[m.candidates.cpu()].to(device)
     m.offsets = torch.arange(CODES, device=device) * CODEBOOK
 
     def tower_weights(p, emb_name):
