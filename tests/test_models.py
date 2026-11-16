@@ -1,6 +1,7 @@
 """Model downloads: where settings point, and the download job (nothing is fetched)."""
 
 import dataclasses
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -132,6 +133,56 @@ def test_models_come_in_groups_and_drama3_offers_its_ways(service, training, asr
     ]
     wrong = {"settings": ["asr_model"], "ways": {"asr_model": "convert"}}  # nothing to convert from
     assert client.post("/api/models/download", json=wrong).status_code == 422
+
+
+def test_a_failed_fetch_of_a_model_not_downloaded_says_which_and_where(settings):
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    unset = dataclasses.replace(settings, model=type(settings)().model)  # VoxCPM2 not configured
+    offline = LocalEntryNotFoundError("Cannot find the requested files in the disk cache")
+    with pytest.raises(models.ModelUnavailable, match="VoxCPM2 isn't downloaded.*Models tab"):
+        with models.loading(unset, "model"):
+            raise OSError("We couldn't connect to 'https://huggingface.co' to load the files") from offline
+    with pytest.raises(models.ModelUnavailable, match="Qwen3-ASR 1.7B isn't downloaded"):
+        with models.loading(unset, "asr_model"):
+            raise ConnectionError("network unreachable")
+    # Other errors, and errors of a model that is downloaded or configured, pass unchanged.
+    with pytest.raises(KeyError):
+        with models.loading(unset, "model"):
+            raise KeyError("a broken checkpoint")
+    with pytest.raises(OSError, match="couldn't connect"):
+        with models.loading(settings, "model"):  # the tests' VoxCPM is configured
+            raise OSError("We couldn't connect to 'https://huggingface.co'")
+
+
+def test_the_server_answers_a_missing_model_with_its_message(service, training, asr_service, monkeypatch):
+    client = TestClient(create_app(service.settings, service, training, asr_service))
+
+    def needs_a_model(*args):
+        raise models.ModelUnavailable("dots.tts SOAR isn't downloaded, and fetching it failed (offline).")
+
+    monkeypatch.setattr(models, "any_available", needs_a_model)  # a route that meets the error
+    r = client.get("/api/status")
+    assert r.status_code == 503 and "dots.tts SOAR isn't downloaded" in r.json()["detail"]
+
+
+def test_the_download_source_is_kept_and_used_for_first_use_downloads(service, training, asr_service):
+    from huggingface_hub import constants, hf_hub_url
+
+    client = TestClient(create_app(service.settings, service, training, asr_service))
+    assert client.get("/api/models").json()["endpoint"] == ""
+    r = client.post("/api/models/source", json={"endpoint": "https://hf-mirror.com/"})
+    assert r.status_code == 200 and r.json() == {"endpoint": "https://hf-mirror.com"}
+    assert client.get("/api/models").json()["endpoint"] == "https://hf-mirror.com"
+    assert constants.ENDPOINT == os.environ["HF_ENDPOINT"] == "https://hf-mirror.com"
+    assert hf_hub_url("org/model", "config.json").startswith("https://hf-mirror.com/org/model/resolve/")
+    # Remembered in the models folder: a new server uses it.
+    models.use_endpoint("")
+    TestClient(create_app(service.settings, service, training, asr_service))
+    assert constants.ENDPOINT == "https://hf-mirror.com"
+    assert client.post("/api/models/source", json={"endpoint": "hf-mirror.com"}).status_code == 422
+    assert client.post("/api/models/source", json={"endpoint": ""}).json() == {"endpoint": ""}
+    assert constants.ENDPOINT == "https://huggingface.co" and "HF_ENDPOINT" not in os.environ
 
 
 def test_converting_keeps_the_source_only_when_asked(tmp_path, monkeypatch):

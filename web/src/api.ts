@@ -219,7 +219,7 @@ export interface DownloadWay {
 
 export interface ModelList {
   models_dir: string
-  endpoint: string // the server's default download source ("" = huggingface.co)
+  endpoint: string // the download source in use ("" = huggingface.co)
   models: ModelInfo[]
 }
 
@@ -227,6 +227,12 @@ export type DownloadJob = Job<{ downloaded: string[] }>
 
 export async function listModels(): Promise<ModelList> {
   return (await request('/api/models')).json()
+}
+
+/** The download source ("" = huggingface.co, or a mirror): for downloads and for models that download
+ * themselves when first used; remembered by the server. Returns it as the server keeps it. */
+export async function setDownloadSource(endpoint: string): Promise<string> {
+  return (await (await postJson('/api/models/source', { endpoint })).json()).endpoint
 }
 
 /** Download models into the models folder: a job (phase = the setting downloading, done / total in MB).

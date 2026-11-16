@@ -308,13 +308,18 @@ class ModelOut(BaseModel):
 
 class ModelsOut(BaseModel):
     models_dir: str
-    endpoint: str  # the server's default download source ("" = huggingface.co)
+    endpoint: str  # the download source in use ("" = huggingface.co); POST /api/models/source sets it
     models: list[ModelOut]
+
+
+class SourceIn(BaseModel):
+    endpoint: str  # Hugging Face ("") or a mirror, e.g. https://hf-mirror.com
 
 
 class DownloadIn(BaseModel):
     settings: list[str] = Field(min_length=1)
-    # Hugging Face or a mirror, e.g. https://hf-mirror.com; None = the server's default.
+    # Hugging Face or a mirror, e.g. https://hf-mirror.com (then the source from now on); None = the
+    # source in use.
     endpoint: str | None = None
     # setting -> one of its ModelOut.ways (unset: "prebuilt").
     ways: dict[str, Literal["prebuilt", "convert", "convert_keep"]] = {}

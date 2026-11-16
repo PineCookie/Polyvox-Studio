@@ -13,6 +13,7 @@ import shutil
 import threading
 import zipfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -361,6 +362,112 @@ MODELS: tuple[ModelSpec, ...] = (
 )
 
 BY_SETTING = {m.setting: m for m in MODELS}
+
+
+SOURCE_FILE = ".download-source"  # in the models folder: the download source chosen in the Models tab
+
+
+def check_endpoint(url: str) -> str:
+    """A download source as given ("" = huggingface.co), cleaned; ValueError when it isn't one."""
+    url = url.strip().rstrip("/")
+    if url and not url.startswith(("http://", "https://")):
+        raise ValueError("The download source must be an http(s) URL.")
+    return url
+
+
+def use_endpoint(url: str) -> None:
+    """Make ``url`` ("" = huggingface.co) where models that aren't downloaded come from when first
+    used, in this process (huggingface_hub reads its endpoint per call) and in the training
+    processes it starts (HF_ENDPOINT). ModelScope models are unaffected."""
+    import os
+
+    from huggingface_hub import constants
+
+    endpoint = check_endpoint(url) or constants._HF_DEFAULT_ENDPOINT
+    constants.ENDPOINT = endpoint
+    constants.HUGGINGFACE_CO_URL_TEMPLATE = endpoint + "/{repo_id}/resolve/{revision}/{filename}"
+    if url:
+        os.environ["HF_ENDPOINT"] = endpoint
+    else:
+        os.environ.pop("HF_ENDPOINT", None)
+
+
+def current_endpoint() -> str:
+    """The download source in use ("" = huggingface.co)."""
+    from huggingface_hub import constants
+
+    return "" if constants.ENDPOINT == constants._HF_DEFAULT_ENDPOINT else constants.ENDPOINT
+
+
+def saved_endpoint(models_dir: Path) -> str | None:
+    """The download source saved in the models folder, or None when none was chosen there."""
+    try:
+        return check_endpoint((models_dir / SOURCE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def save_endpoint(models_dir: Path, url: str) -> str:
+    """Remember ``url`` as the download source and use it now; returns it cleaned."""
+    url = check_endpoint(url)
+    models_dir.mkdir(parents=True, exist_ok=True)
+    (models_dir / SOURCE_FILE).write_text(url, encoding="utf-8")
+    use_endpoint(url)
+    return url
+
+
+class ModelUnavailable(RuntimeError):
+    """A model that isn't downloaded couldn't be fetched either (no network, the hub blocked, an
+    offline setting): the message says which and where to get it. The server answers 503 with it."""
+
+
+def _fetch_failure(error: BaseException) -> BaseException | None:
+    """The error in ``error``'s chain that says fetching from the hub failed, if any."""
+    import socket
+
+    from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError, OfflineModeIsEnabled
+
+    seen = set()
+    e: BaseException | None = error
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        name = type(e).__name__
+        if isinstance(e, HfHubHTTPError | LocalEntryNotFoundError | OfflineModeIsEnabled | socket.error) or name in (
+            "ConnectError", "ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout", "SSLError",
+        ):  # fmt: skip
+            return e
+        text = str(e)
+        if isinstance(e, OSError) and ("couldn't connect" in text or "huggingface.co" in text or "offline" in text):
+            return e
+        e = e.__cause__ or e.__context__
+    return None
+
+
+@contextmanager
+def loading(settings, *setting_names: str):
+    """Around loading these models: a failed fetch of one that isn't downloaded (or configured)
+    becomes a ModelUnavailable naming it. Other errors pass unchanged."""
+    try:
+        yield
+    except ModelUnavailable:
+        raise
+    except Exception as e:
+        cause = _fetch_failure(e)
+        missing = [
+            BY_SETTING[n]
+            for n in setting_names
+            if n in BY_SETTING and not settings.configured(n) and not BY_SETTING[n].downloaded(settings.models_dir)
+        ]
+        if cause is None or not missing:
+            raise
+        chain = f"{e} {cause}"
+        spec = next((s for s in missing if s.repo in chain), missing[0])
+        source = "ModelScope" if spec.hub == "modelscope" else "Hugging Face"
+        reason = str(cause).strip().splitlines()[0][:160] if str(cause).strip() else type(cause).__name__
+        raise ModelUnavailable(
+            f"{spec.name} isn't downloaded, and fetching it from {source} failed ({reason}). "
+            "Download it in the Models tab (a mirror can be chosen there)."
+        ) from e
 
 
 def any_available(settings, setting_names) -> bool:

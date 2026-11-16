@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ... import lora_library
+from ... import lora_library, models
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from . import lora as dots_lora
@@ -204,7 +204,8 @@ class DotsEngine(Engine):
         if self._runtime is None:
             model = self.settings.model_path(self.model_setting)
             logger.info("Loading dots.tts from %s (optimize=%s)", model, self.optimize)
-            runtime = self._loader(model, self.optimize)
+            with models.loading(self.settings, self.model_setting):
+                runtime = self._loader(model, self.optimize)
             # Before the warm-up fuses the diffusion head; LoRAs then go into the
             # fused copies in place, so the recorded CUDA graphs stay valid.
             self._merger = dots_lora.Merger(runtime.model, keep_fusion=True)

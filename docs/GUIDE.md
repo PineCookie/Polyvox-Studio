@@ -371,12 +371,15 @@ they do (until one speech model is there, the other tabs point to the Models tab
 | CAM++, ZipEnhancer, AST | speaker similarity and Other voice; denoising reference clips; singing detection | 0.4 GB |
 | RoFormer vocals / de-reverb / denoise | the optional Clean up step | 0.9 GB each |
 
-Downloads come from Hugging Face, a mirror of it (hf-mirror.com, or any URL;
-`POLYVOX_HF_ENDPOINT` sets the server's default) or ModelScope, fetch only the
-files that are used, and resume when interrupted. A model downloaded while the
+Downloads come from Hugging Face, a mirror of it (hf-mirror.com, or any URL) or
+ModelScope, fetch only the files that are used, and resume when interrupted. The
+source chosen in the Models tab is kept in the models folder (`.download-source`;
+until one is chosen, `POLYVOX_HF_ENDPOINT` sets it). A model downloaded while the
 server runs is used from its next load, no restart needed. A Hugging Face model
-that is not downloaded still works: it is fetched into the Hugging Face cache
-the first time it loads (without progress).
+that is not downloaded still works: it is fetched from the same source into the
+Hugging Face cache the first time it loads (without progress). If that fails (no
+network, the site blocked), the message names the model and points to the Models
+tab; without any network that can take a few minutes, as each file is retried.
 
 ## Configuration
 

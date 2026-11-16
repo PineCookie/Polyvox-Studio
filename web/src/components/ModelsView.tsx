@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { cancelJob, downloadModels, listModels } from '../api'
+import { cancelJob, downloadModels, listModels, setDownloadSource } from '../api'
 import type { DownloadJob, DownloadWayId, ModelGroup, ModelInfo, ModelList } from '../api'
 import { formatDuration } from '../format'
 import { useT } from '../i18n'
@@ -15,11 +15,14 @@ interface Props {
 
 const SOURCES = ['', 'https://hf-mirror.com'] // labels: t.sources
 const CUSTOM = 'custom'
-const SOURCE_KEY = 'polyvox.hf-endpoint'
+// Where earlier versions kept the source in the browser; it moves to the server once.
+const OLD_SOURCE_KEY = 'polyvox.hf-endpoint'
 
-function storedSource(): string | null {
+function takeOldSource(): string | null {
   try {
-    return localStorage.getItem(SOURCE_KEY)
+    const old = localStorage.getItem(OLD_SOURCE_KEY)
+    localStorage.removeItem(OLD_SOURCE_KEY)
+    return old
   } catch {
     return null
   }
@@ -46,7 +49,7 @@ export function ModelsView({ onError, onChanged }: Props) {
   const [list, setList] = useState<ModelList | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [ways, setWays] = useState<Record<string, DownloadWayId>>({}) // by setting, for models with a choice
-  const [source, setSource] = useState<string | null>(storedSource)
+  const [source, setSource] = useState<string | null>(null) // as edited here; else the server's
   const [job, setJob] = useJob<DownloadJob>((j) => {
     refresh()
     onChanged()
@@ -67,9 +70,13 @@ export function ModelsView({ onError, onChanged }: Props) {
 
   useEffect(refresh, [refresh])
 
+  useEffect(() => {
+    const old = takeOldSource()
+    if (old !== null) setDownloadSource(old).then(refresh, () => {})
+  }, [refresh])
+
   if (!list) return <section className="panel muted">{t.loading}</section>
 
-  // The server's default unless one was chosen in this browser.
   const chosen = source ?? list.endpoint
   const isPreset = SOURCES.includes(chosen)
   const missing = list.models.filter((m) => m.state === 'missing')
@@ -79,13 +86,17 @@ export function ModelsView({ onError, onChanged }: Props) {
   const running = job?.state === 'running'
   const current = running ? list.models.find((m) => m.setting === job.phase) : undefined
 
+  // The server keeps the source (also for models that download themselves when first used).
+  function saveSource(endpoint: string) {
+    setDownloadSource(endpoint).then(setSource, (e: Error) => onError(e.message))
+  }
+
   function chooseSource(value: string) {
-    const next = value === CUSTOM ? 'https://' : value
-    setSource(next)
-    try {
-      localStorage.setItem(SOURCE_KEY, next)
-    } catch {
-      // Not remembered; still used now.
+    if (value === CUSTOM) {
+      setSource('https://') // saved once typed (on leaving the field, or with a download)
+    } else {
+      setSource(value)
+      saveSource(value)
     }
   }
 
@@ -193,13 +204,15 @@ export function ModelsView({ onError, onChanged }: Props) {
             ))}
             <option value={CUSTOM}>{t.anotherMirror}</option>
           </select>
+          <span className="muted hint">{t.downloadSourceHint}</span>
         </label>
         {!isPreset && (
           <label className="field">
             <span>{t.mirrorUrl}</span>
             <input
               value={chosen}
-              onChange={(e) => chooseSource(e.target.value)}
+              onChange={(e) => setSource(e.target.value)}
+              onBlur={() => /^https?:\/\/[^/]+/.test(chosen) && saveSource(chosen)}
               placeholder="https://"
               disabled={running}
             />

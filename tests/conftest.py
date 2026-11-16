@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -234,6 +235,20 @@ class FakeSingingModel:
             logits[i, 27] = 0.0 if sung else -20.0  # Singing
             logits[i, 0] = -20.0 if sung else 3.0  # Speech
         return type("Out", (), {"logits": logits})()
+
+
+@pytest.fixture(autouse=True)
+def keep_download_source(monkeypatch):
+    """create_app and the Models tab's source set huggingface_hub's endpoint for the process (and
+    HF_ENDPOINT): put both back after each test."""
+    from huggingface_hub import constants
+
+    monkeypatch.setattr(constants, "ENDPOINT", constants.ENDPOINT)
+    monkeypatch.setattr(constants, "HUGGINGFACE_CO_URL_TEMPLATE", constants.HUGGINGFACE_CO_URL_TEMPLATE)
+    if "HF_ENDPOINT" in os.environ:
+        monkeypatch.setenv("HF_ENDPOINT", os.environ["HF_ENDPOINT"])
+    else:
+        monkeypatch.delenv("HF_ENDPOINT", raising=False)
 
 
 @pytest.fixture(autouse=True)

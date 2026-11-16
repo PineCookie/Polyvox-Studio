@@ -7,8 +7,8 @@ from fastapi import APIRouter, HTTPException
 from .. import models
 from ..config import Settings
 from ..jobs import Job
-from .context import Studio, found
-from .schemas import DownloadIn, JobOut, ModelOut, ModelsOut
+from .context import Studio, checked, found
+from .schemas import DownloadIn, JobOut, ModelOut, ModelsOut, SourceIn
 
 
 def router(s: Studio) -> APIRouter:
@@ -54,18 +54,26 @@ def router(s: Studio) -> APIRouter:
                     ways=spec.ways(),
                 )
             )
-        return ModelsOut(models_dir=str(settings.models_dir.resolve()), endpoint=settings.hf_endpoint, models=out)
+        return ModelsOut(models_dir=str(settings.models_dir.resolve()), endpoint=models.current_endpoint(), models=out)
+
+    @api.post("/api/models/source")
+    def set_source(body: SourceIn) -> dict:
+        """The download source (Hugging Face or a mirror): for the Models tab's downloads and for
+        models that download themselves when first used; remembered in the models folder."""
+        return {"endpoint": checked(models.save_endpoint, settings.models_dir, body.endpoint)}
 
     @api.post("/api/models/download", status_code=202)
     def download_models(body: DownloadIn) -> JobOut:
         """Download models into the models folder, one after another (job phase:
-        the setting being downloaded; done / total in MB)."""
+        the setting being downloaded; done / total in MB). A given ``endpoint`` becomes the
+        download source (set_source)."""
         unknown = [m for m in body.settings if m not in models.BY_SETTING]
         if unknown:
             raise HTTPException(422, f"Unknown model: {', '.join(unknown)}")
-        endpoint = (settings.hf_endpoint if body.endpoint is None else body.endpoint).strip().rstrip("/")
-        if endpoint and not endpoint.startswith(("http://", "https://")):
-            raise HTTPException(422, "The download source must be an http(s) URL.")
+        if body.endpoint is None:
+            endpoint = models.current_endpoint()
+        else:
+            endpoint = checked(models.check_endpoint, body.endpoint)
         if running := jobs.running("download"):
             raise HTTPException(409, f"Wait for “{running.title}” to finish.")
         specs = [models.BY_SETTING[m] for m in body.settings]
@@ -73,6 +81,8 @@ def router(s: Studio) -> APIRouter:
             spec = models.BY_SETTING.get(setting)
             if spec is None or way not in {w["id"] for w in spec.ways()} | {"prebuilt"}:
                 raise HTTPException(422, f"{setting} can't be downloaded as {way}.")
+        if body.endpoint is not None:  # the source these come from is the source from now on
+            models.save_endpoint(settings.models_dir, endpoint)
 
         def run(job: Job) -> dict:
             for spec in specs:

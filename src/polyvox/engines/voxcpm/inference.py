@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ... import lora_library, vram
+from ... import lora_library, models, vram
 from ...config import Settings
 from ...lora_library import LoraCheckpoint
 
@@ -310,7 +310,8 @@ class InferenceService:
         logger.info(
             "Loading %s (LoRA layout rank %s, optimize=%s)", self.settings.model_path("model"), target.r, self.optimize
         )
-        self._model = self._loader(self.settings, self.device, target, self.optimize)
+        with models.loading(self.settings, "model", "denoiser_model"):
+            self._model = self._loader(self.settings, self.device, target, self.optimize)
         self._lora_config = target
         self._fresh = True
         if self.denoise_on_cpu:

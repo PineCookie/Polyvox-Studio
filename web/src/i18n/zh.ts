@@ -869,6 +869,7 @@ export const zh: Messages = {
   downloadWaysHint:
     '两种方式得到相同的 4 位文件。有显卡时转换只需几分钟（没有显卡会慢很多）；保留的官方权重留在 models 文件夹里。',
   downloadFrom: '下载来源',
+  downloadSourceHint: '未下载的模型在首次使用时自动下载，也从这里下载。',
   anotherMirror: '其他镜像…',
   mirrorUrl: '镜像地址',
   selectAllMissing: '选中所有未下载的',

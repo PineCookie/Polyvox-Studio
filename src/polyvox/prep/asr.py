@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .. import timing, vram
+from .. import models, timing, vram
 from ..config import Settings
 
 logger = logging.getLogger(__name__)
@@ -198,6 +198,6 @@ class AsrService:
             self._parked = False
         if self._model is None:
             logger.info("Loading ASR model %s on %s", self.settings.model_path("asr_model"), self.device)
-            with timing.stage("loading models"):
+            with timing.stage("loading models"), models.loading(self.settings, "asr_model"):
                 self._processor, self._model = self._loader(self.settings.model_path("asr_model"), self.device)
         return self._processor, self._model

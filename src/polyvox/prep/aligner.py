@@ -26,7 +26,7 @@ from typing import Protocol
 
 import numpy as np
 
-from .. import timing, vram
+from .. import models, timing, vram
 from ..config import Settings
 
 logger = logging.getLogger(__name__)
@@ -359,7 +359,8 @@ class AlignService:
         if self._kind != kind:
             self._unload()
             logger.info("Loading %s aligner %s on %s", kind, model, self.device)
-            with timing.stage("loading models"):
+            setting = "align_model" if kind == "qwen3" else "ctc_align_model"
+            with timing.stage("loading models"), models.loading(self.settings, setting):
                 self._backend, self._kind = self._loader(kind, model, self.device), kind
         return self._backend  # type: ignore[return-value]
 

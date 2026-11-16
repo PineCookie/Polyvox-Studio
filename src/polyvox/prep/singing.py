@@ -16,7 +16,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from .. import timing, vram
+from .. import models, timing, vram
 from ..config import Settings
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class SingingService:
             if self._model is None:
                 logger.info("Loading singing detector %s on %s", self.settings.model_path("singing_model"), self.device)
                 load = self._loader or load_ast  # looked up when first used
-                with timing.stage("loading models"):
+                with timing.stage("loading models"), models.loading(self.settings, "singing_model"):
                     self._extractor, self._model = load(self.settings.model_path("singing_model"), self.device)
             for start in range(0, len(wavs), BATCH_SIZE):
                 batch = wavs[start : start + BATCH_SIZE]

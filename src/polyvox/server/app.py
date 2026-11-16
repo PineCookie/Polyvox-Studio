@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import engines, lora_library, vram
+from .. import engines, lora_library, models, vram
 from ..config import Settings
 from ..data import audio_io
 from ..engines import Engine
@@ -48,6 +48,10 @@ def create_app(
     engines_: dict[str, Engine] | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
+    # Where models not downloaded come from when first used: the Models tab's last choice, else
+    # POLYVOX_HF_ENDPOINT.
+    saved = models.saved_endpoint(settings.models_dir)
+    models.use_endpoint(settings.hf_endpoint if saved is None else saved)
     audio_io.patch_torchaudio()  # voxcpm's torchaudio.load calls, without a system FFmpeg
     lora_library.migrate(settings.lora_dir)  # runs and voices from before the engine folders
     service = service or InferenceService(settings)
@@ -102,6 +106,10 @@ def create_app(
     @app.exception_handler(TrainingConflict)
     def conflict(request: Request, exc: TrainingConflict) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(models.ModelUnavailable)
+    def model_unavailable(request: Request, exc: models.ModelUnavailable) -> JSONResponse:
+        return JSONResponse({"detail": str(exc)}, status_code=503)
 
     for area in (status, tts, loras, datasets, clips, training_routes):
         app.include_router(area.router(studio))

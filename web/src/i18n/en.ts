@@ -875,6 +875,7 @@ export const en = {
   downloadWaysHint:
     'Both give the same 4-bit files. Converting takes a few minutes with a GPU (much longer without one); kept official weights stay in the models folder.',
   downloadFrom: 'Download from',
+  downloadSourceHint: 'Also used by models that download themselves when first used.',
   anotherMirror: 'Another mirror…',
   mirrorUrl: 'Mirror URL',
   selectAllMissing: 'Select all missing',
