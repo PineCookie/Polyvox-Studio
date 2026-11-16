@@ -19,6 +19,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 HF_ENDPOINT = "https://huggingface.co"
+GROUPS = ("tts", "dataset", "cleanup")  # speech models (and their helpers), dataset tools, audio clean-up
+WAYS = ("prebuilt", "convert", "convert_keep")  # ModelSpec.ways' ids
 # Drama 3 in 4 bits as fish_drama3/convert.py makes it from the official weights (78e5ab7).
 DRAMA3_BUILD_REPO = "PineCookie/drama-3-int4-higgs"
 DRAMA3_BUILD_REVISION = "dedb85dba9318b2353cec15eda1142f8586a4e80"
@@ -38,6 +40,7 @@ class Source:
     keep: bool = False
     repo: str | None = None
     revision: str | None = None
+    size_mb: int = 0  # the download (a fallback's: shown when the user picks it)
 
 
 @dataclass(frozen=True)
@@ -52,7 +55,6 @@ class ModelSpec:
     # The file the setting points to (RoFormer checkpoints); None = the folder.
     entry: str | None = None
     license: str = ""
-    required: bool = False
     hub: str = "huggingface"  # or "modelscope" (no endpoint choice there)
     # A zip in the repo that holds ``files`` (one top folder, dropped when unpacking).
     archive: str | None = None
@@ -60,8 +62,18 @@ class ModelSpec:
     # Built from other files of the repo (``files`` are then the build's, ``size_mb`` the download's).
     source: Source | None = None
     # The files come built from ``repo``; when that repo / revision / file isn't there (removed,
-    # say), the model is built from this instead.
+    # say), the model is built from this instead (or when asked: download's ``way``).
     fallback: Source | None = None
+    group: str = "tts"  # the Models tab's section: GROUPS
+
+    def ways(self) -> list[dict]:
+        """How it can be downloaded, when there's a choice: the build, or its source converted here
+        (then kept or removed); with each download's size."""
+        if not self.fallback:
+            return []
+        convert = self.fallback.size_mb
+        return [{"id": "prebuilt", "size_mb": self.size_mb}, {"id": "convert", "size_mb": convert},
+                {"id": "convert_keep", "size_mb": convert}]  # fmt: skip
 
     def path(self, models_dir: Path) -> Path:
         folder = models_dir / self.folder
@@ -104,7 +116,6 @@ MODELS: tuple[ModelSpec, ...] = (
         ),
         4960,
         license="Apache-2.0",
-        required=True,
     ),
     ModelSpec(
         "dots_model",
@@ -188,8 +199,7 @@ MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         "drama3_model",
         "Fish Audio Drama 3",
-        "Text to speech (44.1 kHz), zero-shot cloning: the official weights in 4 bits (22 GB); if that "
-        "build can't be downloaded, the official weights (39 GB) are converted on this computer",
+        "Text to speech (44.1 kHz), zero-shot cloning, run in 4 bits",
         DRAMA3_BUILD_REPO,
         "fishaudio__drama-3__int4",
         (
@@ -205,7 +215,7 @@ MODELS: tuple[ModelSpec, ...] = (
             "NOTICE",
             "quant_stats.json",
         ),
-        22_960,
+        24_070,
         license="Fish Audio Community License (free below USD 500k yearly revenue; no hosted services); "
         "Built with Fish Audio",
         revision=DRAMA3_BUILD_REVISION,
@@ -225,6 +235,7 @@ MODELS: tuple[ModelSpec, ...] = (
             "polyvox.engines.fish_drama3.convert:build",
             repo="fishaudio/drama-3",
             revision="78e5ab79e49aa9a25abe8799eff2c4d73a1c3216",
+            size_mb=39_600,
         ),
     ),
     ModelSpec(
@@ -266,6 +277,7 @@ MODELS: tuple[ModelSpec, ...] = (
         (*_HF_ASR_FILES, "generation_config.json"),
         4090,
         license="Apache-2.0",
+        group="dataset",
     ),
     ModelSpec(
         "align_model",
@@ -276,6 +288,7 @@ MODELS: tuple[ModelSpec, ...] = (
         _HF_ASR_FILES,
         1850,
         license="Apache-2.0",
+        group="dataset",
     ),
     ModelSpec(
         "ctc_align_model",
@@ -286,6 +299,7 @@ MODELS: tuple[ModelSpec, ...] = (
         ("config.json", "preprocessor_config.json", "pytorch_model.bin", "special_tokens_map.json", "vocab.json"),
         1280,
         license="Apache-2.0",
+        group="dataset",
     ),
     ModelSpec(
         "singing_model",
@@ -296,6 +310,7 @@ MODELS: tuple[ModelSpec, ...] = (
         ("config.json", "model.safetensors", "preprocessor_config.json"),
         350,
         license="BSD-3-Clause",
+        group="dataset",
     ),
     ModelSpec(
         "speaker_model",
@@ -307,6 +322,7 @@ MODELS: tuple[ModelSpec, ...] = (
         28,
         license="Apache-2.0",
         hub="modelscope",
+        group="dataset",
     ),
     ModelSpec(
         "vocals_model",
@@ -317,6 +333,7 @@ MODELS: tuple[ModelSpec, ...] = (
         ("kimmel_unwa_ft2_bleedless.ckpt", "config_kimmel_unwa_ft.yaml"),
         910,
         entry="kimmel_unwa_ft2_bleedless.ckpt",
+        group="cleanup",
     ),
     ModelSpec(
         "dereverb_model",
@@ -328,6 +345,7 @@ MODELS: tuple[ModelSpec, ...] = (
         910,
         entry="dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt",
         license="GPL-3.0",
+        group="cleanup",
     ),
     ModelSpec(
         "denoise_model",
@@ -338,10 +356,21 @@ MODELS: tuple[ModelSpec, ...] = (
         ("denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt", "model_mel_band_roformer_denoise.yaml"),
         910,
         entry="denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt",
+        group="cleanup",
     ),
 )
 
 BY_SETTING = {m.setting: m for m in MODELS}
+
+
+def any_available(settings, setting_names) -> bool:
+    """Whether any of these models is configured explicitly or downloaded (config.Settings)."""
+    return any(
+        settings.configured(name) or BY_SETTING[name].downloaded(settings.models_dir)
+        for name in setting_names
+        if name in BY_SETTING
+    )
+
 
 # (megabytes done, megabytes in all); may raise to cancel.
 Progress = Callable[[int, int], None]
@@ -450,16 +479,29 @@ def unpack(archive: Path, folder: Path, files: tuple[str, ...]) -> None:
             tmp.replace(out)
 
 
-def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, progress: Progress | None = None) -> None:
+def download(
+    spec: ModelSpec,
+    models_dir: Path,
+    endpoint: str | None = None,
+    progress: Progress | None = None,
+    way: str = "prebuilt",
+) -> None:
     """Download the files of ``spec`` that are missing into its folder, from
     ``endpoint`` (default: huggingface.co). Interrupted files resume. When
-    ``progress`` raises (cancel), the file in flight finishes in the background."""
+    ``progress`` raises (cancel), the file in flight finishes in the background.
+    ``way`` (a spec with a fallback, ModelSpec.ways): "prebuilt", or "convert" / "convert_keep"
+    to build it here from its source (keeping the source's files after)."""
     progress = progress or (lambda done, total: None)
     endpoint = endpoint or None
     folder = models_dir / spec.folder
     mb = 1 << 20
+    if way not in WAYS or (way != "prebuilt" and not spec.fallback):
+        raise ValueError(f"{spec.name} can't be downloaded as {way!r}.")
     if spec.source:
         _download_and_build(spec, models_dir, endpoint, progress, spec.source)
+        return
+    if spec.fallback and way != "prebuilt":
+        _download_and_build(spec, models_dir, endpoint, progress, spec.fallback, keep=way == "convert_keep")
         return
     if spec.fallback:
         from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError, RevisionNotFoundError
@@ -547,9 +589,10 @@ BUILD_SHARE = 0.25  # of the download, how much of the progress bar a build take
 
 
 def _download_and_build(
-    spec: ModelSpec, models_dir: Path, endpoint: str | None, progress: Progress, source: Source
+    spec: ModelSpec, models_dir: Path, endpoint: str | None, progress: Progress, source: Source, keep: bool = False
 ) -> None:
-    """Download ``source`` (resuming), build the model's folder from it, then remove it."""
+    """Download ``source`` (resuming), build the model's folder from it, then remove it (unless
+    ``keep`` or ``source.keep``)."""
     import importlib
 
     repo, revision = (source.repo, source.revision) if source.repo else (spec.repo, spec.revision)
@@ -567,5 +610,5 @@ def _download_and_build(
     module, name = source.build.split(":")
     build = getattr(importlib.import_module(module), name)
     build(src, models_dir / spec.folder, lambda f: report(total + int(total * BUILD_SHARE * f), total))
-    if not source.keep:
+    if not (source.keep or keep):
         shutil.rmtree(src, ignore_errors=True)

@@ -97,12 +97,9 @@ class Studio:
             "cleanup": [k for k, v in self.cleanup_models().items() if v],
             # The GPU's memory and the settings picked for it (vram.Profile).
             "gpu": {"total_gb": round(self.gpu_gb, 1) if self.gpu_gb else None, **self.profile.public()},
-            # Not in the models folder (loading would download it to the Hugging Face cache).
-            "missing_required": [
-                s.name
-                for s in models.MODELS
-                if s.required and not settings.configured(s.setting) and not s.downloaded(settings.models_dir)
-            ],
+            # No engine's model is configured or in the models folder (a first run: the UI points to
+            # the Models tab; loading one would download it to the Hugging Face cache).
+            "no_speech_model": not models.any_available(settings, [e.model_setting for e in self.registry.values()]),
         }
 
     def unload_all(self) -> None:

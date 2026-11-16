@@ -47,10 +47,11 @@ def router(s: Studio) -> APIRouter:
                     hub=spec.hub,
                     size_mb=spec.size_mb,
                     license=spec.license,
-                    required=spec.required,
                     state=state,
                     path=path,
                     fallback=bool(Settings.__dataclass_fields__[spec.setting].default),
+                    group=spec.group,
+                    ways=spec.ways(),
                 )
             )
         return ModelsOut(models_dir=str(settings.models_dir.resolve()), endpoint=settings.hf_endpoint, models=out)
@@ -68,6 +69,10 @@ def router(s: Studio) -> APIRouter:
         if running := jobs.running("download"):
             raise HTTPException(409, f"Wait for “{running.title}” to finish.")
         specs = [models.BY_SETTING[m] for m in body.settings]
+        for setting, way in body.ways.items():
+            spec = models.BY_SETTING.get(setting)
+            if spec is None or way not in {w["id"] for w in spec.ways()} | {"prebuilt"}:
+                raise HTTPException(422, f"{setting} can't be downloaded as {way}.")
 
         def run(job: Job) -> dict:
             for spec in specs:
@@ -76,6 +81,7 @@ def router(s: Studio) -> APIRouter:
                     settings.models_dir,
                     endpoint or None,
                     lambda done, total, spec=spec: job.progress(spec.setting, done, total),
+                    body.ways.get(spec.setting, "prebuilt"),
                 )
             return {"downloaded": [spec.setting for spec in specs]}
 

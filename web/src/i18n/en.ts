@@ -25,8 +25,8 @@ export const en = {
   tabs: { synthesize: 'Synthesize', prepare: 'Prepare', train: 'Train', models: 'Models' },
   sections: 'Sections',
   dismiss: 'Dismiss',
-  missingModels: (names: string) =>
-    `${names} is not downloaded yet. Download it in Models (with progress), or it downloads from Hugging Face the first time it is needed.`,
+  noSpeechModel:
+    'No speech model is downloaded yet. Download one in Models (with progress), or a model downloads from Hugging Face the first time it is needed.',
   openModels: 'Open Models',
   language: 'Language',
 
@@ -864,9 +864,16 @@ export const en = {
   modelsIntro:
     "Downloaded models live in the models folder and are used from there. A Hugging Face model that is not downloaded still loads, downloading to Hugging Face's cache the first time (with no progress shown); the import's clean-up options need their model downloaded here.",
   downloadModel: (name: string) => `Download ${name}`,
-  requiredTag: 'Required',
   // Model purposes by setting; a model missing here shows the server's English text.
   modelPurpose: {} as Record<string, string>,
+  modelGroups: { tts: 'Text to speech', dataset: 'Dataset tools', cleanup: 'Audio clean-up' } as Record<string, string>,
+  downloadWays: {
+    prebuilt: (size: string) => `4-bit build (${size})`,
+    convert: (size: string) => `Official weights, converted here (${size} download)`,
+    convert_keep: (size: string) => `Official weights, converted here and kept (${size} download)`,
+  } as Record<string, (size: string) => string>,
+  downloadWaysHint:
+    'Both give the same 4-bit files. Converting takes a few minutes with a GPU (much longer without one); kept official weights stay in the models folder.',
   downloadFrom: 'Download from',
   anotherMirror: 'Another mirror…',
   mirrorUrl: 'Mirror URL',

@@ -216,9 +216,9 @@ export default function App() {
         </div>
       )}
 
-      {tab !== 'models' && (status?.missing_required.length ?? 0) > 0 && (
+      {tab !== 'models' && status?.no_speech_model && (
         <div className="notice">
-          <span>{t.missingModels(status!.missing_required.join(', '))}</span>
+          <span>{t.noSpeechModel}</span>
           <button type="button" className="ghost small" onClick={() => switchTab('models')}>
             {t.openModels}
           </button>

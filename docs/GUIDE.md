@@ -351,9 +351,11 @@ through an SSH tunnel.
 
 ## Models
 
-The **Models** tab lists every model the studio uses, with its size, license and
-whether it is downloaded, and downloads the missing ones with progress into
-`models/`. Only VoxCPM2 is required; the rest are needed only for what they do:
+The **Models** tab lists every model the studio uses, grouped into text to speech,
+dataset tools and audio clean-up, with its size, license and whether it is
+downloaded, and downloads the missing ones with progress into `models/`. None is
+required: download the speech models you want to use, and the others for what
+they do (until one speech model is there, the other tabs point to the Models tab):
 
 | Model | For | Size |
 |---|---|---|
@@ -362,7 +364,7 @@ whether it is downloaded, and downloads the missing ones with progress into
 | GPT-SoVITS v2Pro / v2ProPlus, G2PW | synthesis and voice training (G2PW: Chinese pronunciation) | 1.7 + 0.6 GB |
 | GPT-SoVITS v4 | synthesis and voice training at 48 kHz | 0.8 GB |
 | Fish Audio S2-Pro | synthesis and LoRA training at 44.1 kHz; research and non-commercial use only | 11 GB |
-| Fish Audio Drama 3 | zero-shot synthesis at 44.1 kHz; a 4-bit build of the official weights (`PineCookie/drama-3-int4-higgs`, made by `convert.py`); if it can't be downloaded, the official weights (39 GB) are downloaded, converted on your computer, then removed; Fish Audio Community License; Built with Fish Audio | 22 GB |
+| Fish Audio Drama 3 | zero-shot synthesis at 44.1 kHz; a 4-bit build of the official weights (`PineCookie/drama-3-int4-higgs`, made by `convert.py`), or (chosen in its row) the official weights (39.6 GB) downloaded and converted on your computer to the same files, then removed or kept; the conversion is also the fallback when the build can't be downloaded; Fish Audio Community License; Built with Fish Audio | 22 GB |
 | Qwen3-ASR 1.7B | transcribing, slicing, Compare with ASR | 4.1 GB |
 | Qwen3-ForcedAligner 0.6B | slicing and checking clips | 1.9 GB |
 | wav2vec2 Chinese | second aligner for checks | 1.3 GB |

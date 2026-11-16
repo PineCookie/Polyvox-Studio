@@ -1988,6 +1988,25 @@ button.ghost.danger-text {
   margin-left: 6px;
 }
 
+.models-table .models-group th {
+  padding-top: 18px;
+  text-align: left;
+  font-weight: 600;
+}
+
+.models-table tbody:first-child .models-group th {
+  padding-top: 4px;
+}
+
+.models-way {
+  margin-top: 6px;
+}
+
+.models-way select {
+  width: auto;
+  max-width: 100%;
+}
+
 .models-actions {
   display: flex;
   flex-wrap: wrap;

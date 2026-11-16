@@ -110,8 +110,8 @@ export interface Status {
   singing_loaded: boolean
   // Import clean-up options whose model is configured.
   cleanup: CleanupOption[]
-  // Required models not in the models folder yet (names).
-  missing_required: string[]
+  // No engine's model is configured or downloaded yet (a first run).
+  no_speech_model: boolean
   // The GPU's memory and the settings picked for it (src/polyvox/vram.py).
   gpu: GpuProfile
   lora_rank: number | null
@@ -201,11 +201,20 @@ export interface ModelInfo {
   hub: 'huggingface' | 'modelscope'
   size_mb: number
   license: string
-  required: boolean
   // downloaded: in the models folder; custom: configured explicitly; missing: not downloaded.
   state: 'downloaded' | 'custom' | 'missing'
   path: string
   fallback: boolean // when missing, still loads (from the hub's cache); else the feature is unavailable
+  group: ModelGroup // the Models tab's section
+  ways: DownloadWay[] // how it can be downloaded when there's a choice ([] = one way)
+}
+
+export type ModelGroup = 'tts' | 'dataset' | 'cleanup'
+export type DownloadWayId = 'prebuilt' | 'convert' | 'convert_keep'
+
+export interface DownloadWay {
+  id: DownloadWayId
+  size_mb: number
 }
 
 export interface ModelList {
@@ -220,9 +229,14 @@ export async function listModels(): Promise<ModelList> {
   return (await request('/api/models')).json()
 }
 
-/** Download models into the models folder: a job (phase = the setting downloading, done / total in MB). */
-export async function downloadModels(settings: string[], endpoint: string): Promise<DownloadJob> {
-  return (await postJson('/api/models/download', { settings, endpoint })).json()
+/** Download models into the models folder: a job (phase = the setting downloading, done / total in MB).
+ * ``ways``: for models with a choice, how (ModelInfo.ways). */
+export async function downloadModels(
+  settings: string[],
+  endpoint: string,
+  ways: Record<string, DownloadWayId> = {},
+): Promise<DownloadJob> {
+  return (await postJson('/api/models/download', { settings, endpoint, ways })).json()
 }
 
 export async function listLoras(): Promise<Lora[]> {

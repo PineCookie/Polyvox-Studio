@@ -27,8 +27,7 @@ export const zh: Messages = {
   tabs: { synthesize: '合成', prepare: '数据集', train: '训练', models: '模型' },
   sections: '分区',
   dismiss: '关闭',
-  missingModels: (names) =>
-    `${names} 尚未下载。可在「模型」中下载（显示进度），否则会在首次使用时从 Hugging Face 自动下载。`,
+  noSpeechModel: '还没有下载语音合成模型。可在「模型」中下载（显示进度），否则会在首次使用时从 Hugging Face 自动下载。',
   openModels: '打开模型页',
   language: '语言',
 
@@ -843,7 +842,6 @@ export const zh: Messages = {
   modelsIntro:
     '已下载的模型保存在 models 文件夹并从那里加载。未下载的 Hugging Face 模型仍可使用，会在首次加载时下载到 Hugging Face 缓存（不显示进度）；导入时的音频清理选项需要先在这里下载对应模型。',
   downloadModel: (name) => `下载 ${name}`,
-  requiredTag: '必需',
   modelPurpose: {
     model: '语音合成、LoRA 训练',
     dots_model: '语音合成（48 kHz）、LoRA 训练',
@@ -851,8 +849,7 @@ export const zh: Messages = {
     gsv_g2pw_model: 'GPT-SoVITS：多音字的读音',
     gsv_v4_model: '语音合成（48 kHz）、音色训练：v4 的 SoVITS 基础模型（梅尔 DiT）和声码器',
     s2_model: '语音合成（44.1 kHz）、零样本克隆；需要 16 GB 显卡',
-    drama3_model:
-      '语音合成（44.1 kHz）、零样本克隆：官方权重的 4 位版本（22 GB）；无法下载时，改为下载官方权重（39 GB）并在本机转换',
+    drama3_model: '语音合成（44.1 kHz）、零样本克隆，以 4 位运行',
     denoiser_model: '合成：克隆前清理参考音频',
     asr_model: '语音识别：为片段生成文本、与文本对比',
     align_model: '检查片段与文本是否一致（11 种语言）',
@@ -863,6 +860,14 @@ export const zh: Messages = {
     dereverb_model: '清理：去除房间混响',
     denoise_model: '清理：去除背景噪声',
   },
+  modelGroups: { tts: '语音合成', dataset: '数据集工具', cleanup: '音频清理' },
+  downloadWays: {
+    prebuilt: (size) => `4 位版本（${size}）`,
+    convert: (size) => `官方权重，在本机转换（下载 ${size}）`,
+    convert_keep: (size) => `官方权重，在本机转换并保留（下载 ${size}）`,
+  },
+  downloadWaysHint:
+    '两种方式得到相同的 4 位文件。有显卡时转换只需几分钟（没有显卡会慢很多）；保留的官方权重留在 models 文件夹里。',
   downloadFrom: '下载来源',
   anotherMirror: '其他镜像…',
   mirrorUrl: '镜像地址',

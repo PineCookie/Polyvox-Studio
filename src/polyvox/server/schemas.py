@@ -295,13 +295,15 @@ class ModelOut(BaseModel):
     hub: str  # huggingface | modelscope
     size_mb: int
     license: str
-    required: bool
     # downloaded: complete in the models folder; custom: configured explicitly;
     # missing: not downloaded (a Hugging Face model would then download to its cache on first use).
     state: Literal["downloaded", "custom", "missing"]
     path: str  # what the setting resolves to
     # When missing, loading still works: from the hub's cache (else the feature is unavailable).
     fallback: bool
+    group: str  # models.GROUPS: the Models tab's section
+    # How it can be downloaded when there's a choice ([] = one way): [{"id": models.WAYS, "size_mb"}].
+    ways: list[dict] = []
 
 
 class ModelsOut(BaseModel):
@@ -314,6 +316,8 @@ class DownloadIn(BaseModel):
     settings: list[str] = Field(min_length=1)
     # Hugging Face or a mirror, e.g. https://hf-mirror.com; None = the server's default.
     endpoint: str | None = None
+    # setting -> one of its ModelOut.ways (unset: "prebuilt").
+    ways: dict[str, Literal["prebuilt", "convert", "convert_keep"]] = {}
 
 
 class ResumeIn(BaseModel):
