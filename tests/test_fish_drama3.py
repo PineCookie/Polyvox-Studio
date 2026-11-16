@@ -379,3 +379,16 @@ def test_dense_linears_can_have_smaller_groups(tmp_path):
     assert out[EXPERT.removesuffix(".weight") + ".scales"].shape == (384 // 128, 256)  # experts keep 128
     config = json.loads((tmp_path / "int4" / "config.json").read_text())["quantization_config"]
     assert config["dense"]["group_size"] == 32 and config["experts"]["group_size"] == 128
+
+
+def test_8_bit_linears_stay_close_to_their_weights():
+    kernels = pytest.importorskip("polyvox.engines.fish_drama3.kernels")  # needs Triton
+    torch.manual_seed(2)
+    w = torch.randn(96, 256) * 0.02
+    w[3, 17] = 0.5  # an outlier spoils only its own group of 128
+    lin = kernels.Int8Linear(w)
+    assert lin.q.dtype == torch.int8 and lin.scales.shape == (2, 96)
+    assert ((lin.weight(torch.float32) - w).norm() / w.norm()) < 0.01
+    x = torch.randn(3, 256)
+    assert torch.allclose(lin(x), torch.nn.functional.linear(x, lin.weight(torch.float32)), atol=1e-6)
+    assert torch.equal(model.linear(x, w), torch.nn.functional.linear(x, w))  # plain weights pass through

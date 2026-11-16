@@ -25,7 +25,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from .model import CAPACITY, CODES, DEFAULT_SAMPLING, RECENT, REDRAW, Drama3, Sampling
+from .model import CAPACITY, CODES, DEFAULT_SAMPLING, RECENT, REDRAW, Drama3, Sampling, linear
 
 WINDOWS = (512, 1024, 2048, CAPACITY)
 REPLAN = 128  # frames between refreshes of the experts held on the GPU
@@ -280,10 +280,10 @@ class Decoder:
     def _tower_layer(self, layer, hidden: Tensor, emb: Tensor, pos: Tensor, window: int) -> Tensor:
         """TowerLayer.forward for one position, with the fused steps."""
         s, w = self.steps, layer.w
-        mixed = F.linear(s.tower_in(emb, hidden, w["enorm"], w["hnorm"]), w["eh_proj"])
+        mixed = linear(s.tower_in(emb, hidden, w["enorm"], w["hnorm"]), w["eh_proj"])
         cos, sin = layer.cos.index_select(0, pos), layer.sin.index_select(0, pos)
         q, gate, k, v = s.tower_heads(
-            F.linear(s.norm(mixed, w["attention_norm"]), w["wqkv"]), w["q_norm"], w["k_norm"], cos, sin
+            linear(s.norm(mixed, w["attention_norm"]), w["wqkv"]), w["q_norm"], w["k_norm"], cos, sin
         )
         layer.k.index_copy_(0, pos, k[None])
         layer.v.index_copy_(0, pos, v[None])
@@ -291,8 +291,8 @@ class Decoder:
             q[None, :, None], layer.k[:window].transpose(0, 1)[None], layer.v[:window].transpose(0, 1)[None],
             attn_mask=(layer.span[:window] <= pos)[None], enable_gqa=True,
         ).reshape(1, -1)  # fmt: skip
-        residual, ff = s.add_norm(F.linear(s.gate(y, gate), w["wo"]), mixed, w["ffn_norm"])
-        ff = F.linear(s.swiglu(F.linear(ff, w["w1"]), F.linear(ff, w["w3"])), w["w2"])
+        residual, ff = s.add_norm(linear(s.gate(y, gate), w["wo"]), mixed, w["ffn_norm"])
+        ff = linear(s.swiglu(linear(ff, w["w1"]), linear(ff, w["w3"])), w["w2"])
         return s.tower_out(ff, residual, w["final_layernorm"])
 
     def _tower(self, label: Tensor, window: int) -> Tensor:
@@ -311,7 +311,7 @@ class Decoder:
         for layer, head in zip(m.residual, m.heads, strict=True):
             emb = torch.where(semantic, F.embedding(codes[-1].clamp(0, 4095), layer.w["emb"]), 0.0)
             h = self._tower_layer(layer, h, emb, self.pos, window)
-            codes.append(pick(F.linear(h, head)[0].float(), self.temperature, self.top_p, self.top_k))
+            codes.append(pick(linear(h, head)[0].float(), self.temperature, self.top_p, self.top_k))
         return torch.stack(codes, -1)
 
     def _step(self, window: int) -> None:

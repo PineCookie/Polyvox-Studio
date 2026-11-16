@@ -46,6 +46,7 @@ CAPACITY = 4096  # sequence positions: references, text and 1024 frames
 CODES, CODEBOOK = 10, 4096
 PREFIXES = 2  # voices whose prompt states are kept
 ROUTED_TOKENS = 48  # up to this many tokens, experts are read per token (no layer-wide copies)
+TOWER_LINEARS = ("eh_proj", "wqkv", "wo", "w1", "w2", "w3")
 
 
 @dataclass(frozen=True)
@@ -259,6 +260,11 @@ class Experts(nn.Module):
             out.index_add_(0, tok, (y * gate[:, None]).to(out.dtype))
 
 
+def linear(x, w):
+    """x through a weight [N, K] or a quantized linear module (kernels.Int8Linear)."""
+    return F.linear(x, w) if isinstance(w, torch.Tensor) else w(x)
+
+
 def gemma_norm(x, w, eps=1e-6):
     x32 = x.float()
     return (x32 * torch.rsqrt(x32.pow(2).mean(-1, keepdim=True) + eps) * (1.0 + w.float())).to(x.dtype)
@@ -284,7 +290,7 @@ class TowerLayer(nn.Module):
         super().__init__()
         s = self.shape = shape
         self.w = w
-        dev, dtype = w["wqkv"].device, w["wqkv"].dtype
+        dev, dtype = w["enorm"].device, w["enorm"].dtype  # (the matrices may be quantized modules)
         inv = 1.0 / s.base ** (torch.arange(0, s.rotary_dim, 2, dtype=torch.float32, device=dev) / s.rotary_dim)
         ang = torch.arange(capacity, dtype=torch.float32, device=dev)[:, None] * inv
         self.cos, self.sin = ang.cos(), ang.sin()  # [capacity, rotary_dim / 2]
@@ -304,10 +310,10 @@ class TowerLayer(nn.Module):
         """hidden [T, dim] (the previous layer's output), emb [T, dim], at ``positions`` [T]
         (written to the cache); attends over the first ``window`` positions, causally."""
         w, s = self.w, self.shape
-        mixed = F.linear(torch.cat((gemma_norm(emb, w["enorm"]), gemma_norm(hidden, w["hnorm"])), -1), w["eh_proj"])
+        mixed = linear(torch.cat((gemma_norm(emb, w["enorm"]), gemma_norm(hidden, w["hnorm"])), -1), w["eh_proj"])
         x = gemma_norm(mixed, w["attention_norm"])
         qw, kw = s.heads * s.head_dim, s.kv_heads * s.head_dim
-        q, gate, k, v = F.linear(x, w["wqkv"]).split([qw, qw, kw, kw], -1)
+        q, gate, k, v = linear(x, w["wqkv"]).split([qw, qw, kw, kw], -1)
         t = x.shape[0]
         q = self.rotate(gemma_norm(q.view(t, s.heads, s.head_dim), w["q_norm"]), positions)
         k = self.rotate(gemma_norm(k.view(t, s.kv_heads, s.head_dim), w["k_norm"]), positions)
@@ -318,9 +324,9 @@ class TowerLayer(nn.Module):
             q.transpose(0, 1)[None], self.k[:window].transpose(0, 1)[None], self.v[:window].transpose(0, 1)[None],
             attn_mask=mask, enable_gqa=True,
         )[0].transpose(0, 1).reshape(t, qw)  # fmt: skip
-        residual = F.linear(y * torch.sigmoid(gate), w["wo"]) + mixed
+        residual = linear(y * torch.sigmoid(gate), w["wo"]) + mixed
         ff = gemma_norm(residual, w["ffn_norm"])
-        ff = F.linear(F.silu(F.linear(ff, w["w1"])) * F.linear(ff, w["w3"]), w["w2"])
+        ff = linear(F.silu(linear(ff, w["w1"])) * linear(ff, w["w3"]), w["w2"])
         return gemma_norm(ff + residual, w["final_layernorm"])
 
 
@@ -381,7 +387,7 @@ class Drama3(nn.Module):
         for r, (layer, head) in enumerate(zip(self.residual, self.heads, strict=True)):
             emb = torch.where(semantic, F.embedding(codes[-1].clamp(0, CODEBOOK - 1), layer.w["emb"]), 0.0)
             h = layer(h, emb, positions, window)
-            codes.append(sample_fn(F.linear(h, head)) if sample_fn is not None else label_frames[:, 2 + r])
+            codes.append(sample_fn(linear(h, head)) if sample_fn is not None else label_frames[:, 2 + r])
         return torch.stack(codes, -1)
 
     def _pass(self, rows, start: int, cache):
@@ -500,10 +506,16 @@ class Drama3(nn.Module):
 
 
 def load(
-    root: Path, device: str = "cuda", expert_budget: Callable[[int], int] | None = None, graphs: bool = True
+    root: Path,
+    device: str = "cuda",
+    expert_budget: Callable[[int], int] | None = None,
+    graphs: bool = True,
+    tower_bits: int = 8,
 ) -> Drama3:
     """The 4-bit model in ``root``. ``expert_budget(bytes of one expert in every layer)`` -> GPU
-    slots per layer for the experts, asked once everything else is on the GPU (None: no slots)."""
+    slots per layer for the experts, asked once everything else is on the GPU (None: no slots).
+    ``tower_bits`` 8: the tower's matrices in 8 bits (on CUDA; they're bf16 in the checkpoint):
+    teacher-forced on real clips its codes' cross-entropy rose 0.02%, and frames got ~8% faster."""
     from safetensors import safe_open
     from tokenizers import Tokenizer
     from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeTextConfig
@@ -592,7 +604,16 @@ def load(
             "q_norm": tl + "attention.q_norm.weight", "k_norm": tl + "attention.k_norm.weight",
             "w1": tl + "feed_forward.w1.weight", "w2": tl + "feed_forward.w2.weight", "w3": tl + "feed_forward.w3.weight",
         }  # fmt: skip
-        return {name: get(key).to(device) for name, key in keys.items()}
+        return {name: tower_weight(key) if name in TOWER_LINEARS else get(key).to(device) for name, key in keys.items()}
+
+    eight = tower_bits == 8 and on_cuda
+    if eight:
+        from .kernels import Int8Linear
+
+    def tower_weight(key):
+        """A tower matrix, in 8 bits when asked (made as it loads: its bf16 copy leaves no gap)."""
+        w = get(key).to(device)
+        return Int8Linear(w) if eight else w
 
     m.shared = [
         TowerLayer(tower_weights(f"audio_decoder_mtp_shared.layers.{i}.", "semantic_embedding.weight"))
@@ -601,8 +622,9 @@ def load(
     m.residual = [
         TowerLayer(tower_weights(f"audio_decoder_mtp.layers.{i}.", "codebook_embedding.weight")) for i in range(9)
     ]
-    m.heads = [get(f"audio_decoder_mtp.heads.{i}.weight").to(device) for i in range(9)]
+    m.heads = [tower_weight(f"audio_decoder_mtp.heads.{i}.weight") for i in range(9)]
     handles.clear()
+    torch.cuda.empty_cache()
     graphs = graphs and on_cuda
     # The small steps between the linear layers fused by torch.compile (with the graphs).
     m.decoder = Decoder(m, graphs=graphs, fused=graphs)

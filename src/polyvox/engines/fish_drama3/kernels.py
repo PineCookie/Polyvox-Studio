@@ -10,6 +10,7 @@ The routed kernel's experts are always in groups of 128.
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 import triton
 import triton.language as tl
 
@@ -56,11 +57,11 @@ def _int4_gemv(
     tl.store(out_ptr + (part_id * rows + row) * N + offs_n, tl.sum(acc, axis=0), mask=mask_n)
 
 
-def _split(programs: int, groups: int) -> int:
-    """K ranges per output block so that at least about 128 programs run (a power of two dividing
-    ``groups``); wider outputs aren't split (the partial sums cost more than they gain)."""
+def _split(programs: int, groups: int, target: int = 128) -> int:
+    """K ranges per output block so that at least about ``target`` programs run (a power of two
+    dividing ``groups``); wider outputs aren't split (the partial sums cost more than they gain)."""
     split = 1
-    while programs * split < 128 and groups % (split * 2) == 0 and groups // (split * 2) >= 2:
+    while programs * split < target and groups % (split * 2) == 0 and groups // (split * 2) >= 2:
         split *= 2
     return split
 
@@ -197,6 +198,69 @@ def int4_gemv(x: torch.Tensor, x_rows: torch.Tensor, slots: torch.Tensor, qweigh
         num_warps=4,
     )  # fmt: skip
     return out[0] if split == 1 else out.sum(0)
+
+
+INT8_GROUP = 128
+
+
+@triton.jit
+def _int8_gemv(
+    x_ptr,  # [K] bf16
+    w_ptr,  # [K, N] int8
+    sc_ptr,  # [K/G, N] fp16
+    out_ptr,  # [SPLIT, N] fp32
+    K,
+    N,
+    BLOCK_N: tl.constexpr,
+    G: tl.constexpr,
+    SPLIT: tl.constexpr,
+):
+    offs_n = tl.program_id(0) * BLOCK_N + tl.arange(0, BLOCK_N)
+    part_id = tl.program_id(1)
+    mask_n = offs_n < N
+    per = (K // G) // SPLIT
+    rows = tl.arange(0, G)
+    acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
+    for g in range(part_id * per, part_id * per + per):
+        k = g * G + rows
+        w = tl.load(w_ptr + k.to(tl.int64)[:, None] * N + offs_n[None, :], mask=mask_n[None, :], other=0).to(tl.float32)
+        x = tl.load(x_ptr + k).to(tl.float32)
+        s = tl.load(sc_ptr + g * N + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+        acc += tl.sum(w * x[:, None], axis=0) * s
+    tl.store(out_ptr + part_id * N + offs_n, acc, mask=mask_n)
+
+
+class Int8Linear(torch.nn.Module):
+    """A linear layer (no bias) in 8 bits: symmetric, one fp16 scale per 128 weights along the input.
+    Made from a weight [N, K]; one token reads the 8-bit weights (Triton), more unpack them first."""
+
+    def __init__(self, weight: torch.Tensor, group: int = INT8_GROUP):
+        super().__init__()
+        n, k = weight.shape
+        w = weight.t().float().reshape(k // group, group, n)  # [groups, G, N]
+        scale = (w.abs().amax(1, keepdim=True) / 127.0).clamp_min(1e-12)
+        self.q = (w / scale).round().clamp(-127, 127).to(torch.int8).reshape(k, n).contiguous()
+        self.scales = scale.reshape(k // group, n).half().contiguous()
+        self.group, self.in_features, self.out_features = group, k, n
+
+    def weight(self, dtype=torch.bfloat16) -> torch.Tensor:
+        """The unpacked weight [N, K]."""
+        w = self.q.float().reshape(-1, self.group, self.out_features) * self.scales.float()[:, None]
+        return w.reshape(self.in_features, self.out_features).t().to(dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        flat = x.reshape(-1, self.in_features)
+        if flat.shape[0] != 1 or not x.is_cuda:
+            return F.linear(x, self.weight(x.dtype))
+        n, block_n = self.out_features, 64
+        blocks = triton.cdiv(n, block_n)
+        split = _split(blocks, self.in_features // self.group, target=512)  # measured best on the tower's shapes
+        out = torch.empty(split, n, device=x.device, dtype=torch.float32)
+        _int8_gemv[(blocks, split)](
+            flat, self.q, self.scales, out, self.in_features, n, BLOCK_N=block_n, G=self.group, SPLIT=split, num_warps=4
+        )
+        out = out[0] if split == 1 else out.sum(0)
+        return out.to(x.dtype).view(*x.shape[:-1], n)
 
 
 class Int4Linear(torch.nn.Module):
