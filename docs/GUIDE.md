@@ -375,11 +375,13 @@ Downloads come from Hugging Face, a mirror of it (hf-mirror.com, or any URL) or
 ModelScope, fetch only the files that are used, and resume when interrupted. The
 source chosen in the Models tab is kept in the models folder (`.download-source`;
 until one is chosen, `POLYVOX_HF_ENDPOINT` sets it). A model downloaded while the
-server runs is used from its next load, no restart needed. A Hugging Face model
-that is not downloaded still works: it is fetched from the same source into the
-Hugging Face cache the first time it loads (without progress). If that fails (no
-network, the site blocked), the message names the model and points to the Models
-tab; without any network that can take a few minutes, as each file is retried.
+server runs is used from its next load, no restart needed. A model that is not
+downloaded and doesn't say "option unavailable" downloads itself into the models
+folder, from the same source, the first time a feature needs it: Synthesize,
+Edit words and the dataset steps show its progress (and the steps' Cancel stops
+it). If that fails (no network, the site blocked), the message names the model
+and points to the Models tab; without any network that can take a few minutes,
+as each file is retried.
 
 ## Configuration
 
@@ -388,7 +390,8 @@ Environment variables, all optional:
 | Variable | Default | |
 |---|---|---|
 | `POLYVOX_MODELS_DIR` | `models` | downloaded models |
-| `POLYVOX_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` |
+| `POLYVOX_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` (until one is chosen in the Models tab) |
+| `POLYVOX_UPDATE_CHECK` | `1` | ask GitHub at startup and once a day whether a newer release is out (`0`: never) |
 | `POLYVOX_LORA_DIR` | `lora` | training runs, LoRAs and voices |
 | `POLYVOX_DATA_DIR` | `data` | datasets |
 | `POLYVOX_DEVICE` | `auto` | synthesis device: `cuda`, `cuda:1`, `cpu`, ... |
@@ -411,6 +414,21 @@ Environment variables, all optional:
 
 `run.bat` / `run.sh` use the project's own `models/`, `lora/` and `data/`; set
 the variables to use other folders.
+
+## Updating
+
+When a newer release is out, the studio shows a notice (it asks GitHub's release
+list at startup and once a day; nothing else is sent; `POLYVOX_UPDATE_CHECK=0`
+turns it off). To update, close the studio and run `update.bat` (`./update.sh`
+on Linux) in its folder. It downloads the latest release and replaces only the
+program files: `models/`, `data/`, `lora/`, `output/` and the Python environment
+(`.venv/`) stay, and files of your own at the top of the folder too. The old
+program files are set aside first and put back if anything fails. The next
+`run.bat` installs what the new version needs. A git checkout updates with
+`git pull` instead.
+
+From 0.5.0 (which had no updater), once: unpack the new release next to the old
+folder and move `models/`, `data/` and `lora/` into it.
 
 ## Development
 

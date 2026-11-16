@@ -285,6 +285,8 @@ class JobOut(BaseModel):
     rate: float | None = None  # done per second over the last few seconds (downloads: MB/s)
     subject: str = ""  # e.g. the dataset it works on
     label: str = ""  # e.g. which dataset step
+    # A model the job needs, downloading first: {"setting", "name", "done", "total"} (MB).
+    download: dict | None = None
 
 
 class ModelOut(BaseModel):

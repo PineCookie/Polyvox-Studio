@@ -14,7 +14,7 @@ import soundfile as sf
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
 
-from .. import engines, vram
+from .. import engines, models, vram
 from ..data import audio_io, manifests, references
 from ..prep.aligner import AlignService
 from ..prep.asr import load_audio
@@ -224,7 +224,11 @@ def router(s: Studio) -> APIRouter:
     def tts_progress() -> dict:
         """The running synthesis: phase (idle | loading | preparing | compiling |
         generating), step and expected steps (an estimate; the text decides when
-        it stops), attempt (VoxCPM retries a run-away generation) and elapsed seconds."""
+        it stops), attempt (VoxCPM retries a run-away generation) and elapsed seconds. While a
+        model it needs downloads first: phase downloading, model (its name), step / expected in MB."""
+        if (fetching := models.active_download()) is not None:
+            return {"phase": "downloading", "model": fetching["name"], "step": fetching["done"],
+                    "expected": fetching["total"], "attempt": 1, "elapsed": 0.0}  # fmt: skip
         for engine in s.registry.values():
             if (progress := engine.progress())["phase"] != "idle":
                 return progress

@@ -202,9 +202,9 @@ class DotsEngine(Engine):
 
     def _ensure_runtime(self):
         if self._runtime is None:
-            model = self.settings.model_path(self.model_setting)
-            logger.info("Loading dots.tts from %s (optimize=%s)", model, self.optimize)
-            with models.loading(self.settings, self.model_setting):
+            with models.loading(self.settings, self.model_setting):  # (downloads it first if missing)
+                model = self.settings.model_path(self.model_setting)
+                logger.info("Loading dots.tts from %s (optimize=%s)", model, self.optimize)
                 runtime = self._loader(model, self.optimize)
             # Before the warm-up fuses the diffusion head; LoRAs then go into the
             # fused copies in place, so the recorded CUDA graphs stay valid.

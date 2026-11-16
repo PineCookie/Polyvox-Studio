@@ -120,9 +120,9 @@ class SpeakerService:
         """``embed`` for 16 kHz mono clips (cut to MAX_SECONDS)."""
         with self._lock:
             if self._embed is None:
-                model = self.settings.model_path("speaker_model")
-                logger.info("Loading speaker model %s", model)
-                with models.loading(self.settings, "speaker_model"):
+                with models.loading(self.settings, "speaker_model"):  # (downloads it first if missing)
+                    model = self.settings.model_path("speaker_model")
+                    logger.info("Loading speaker model %s", model)
                     self._embed = (self._loader or load_campplus)(model)
             limit = int(MAX_SECONDS * SAMPLE_RATE)
             clips = [np.ascontiguousarray(w[:limit], dtype=np.float32) for w in wavs]

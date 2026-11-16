@@ -25,6 +25,9 @@ export function flagLabel(flag: CheckFlag): [string, string] {
   return messages().flags[flag]
 }
 
+/** A size given in MB, as the Models tab shows it ("5.0 GB", "590 MB"). */
+export const formatSize = (mb: number) => (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`)
+
 export function formatDuration(seconds: number): string {
   const t = messages()
   const s = Math.round(seconds)

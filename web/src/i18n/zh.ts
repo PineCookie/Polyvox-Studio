@@ -27,7 +27,11 @@ export const zh: Messages = {
   tabs: { synthesize: '合成', prepare: '数据集', train: '训练', models: '模型' },
   sections: '分区',
   dismiss: '关闭',
-  noSpeechModel: '还没有下载语音合成模型。可在「模型」中下载（显示进度），否则会在首次使用时从 Hugging Face 自动下载。',
+  noSpeechModel: '还没有下载语音合成模型。可在「模型」中下载，否则会在首次使用时自动下载。',
+  downloadingNeeded: (name, done, total) => `正在先下载 ${name} · ${done} / ${total}`,
+  updateAvailable: (version) =>
+    `Polyvox Studio ${version} 已发布。更新方法：关闭本程序，运行其文件夹中的 update.bat（Linux 上为 update.sh）；模型、数据集和音色都会保留。`,
+  releaseNotes: '更新说明',
   openModels: '打开模型页',
   language: '语言',
 
@@ -840,7 +844,7 @@ export const zh: Messages = {
   notDownloadedUnavailable: '未下载 · 该选项不可用',
   downloadFailed: (error) => `下载失败：${error}`,
   modelsIntro:
-    '已下载的模型保存在 models 文件夹并从那里加载。未下载的 Hugging Face 模型仍可使用，会在首次加载时下载到 Hugging Face 缓存（不显示进度）；导入时的音频清理选项需要先在这里下载对应模型。',
+    '已下载的模型保存在 models 文件夹并从那里加载。未下载的模型会在功能首次需要时自动下载到该文件夹，并在那里显示进度；标为「该选项不可用」的模型需要先在这里下载。',
   downloadModel: (name) => `下载 ${name}`,
   modelPurpose: {
     model: '语音合成、LoRA 训练',

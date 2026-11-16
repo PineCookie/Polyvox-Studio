@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { cancelJob, downloadModels, listModels, setDownloadSource } from '../api'
 import type { DownloadJob, DownloadWayId, ModelGroup, ModelInfo, ModelList } from '../api'
-import { formatDuration } from '../format'
+import { formatDuration, formatSize } from '../format'
 import { useT } from '../i18n'
 import type { Messages } from '../i18n'
 import { useJob } from '../useJob'
@@ -28,7 +28,6 @@ function takeOldSource(): string | null {
   }
 }
 
-const formatSize = (mb: number) => (mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${mb} MB`)
 const GROUPS: ModelGroup[] = ['tts', 'dataset', 'cleanup'] // the server's models.GROUPS
 
 /** What downloading ``m`` the chosen way fetches, in MB. */

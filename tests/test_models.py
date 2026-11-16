@@ -2,13 +2,16 @@
 
 import dataclasses
 import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 from test_importer import wait_job
 
-from polyvox import models
+from polyvox import jobs, models
 from polyvox.server import create_app
+
+REAL_ENSURE = models.ensure_downloaded  # (conftest turns automatic downloads off for the other tests)
 
 
 def fake_download(spec, models_dir, endpoint=None, progress=None, way="prebuilt"):
@@ -183,6 +186,57 @@ def test_the_download_source_is_kept_and_used_for_first_use_downloads(service, t
     assert client.post("/api/models/source", json={"endpoint": "hf-mirror.com"}).status_code == 422
     assert client.post("/api/models/source", json={"endpoint": ""}).json() == {"endpoint": ""}
     assert constants.ENDPOINT == "https://huggingface.co" and "HF_ENDPOINT" not in os.environ
+
+
+def test_a_model_a_feature_needs_downloads_first_with_its_progress(settings, monkeypatch):
+    monkeypatch.setattr(models, "ensure_downloaded", REAL_ENSURE)
+    seen = []
+
+    def fake(spec, models_dir, endpoint=None, progress=None, way="prebuilt"):
+        progress(spec.size_mb // 2, spec.size_mb)
+        seen.append(dict(models.active_download()))
+        fake_download(spec, models_dir)
+
+    fake_download.calls, fake_download.ways = [], []
+    monkeypatch.setattr(models, "download", fake)
+    unset = dataclasses.replace(settings, model=type(settings)().model)
+    with models.loading(unset, "model", "denoiser_model", fetch=("model",)):
+        assert settings.model_path("model")  # (loaded here)
+    assert seen == [{"setting": "model", "name": "VoxCPM2", "done": 2480, "total": 4960}]
+    assert models.active_download() is None and models.BY_SETTING["model"].downloaded(unset.models_dir)
+    assert fake_download.calls == [("model", None)]  # only "model": the denoiser wasn't asked for
+    with models.loading(unset, "model"):  # downloaded now: nothing to fetch
+        pass
+    assert len(seen) == 1
+
+
+def test_cancelling_a_job_stops_the_download_it_waits_for(settings, monkeypatch):
+    monkeypatch.setattr(models, "ensure_downloaded", REAL_ENSURE)
+    monkeypatch.setattr(models, "download", lambda spec, models_dir, endpoint, progress: progress(1, 100))
+    runner = jobs.JobRunner()
+
+    def work(job):
+        runner.cancel(job.id)
+        models.ensure_downloaded(settings, "asr_model")
+        return {"finished": True}
+
+    job = runner.start("step", "Transcribe", work)
+    for _ in range(100):
+        if job.state != "running":
+            break
+        time.sleep(0.02)
+    assert job.state == "cancelled" and models.active_download() is None
+
+
+def test_synthesis_and_jobs_report_a_model_downloading_first(service, training, asr_service, monkeypatch):
+    client = TestClient(create_app(service.settings, service, training, asr_service))
+    monkeypatch.setitem(models._ACTIVE, "align_model", {"setting": "align_model", "name": "Qwen3-ForcedAligner 0.6B",
+                                                        "done": 300, "total": 1850})  # fmt: skip
+    p = client.get("/api/tts/progress").json()
+    assert p["phase"] == "downloading" and p["model"] == "Qwen3-ForcedAligner 0.6B" and p["step"] == 300
+    job = jobs.Job(id="x", kind="step", title="Check")
+    assert job.public()["download"]["name"] == "Qwen3-ForcedAligner 0.6B"
+    assert jobs.Job(id="y", kind="download", title="Models").public().get("download") is None
 
 
 def test_converting_keeps_the_source_only_when_asked(tmp_path, monkeypatch):

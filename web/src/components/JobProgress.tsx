@@ -1,6 +1,6 @@
 import { cancelJob } from '../api'
 import type { Job } from '../api'
-import { formatDuration } from '../format'
+import { formatDuration, formatSize } from '../format'
 import { useT } from '../i18n'
 import { ProgressBar } from './RunList'
 
@@ -11,6 +11,19 @@ const AUDIO_PHASES = new Set(['slicing', 'separating_slicing'])
 export function JobProgress({ job, what }: { job: Job; what: string }) {
   const t = useT()
   if (job.state === 'done') return null
+  const fetching = job.state === 'running' ? job.download : null
+  if (fetching) {
+    // A model the job needs comes first (it downloads into the models folder).
+    return (
+      <div className="job-progress">
+        <span>{t.downloadingNeeded(fetching.name, formatSize(fetching.done), formatSize(fetching.total))}</span>
+        <ProgressBar value={fetching.done} max={fetching.total || 1} />
+        <button type="button" className="ghost small" onClick={() => cancelJob(job.id)}>
+          {t.cancel}
+        </button>
+      </div>
+    )
+  }
   return (
     <div className="job-progress">
       {job.state === 'running' ? (

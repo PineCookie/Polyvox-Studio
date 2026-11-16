@@ -26,7 +26,11 @@ export const en = {
   sections: 'Sections',
   dismiss: 'Dismiss',
   noSpeechModel:
-    'No speech model is downloaded yet. Download one in Models (with progress), or a model downloads from Hugging Face the first time it is needed.',
+    'No speech model is downloaded yet. Download one in Models, or a model downloads itself the first time you use it.',
+  downloadingNeeded: (name: string, done: string, total: string) => `Downloading ${name} first · ${done} / ${total}`,
+  updateAvailable: (version: string) =>
+    `Polyvox Studio ${version} is out. To update, close the studio and run update.bat (update.sh on Linux) in its folder; your models, datasets and voices stay.`,
+  releaseNotes: 'Release notes',
   openModels: 'Open Models',
   language: 'Language',
 
@@ -862,7 +866,7 @@ export const en = {
   notDownloadedUnavailable: 'Not downloaded · option unavailable',
   downloadFailed: (error: string) => `Download failed: ${error}`,
   modelsIntro:
-    "Downloaded models live in the models folder and are used from there. A Hugging Face model that is not downloaded still loads, downloading to Hugging Face's cache the first time (with no progress shown); the import's clean-up options need their model downloaded here.",
+    "Downloaded models live in the models folder and are used from there. A model that is not downloaded downloads itself into that folder the first time a feature needs it, with its progress shown there; those marked 'option unavailable' need downloading here first.",
   downloadModel: (name: string) => `Download ${name}`,
   // Model purposes by setting; a model missing here shows the server's English text.
   modelPurpose: {} as Record<string, string>,

@@ -443,11 +443,53 @@ def _fetch_failure(error: BaseException) -> BaseException | None:
     return None
 
 
-@contextmanager
-def loading(settings, *setting_names: str):
-    """Around loading these models: a failed fetch of one that isn't downloaded (or configured)
-    becomes a ModelUnavailable naming it. Other errors pass unchanged."""
+_FOLDER_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+_ACTIVE: dict[str, dict] = {}  # setting -> {"setting", "name", "done", "total"} (MB): automatic downloads
+
+
+def _folder_lock(folder: str) -> threading.Lock:
+    with _LOCKS_GUARD:
+        return _FOLDER_LOCKS.setdefault(folder, threading.Lock())
+
+
+def active_download() -> dict | None:
+    """A download started because a feature needed its model (ensure_downloaded), while it runs."""
+    return next(iter(_ACTIVE.values()), None)
+
+
+def ensure_downloaded(settings, setting: str) -> None:
+    """A model not configured and not downloaded is downloaded into the models folder now (from
+    the download source in use), its progress in active_download(), before it is loaded."""
+    spec = BY_SETTING[setting]
+    if settings.configured(setting) or spec.downloaded(settings.models_dir):
+        return
+    from . import jobs
+
+    job = jobs.current()  # in a job: its Cancel stops the download (after the file in flight)
+    entry = {"setting": setting, "name": spec.name, "done": 0, "total": spec.size_mb}
+
+    def report(done: int, total: int) -> None:
+        entry.update(done=done, total=total or entry["total"])
+        if job is not None and job.cancel_requested:
+            raise jobs.JobCancelled()
+
+    _ACTIVE[setting] = entry
     try:
+        download(spec, settings.models_dir, current_endpoint() or None, report)
+    finally:
+        _ACTIVE.pop(setting, None)
+
+
+@contextmanager
+def loading(settings, *setting_names: str, fetch: tuple[str, ...] | None = None):
+    """Around loading these models. Those in ``fetch`` (default: all) that aren't configured or
+    downloaded are downloaded first (ensure_downloaded), so look their paths up inside. A failed
+    fetch of one that isn't downloaded becomes a ModelUnavailable naming it; other errors pass."""
+    try:
+        for name in setting_names if fetch is None else fetch:
+            if name in BY_SETTING:
+                ensure_downloaded(settings, name)
         yield
     except ModelUnavailable:
         raise
@@ -598,12 +640,18 @@ def download(
     ``progress`` raises (cancel), the file in flight finishes in the background.
     ``way`` (a spec with a fallback, ModelSpec.ways): "prebuilt", or "convert" / "convert_keep"
     to build it here from its source (keeping the source's files after)."""
-    progress = progress or (lambda done, total: None)
-    endpoint = endpoint or None
-    folder = models_dir / spec.folder
-    mb = 1 << 20
     if way not in WAYS or (way != "prebuilt" and not spec.fallback):
         raise ValueError(f"{spec.name} can't be downloaded as {way!r}.")
+    # One download of a model at a time (the Models tab and a feature that needs it may both ask):
+    # the second waits, then fetches only what is still missing.
+    with _folder_lock(spec.folder):
+        _download(spec, models_dir, endpoint, progress or (lambda done, total: None), way)
+
+
+def _download(spec: ModelSpec, models_dir: Path, endpoint: str | None, progress: Progress, way: str) -> None:
+    endpoint = endpoint or None
+    folder = models_dir / spec.folder
+    mb = 1_000_000  # decimal MB, as size_mb and the hub's sizes
     if spec.source:
         _download_and_build(spec, models_dir, endpoint, progress, spec.source)
         return
@@ -705,7 +753,7 @@ def _download_and_build(
     repo, revision = (source.repo, source.revision) if source.repo else (spec.repo, spec.revision)
     src = models_dir / source.folder
     src.mkdir(parents=True, exist_ok=True)
-    mb = 1 << 20
+    mb = 1_000_000  # decimal MB, as size_mb and the hub's sizes
     downloaded = [spec.size_mb * mb]
 
     def report(done: int, total: int) -> None:

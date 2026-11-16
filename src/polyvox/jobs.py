@@ -25,6 +25,14 @@ class JobCancelled(Exception):
     """Raised inside a job when cancellation was requested."""
 
 
+_current = threading.local()  # the job this thread runs (JobRunner._run)
+
+
+def current() -> Job | None:
+    """The job the calling thread runs, if any (code deep in a job checks its cancel request)."""
+    return getattr(_current, "job", None)
+
+
 @dataclass
 class Job:
     id: str
@@ -73,7 +81,13 @@ class Job:
         return self._cancel.is_set()
 
     def public(self) -> dict:
-        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        out = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        # A model the job needs downloading first (models.ensure_downloaded): shown with the job.
+        if self.state == "running" and self.kind != "download":
+            from . import models
+
+            out["download"] = models.active_download()
+        return out
 
 
 class JobRunner:
@@ -109,6 +123,7 @@ class JobRunner:
         return job
 
     def _run(self, job: Job, fn: Callable[[Job], dict]) -> None:
+        _current.job = job
         try:
             job.result = fn(job) or {}
             job.state = "done"

@@ -113,6 +113,10 @@ How each is done, and more numbers, in the [guide](docs/GUIDE.md#speed).
 3. Open http://127.0.0.1:8808 and download **VoxCPM2** in the **Models** tab.
 4. Type something in **Synthesize** and press **Generate**. 🎉
 
+**Updating:** the studio says when a new version is out. Close it, then run
+`update.bat` (`./update.sh` on Linux) in its folder: the program files are
+replaced and your models, datasets and voices stay.
+
 ## 💻 Requirements
 
 - 🖥️ Windows or Linux.

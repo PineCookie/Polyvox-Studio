@@ -28,6 +28,8 @@ import { VoicePanel } from './components/VoicePanel'
 // Workflow order: raw audio -> dataset -> LoRA -> speech.
 const TABS = ['synthesize', 'prepare', 'train', 'models'] as const
 type Tab = (typeof TABS)[number]
+const UPDATE_LOOK_MS = 8000 // when to look again for the server's update check
+const DISMISSED_UPDATE_KEY = 'polyvox.dismissedUpdate' // the newer version whose notice was dismissed
 
 function tabFromHash(): Tab {
   const t = location.hash.slice(1)
@@ -74,7 +76,26 @@ export default function App() {
     refreshStatus()
     refreshLoras()
     listEngines().then(setEngines, (e: Error) => setError(e.message))
+    // The server asks GitHub for a newer release in the background at startup: look again soon.
+    const later = setTimeout(refreshStatus, UPDATE_LOOK_MS)
+    return () => clearTimeout(later)
   }, [refreshStatus, refreshLoras])
+
+  const [dismissedUpdate, setDismissedUpdate] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(DISMISSED_UPDATE_KEY)
+    } catch {
+      return null
+    }
+  })
+  function dismissUpdate(version: string) {
+    setDismissedUpdate(version) // until a newer one is out
+    try {
+      localStorage.setItem(DISMISSED_UPDATE_KEY, version)
+    } catch {
+      // Hidden for this session only.
+    }
+  }
 
   async function generate(params: Omit<SynthesisParams, 'loraId' | 'engine'>) {
     setBusy(true)
@@ -221,6 +242,20 @@ export default function App() {
           <span>{t.noSpeechModel}</span>
           <button type="button" className="ghost small" onClick={() => switchTab('models')}>
             {t.openModels}
+          </button>
+        </div>
+      )}
+
+      {status?.update && dismissedUpdate !== status.update.version && (
+        <div className="notice">
+          <span>{t.updateAvailable(status.update.version)}</span>
+          {status.update.url && (
+            <a className="button ghost small" href={status.update.url} target="_blank" rel="noreferrer">
+              {t.releaseNotes}
+            </a>
+          )}
+          <button type="button" className="ghost small" onClick={() => dismissUpdate(status.update!.version)}>
+            {t.dismiss}
           </button>
         </div>
       )}

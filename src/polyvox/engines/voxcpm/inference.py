@@ -310,7 +310,9 @@ class InferenceService:
         logger.info(
             "Loading %s (LoRA layout rank %s, optimize=%s)", self.settings.model_path("model"), target.r, self.optimize
         )
-        with models.loading(self.settings, "model", "denoiser_model"):
+        # The model loads its denoiser (ZipEnhancer) too, unless that's turned off.
+        fetch = ("model", "denoiser_model") if self.settings.load_denoiser else ("model",)
+        with models.loading(self.settings, "model", "denoiser_model", fetch=fetch):
             self._model = self._loader(self.settings, self.device, target, self.optimize)
         self._lora_config = target
         self._fresh = True

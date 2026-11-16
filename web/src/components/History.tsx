@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useT } from '../i18n'
 import { AudioPlayer } from './AudioPlayer'
+import { SynthesisProgress } from './SynthesisPanel'
 
 export interface Clip {
   id: number
@@ -113,6 +114,7 @@ function HistoryClip({ clip, onUseSeed, onRemove, editor, busy, onEdit }: { clip
             disabled={editing}
           />
           <span className="muted hint">{t.editHint(editor)}</span>
+          {editing && <SynthesisProgress />}
           <div className="actions">
             <button type="button" className="small" disabled={!changed || busy} onClick={apply}>
               {editing ? t.editingWords : t.applyEdit}

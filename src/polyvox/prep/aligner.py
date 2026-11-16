@@ -361,7 +361,8 @@ class AlignService:
             logger.info("Loading %s aligner %s on %s", kind, model, self.device)
             setting = "align_model" if kind == "qwen3" else "ctc_align_model"
             with timing.stage("loading models"), models.loading(self.settings, setting):
-                self._backend, self._kind = self._loader(kind, model, self.device), kind
+                # (looked up again: downloaded just now if it was missing)
+                self._backend, self._kind = self._loader(kind, self.model_for(kind), self.device), kind
         return self._backend  # type: ignore[return-value]
 
 

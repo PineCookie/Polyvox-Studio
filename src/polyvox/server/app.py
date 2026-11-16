@@ -26,6 +26,7 @@ from ..prep.separation import load_models as separation_models
 from ..prep.singing import SingingService
 from ..speaker import SpeakerService
 from ..training import TrainingConflict, TrainingManager
+from ..updates import UpdateCheck
 from . import clips, datasets, loras, status, tts
 from . import training as training_routes
 from .context import Studio, free_gpu_for_training
@@ -94,11 +95,16 @@ def create_app(
         training=training,
         gpu_gb=gpu_gb,
         profile=profile,
+        updates=UpdateCheck() if settings.update_check else None,
     )
+    if studio.updates:
+        studio.updates.start()  # in the background: a slow or blocked GitHub never delays anything
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
+        if studio.updates:
+            studio.updates.stop()
         studio.training.shutdown()  # saves a checkpoint
 
     app = FastAPI(title="Polyvox Studio", lifespan=lifespan)

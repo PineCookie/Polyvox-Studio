@@ -3,7 +3,7 @@ import type { FormEvent, KeyboardEvent } from 'react'
 import { getTtsProgress } from '../api'
 import type { Engine, EngineOptions, EngineParam, ReferenceInput, SynthesisParams, TtsProgress } from '../api'
 import { defaultOptions } from '../engines'
-import { formatDuration } from '../format'
+import { formatDuration, formatSize } from '../format'
 import { useT } from '../i18n'
 import { emptyInput, inputAudio, lacksTranscript } from '../referenceInputs'
 import type { InputState } from '../referenceInputs'
@@ -15,8 +15,9 @@ import { TaggedText } from './TaggedText'
 
 const POLL_MS = 400
 
-/** Phase and an estimated share of the generation, polled while it runs. */
-function SynthesisProgress() {
+/** Phase and an estimated share of the generation (or of a model it needs, downloading first),
+ * polled while it runs; also shown while History edits a clip. */
+export function SynthesisProgress() {
   const t = useT()
   const [progress, setProgress] = useState<TtsProgress | null>(null)
   useEffect(() => {
@@ -35,6 +36,16 @@ function SynthesisProgress() {
   }, [])
   if (!progress) return null
   const { phase, step, expected, attempt, elapsed } = progress
+  if (phase === 'downloading') {
+    return (
+      <div className="synthesis-progress">
+        <span className="muted hint">
+          {t.downloadingNeeded(progress.model ?? '', formatSize(step), formatSize(expected ?? 0))}
+        </span>
+        <ProgressBar value={step} max={expected || 1} />
+      </div>
+    )
+  }
   const label =
     phase === 'loading'
       ? t.progressLoading

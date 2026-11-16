@@ -81,6 +81,9 @@ class Settings:
     # Hugging Face or a mirror of it (e.g. https://hf-mirror.com) for downloads;
     # "" = huggingface.co.
     hf_endpoint: str = ""
+    # Ask GitHub once a day whether a newer release is out (updates.py); from_env: on unless
+    # POLYVOX_UPDATE_CHECK=0.
+    update_check: bool = False
 
     def configured(self, setting: str) -> bool:
         """The setting was changed from its default (e.g. by an environment variable)."""
@@ -126,4 +129,5 @@ class Settings:
             denoise_model=_env("DENOISE_MODEL", cls.denoise_model),
             models_dir=Path(_env("MODELS_DIR", str(cls.models_dir))),
             hf_endpoint=_env("HF_ENDPOINT", cls.hf_endpoint).rstrip("/"),
+            update_check=_parse_bool(_env("UPDATE_CHECK", "1")),
         )

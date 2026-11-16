@@ -112,6 +112,8 @@ export interface Status {
   cleanup: CleanupOption[]
   // No engine's model is configured or downloaded yet (a first run).
   no_speech_model: boolean
+  version: string // this studio's
+  update: { version: string; url: string } | null // a newer release (checked on GitHub daily)
   // The GPU's memory and the settings picked for it (src/polyvox/vram.py).
   gpu: GpuProfile
   lora_rank: number | null
@@ -336,7 +338,8 @@ export async function transcribe(audio: File, language?: string): Promise<{ text
 
 // The running synthesis (src/polyvox/inference.py Progress).
 export interface TtsProgress {
-  phase: 'idle' | 'loading' | 'preparing' | 'compiling' | 'generating'
+  phase: 'idle' | 'downloading' | 'loading' | 'preparing' | 'compiling' | 'generating'
+  model?: string // downloading: the model that a request needs first (step / expected in MB)
   step: number
   expected: number | null // an estimate: the text decides when generation stops
   attempt: number // VoxCPM retries a generation that runs far too long
@@ -540,6 +543,15 @@ export interface Job<R = unknown> {
   result: R
   subject: string // e.g. the dataset it works on
   label: string // e.g. which dataset step ('add', 'remaining', 'slice', ...)
+  download?: ModelDownload | null // a model the job needs, downloading first
+}
+
+/** A model downloading because a feature needs it (sizes in MB). */
+export interface ModelDownload {
+  setting: string
+  name: string
+  done: number
+  total: number
 }
 
 // Optional clean-up before import (src/polyvox/separation.py).

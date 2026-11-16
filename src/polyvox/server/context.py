@@ -26,6 +26,7 @@ from ..prep.separation import SeparationService
 from ..prep.singing import SingingService
 from ..speaker import SpeakerService
 from ..training import TrainingManager
+from ..updates import UpdateCheck, current_version
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class Studio:
     training: TrainingManager
     gpu_gb: float | None
     profile: vram.Profile
+    updates: UpdateCheck | None = None  # None: not checked (POLYVOX_UPDATE_CHECK=0, tests)
 
     def cleanup_models(self) -> dict[str, str]:
         """Import clean-up option -> its RoFormer checkpoint ("" = not available). Looked up
@@ -89,6 +91,9 @@ class Studio:
             "model_id": sharing.hub_id(settings.model_path("model")),
             # The PyTorch build (e.g. 2.14.1+cu130): which of run.bat / run.sh's variants runs.
             "torch": importlib.metadata.version("torch"),
+            "version": current_version(),
+            # A newer release ({"version", "url"}), else None.
+            "update": self.updates.info if self.updates else None,
             "asr_loaded": self.asr.loaded,
             "aligner_loaded": self.align.loaded,
             "separation_loaded": self.separation.loaded,

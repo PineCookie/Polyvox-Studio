@@ -238,6 +238,15 @@ class FakeSingingModel:
 
 
 @pytest.fixture(autouse=True)
+def no_automatic_downloads(monkeypatch):
+    """Models a feature needs are downloaded when missing (models.ensure_downloaded): not in tests,
+    whose fake loaders need no files (test_models tests the real one)."""
+    from polyvox import models
+
+    monkeypatch.setattr(models, "ensure_downloaded", lambda settings, setting: None)
+
+
+@pytest.fixture(autouse=True)
 def keep_download_source(monkeypatch):
     """create_app and the Models tab's source set huggingface_hub's endpoint for the process (and
     HF_ENDPOINT): put both back after each test."""
