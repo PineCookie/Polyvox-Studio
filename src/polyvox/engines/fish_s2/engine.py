@@ -25,8 +25,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from ... import lora_library, vram
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
@@ -79,7 +77,8 @@ class Runtime:
         import torch
         from transformers import AutoTokenizer
 
-        from . import codec, decode, model
+        from ..common import fish_codec as codec
+        from . import decode, model
 
         t0 = time.time()
         self.model = model.load(model_dir, device, torch.bfloat16)
@@ -96,15 +95,10 @@ class Runtime:
 
     def encode(self, wav: Path, noise_floor: bool = False):
         """Codes of a clip; ``noise_floor``: heard as trained voices learned their clips."""
-        import torch
-        import torchaudio
-
         from ...data import audio_io
         from .train import with_noise_floor
 
-        audio, rate = audio_io.read(wav)
-        mono = torch.from_numpy(np.asarray(audio.mean(axis=0) if audio.ndim == 2 else audio, dtype=np.float32))
-        mono = torchaudio.functional.resample(mono.to(self.device), rate, self.codec.sample_rate)
+        mono = audio_io.mono_tensor(wav, self.codec.sample_rate, self.device)
         return self.codec.encode(with_noise_floor(mono) if noise_floor else mono).cpu()
 
     def generate(self, tokens, sampling, max_frames: int, on_frame):
@@ -264,7 +258,7 @@ class FishS2Engine(Engine):
     def synthesize(self, req: SynthesisRequest) -> SynthesisResult:
         import torch
 
-        from ..gpt_sovits.voices import read_reference
+        from ..common.reference import read_reference
         from . import generate, prompt
 
         text = re.sub(r"\s+", " ", req.text).strip()
@@ -341,6 +335,7 @@ class FishS2Engine(Engine):
         ``params``). The run's reference (samples, the voice's default) is the
         dataset's best few clips joined."""
         from ...data import manifests, references
+        from ..common.reference import JOINED_CLIPS
 
         if reason := self.training_unavailable():
             raise ValueError(f"Fish Audio S2-Pro can't train here: {reason}")
@@ -352,7 +347,7 @@ class FishS2Engine(Engine):
         if params.s2_slow and params.optimizer != "adamw":
             raise ValueError("Training the slow transformer needs AdamW (Prodigy can't give it a smaller rate).")
         dataset = manifests.resolve(self.settings.data_dir, params.dataset)
-        picked = references.pick(dataset, s2lora.REFERENCE_CLIPS, manifests.legacy_root(self.settings.data_dir))
+        picked = references.pick(dataset, JOINED_CLIPS, manifests.legacy_root(self.settings.data_dir))
         return {
             "pretrained_path": self.settings.model_path(self.model_setting),
             "train_manifest": str(train_manifest),

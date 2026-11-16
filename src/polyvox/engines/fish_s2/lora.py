@@ -20,7 +20,7 @@ Checkpoint: lora_weights.safetensors with ``<module>.lora_A`` (r x in) and
 ``<module>.lora_B`` (out x r) per layer (module names as in model.DualAR, e.g.
 ``fast_layers.0.attention.wqkv``), lora_config.json {"engine": "fish_s2",
 "base_model": ..., "lora_config": {"r", "alpha", "targets"}}, and the voice's
-default reference (reference.wav + reference.json).
+default reference (common.reference).
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from ..dots.lora import LoRA
+from ..common.lora import LoRA
 
 ENGINE = "fish_s2"
 # target -> (module name prefix, layer suffixes)
@@ -89,51 +89,6 @@ def state(loras: dict) -> dict[str, torch.Tensor]:
 def write_config(ckpt_dir: Path, config: dict, base_model: str) -> None:
     info = {"engine": ENGINE, "base_model": base_model, "lora_config": config}
     (ckpt_dir / "lora_config.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
-
-
-# The voice's default reference, as GPT-SoVITS voices keep theirs (gpt_sovits.voices.read_reference reads both).
-REFERENCE_WAV, REFERENCE_JSON = "reference.wav", "reference.json"
-REFERENCE_CLIPS = 3  # dataset clips joined into one: ~20 s cloned clearly better than one clip
-MAX_REFERENCE_S = 30.0
-
-
-def _write_info(folder: Path, text: str, source: str) -> None:
-    info = {"text": text.strip(), "source": source}
-    (folder / REFERENCE_JSON).write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
-
-
-def write_reference_clips(folder: Path, clips: list, source: str) -> str:
-    """Dataset clips (data.references.Clip) joined into the voice's reference; returns its transcript."""
-    from ...data import references
-
-    folder.mkdir(parents=True, exist_ok=True)
-    tmp = folder / f".{REFERENCE_WAV}.tmp"
-    text = references.join(clips, tmp)
-    tmp.replace(folder / REFERENCE_WAV)
-    _write_info(folder, text, source)
-    return text
-
-
-def write_reference_file(folder: Path, source: Path, text: str, origin: str = "", model: str = "S2-Pro") -> None:
-    """Any readable clip of at most MAX_REFERENCE_S as the voice's reference (``model``: for messages)."""
-    import numpy as np
-    import soundfile as sf
-
-    from ...data import audio_io
-
-    if not text.strip():
-        raise ValueError(f"{model} needs the reference clip's transcript.")
-    audio, rate = audio_io.read(source)
-    mono = audio.mean(axis=0) if audio.ndim == 2 else audio
-    if len(mono) / rate > MAX_REFERENCE_S:
-        raise ValueError(
-            f"The reference clip is {len(mono) / rate:.0f} s; {model} takes at most {MAX_REFERENCE_S:g} s."
-        )
-    folder.mkdir(parents=True, exist_ok=True)
-    tmp = folder / f".{REFERENCE_WAV}.tmp"
-    sf.write(tmp, np.asarray(mono, dtype=np.float32), rate, format="WAV", subtype="PCM_16")
-    tmp.replace(folder / REFERENCE_WAV)
-    _write_info(folder, text, origin)
 
 
 class Merger:

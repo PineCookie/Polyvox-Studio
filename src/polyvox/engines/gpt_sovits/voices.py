@@ -20,10 +20,10 @@ import re
 import shutil
 from pathlib import Path
 
-import numpy as np
-
-from ...data import audio_io, references
+from ...data import references
 from ...data.references import text_quality  # noqa: F401  (part of this module's API)
+from ..common import reference
+from ..common.reference import REFERENCE_JSON, REFERENCE_WAV, read_reference  # noqa: F401  (the voice's files)
 from .synth import REF_MAX_S, REF_MIN_S, V4, VERSIONS, sovits_version
 
 ENGINE = "gpt_sovits"
@@ -31,38 +31,15 @@ BASE_REPO = "lj1995/GPT-SoVITS"
 SOVITS_FILE = "sovits_weights.pth"
 GPT_FILE = "gpt_weights.ckpt"
 CONFIG_FILE = "lora_config.json"  # as lora_library reads it for every engine
-REFERENCE_WAV = "reference.wav"
-REFERENCE_JSON = "reference.json"
 VOICE_NAME = r"^[^\W_][\w.-]{0,79}$"  # as run and package names
-
-
-def read_reference(voice_dir: Path) -> tuple[Path, str] | None:
-    """The voice's default reference clip and its transcript, if it has one."""
-    wav, info = voice_dir / REFERENCE_WAV, voice_dir / REFERENCE_JSON
-    if not wav.is_file():
-        return None
-    try:
-        text = str(json.loads(info.read_text(encoding="utf-8")).get("text") or "")
-    except (OSError, ValueError):
-        text = ""
-    return wav, text
 
 
 def write_reference(voice_dir: Path, source: Path, text: str, origin: str = "") -> None:
     """Make ``source`` (any readable audio, 3-10 s) the voice's default reference."""
-    audio, rate = audio_io.read(source)
-    mono = audio.mean(axis=0) if audio.ndim == 2 else audio
-    seconds = len(mono) / rate
-    if not REF_MIN_S <= seconds <= REF_MAX_S:
-        raise ValueError(f"The reference clip is {seconds:.1f} s; GPT-SoVITS needs {REF_MIN_S:g}-{REF_MAX_S:g} s.")
-    import soundfile as sf
-
-    voice_dir.mkdir(parents=True, exist_ok=True)
-    tmp = voice_dir / f".{REFERENCE_WAV}.tmp"
-    sf.write(tmp, np.asarray(mono, dtype=np.float32), rate, format="WAV", subtype="PCM_16")
-    tmp.replace(voice_dir / REFERENCE_WAV)
-    info = {"text": text.strip(), "source": origin}
-    (voice_dir / REFERENCE_JSON).write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
+    reference.write_file(
+        voice_dir, source, text, origin, model="GPT-SoVITS", min_seconds=REF_MIN_S, max_seconds=REF_MAX_S,
+        transcript=False,
+    )  # fmt: skip
 
 
 def pick_reference(manifest: Path, root: Path | None = None, seed: int = 0) -> tuple[Path, str]:

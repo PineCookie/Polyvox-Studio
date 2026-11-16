@@ -2,7 +2,7 @@
 
 The same features upstream's prepare_datasets scripts write as files
 (1-get-text, 2-get-hubert-wav32k, 2-get-sv, 3-get-semantic), computed once per
-run and cached in ``<run>/cache/``:
+clip and cached in the dataset's folder (common.cache):
 
     phones    phoneme ids (int16)
     bert      RoBERTa features per phoneme [1024, phones] (zeros for English; float16)
@@ -19,14 +19,15 @@ instead of ffmpeg.
 
 from __future__ import annotations
 
-import hashlib
-import sys
 import threading
 import time
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
+
+from ..common.cache import clip_key, load_cache, save_cache
+from ..common.worker import log
 
 CACHE_VERSION = 1  # bump when what extract() makes changes
 SAMPLE_RATE = 32_000
@@ -38,10 +39,6 @@ HUBERT_SCALE = 1145.14  # upstream feeds HuBERT this (odd but trained-on) level
 
 class Skipped(Exception):
     """A clip that can't be trained on; the message is the reason, counted."""
-
-
-def log(message: str) -> None:
-    print(f"[studio] {message}", file=sys.stderr, flush=True)
 
 
 def clip_features(pipeline, base_voice, audio_path: str, text: str) -> dict:
@@ -94,17 +91,6 @@ def clip_features(pipeline, base_voice, audio_path: str, text: str) -> dict:
         "sv": sv.to(torch.float16).cpu(),
         "semantic": semantic.to(torch.int16).cpu(),
     }
-
-
-def clip_key(record: dict) -> str:
-    """What a clip's features depend on besides the models: its audio file and text."""
-    path = Path(record["audio"])
-    try:
-        stat = path.stat()
-        stamp = f"{stat.st_size}:{stat.st_mtime_ns}"
-    except OSError:
-        stamp = "missing"
-    return hashlib.sha1(f"{path.resolve()}|{stamp}|{record['text']}".encode()).hexdigest()
 
 
 def feature_version(version: str) -> str:
@@ -167,35 +153,3 @@ def extract(
         else:
             clips.append({"index": i, "text": r["text"], **{n: v for n, v in entry.items() if torch.is_tensor(v)}})
     return clips, dict(skipped)
-
-
-def load_cache(cache_file: Path, meta: dict | None) -> dict:
-    import torch
-
-    if not cache_file.is_file():
-        return {}
-    try:
-        saved = torch.load(cache_file, map_location="cpu", weights_only=True)
-        if saved.get("meta") == meta:
-            return saved["clips"]
-        log(f"{cache_file.name} is for other models or an older version; computing features again.")
-    except Exception as e:  # unreadable: computed again
-        log(f"Ignoring {cache_file.name}: {e}")
-    return {}
-
-
-def save_cache(cache_file: Path, meta: dict | None, cache: dict, records: list[dict], keys: list[str]) -> None:
-    """Write the cache, leaving out clips whose file is gone and older versions
-    of this run's clips (other runs' clips, e.g. their validation ones, stay)."""
-    import torch
-
-    current = {str(r["audio"]): k for r, k in zip(records, keys, strict=True)}
-    kept = {
-        k: v
-        for k, v in cache.items()
-        if current.get(v["audio"], k) == k and (v["audio"] in current or Path(v["audio"]).is_file())
-    }
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    tmp = cache_file.with_suffix(".tmp")
-    torch.save({"meta": meta, "clips": kept}, tmp)
-    tmp.replace(cache_file)

@@ -1,4 +1,5 @@
-"""Fish Audio S2-Pro's audio codec, written here from its published architecture.
+"""Fish Audio's audio codec (S2-Pro and Drama 3 share the same codec.pth), written here from
+its published architecture.
 
 A causal DAC-style codec at 44.1 kHz: a convolutional encoder (hop 512, with a
 windowed transformer at its end), two more ×2 downsamplings to ~21.5 frames per
@@ -21,7 +22,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from .model import rms_norm, rope_table, rotate
+from .layers import rms_norm, rope_table, rotate
 
 SAMPLE_RATE = 44_100
 ENCODER_RATES = (2, 4, 8, 8)  # hop 512
@@ -355,5 +356,5 @@ def load(path: Path, device: str) -> Codec:
     codec = Codec()
     missing, unexpected = codec.load_state_dict(folded(state), strict=False)
     if missing or unexpected:
-        raise ValueError(f"S2-Pro codec doesn't fit: missing {missing[:5]}, unexpected {unexpected[:5]}")
+        raise ValueError(f"The Fish codec doesn't fit: missing {missing[:5]}, unexpected {unexpected[:5]}")
     return codec.to(device).eval().requires_grad_(False)

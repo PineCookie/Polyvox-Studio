@@ -28,10 +28,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 import random
-import sys
 import threading
 import time
 from pathlib import Path
@@ -40,88 +38,12 @@ from types import SimpleNamespace
 import yaml
 from torch.utils.data import Dataset
 
-POLL_S = 1.0
+from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, watch_for_stop
+
 SAMPLES = 2  # validation clips whose texts are synthesized at each validation
 SAMPLE_SEED = 42
 XVEC_CROPS = 3  # x-vectors kept per clip longer than the speaker encoder's 10 s window
 NAMES = {"fm_loss": "loss/diff", "eos_loss": "loss/stop"}  # the losses trained and logged
-
-
-def log(message: str) -> None:
-    print(f"[studio] {message}", file=sys.stderr, flush=True)
-
-
-def watch_for_stop(stop_file: Path, parent_pid: int | None, stop: threading.Event) -> None:
-    from polyvox.engines.voxcpm.worker import process_alive
-
-    while not stop_file.exists():
-        if parent_pid is not None and not process_alive(parent_pid):
-            log("Server exited.")
-            break
-        time.sleep(POLL_S)
-    log("Stop requested; saving a checkpoint.")
-    stop.set()
-
-
-def make_optimizer(name: str, groups: list[dict], config: dict, num_iters: int):
-    """(optimizer, scheduler or None) as engines.voxcpm.worker.use_optimizer chooses them."""
-    import torch
-
-    lr, wd = float(config["learning_rate"]), float(config["weight_decay"])
-    if name == "prodigy_sf":
-        from prodigyplus import ProdigyPlusScheduleFree
-
-        opt = ProdigyPlusScheduleFree(
-            groups,
-            lr=lr,
-            weight_decay=wd,
-            betas=(0.95, 0.99),
-            schedulefree_c=20,
-            prodigy_steps=int(config.get("prodigy_steps") or 0),
-        )
-        return opt, None
-    if name == "prodigy":
-        from prodigyopt import Prodigy
-
-        opt = Prodigy(groups, lr=lr, weight_decay=wd, safeguard_warmup=True, use_bias_correction=True)
-    elif name == "adamw":
-        opt = torch.optim.AdamW(groups, lr=lr, weight_decay=wd)
-    else:
-        raise ValueError(f"Unknown optimizer: {name}")
-    warmup = int(config.get("warmup_steps") or 0)
-
-    def cosine(step: int) -> float:  # transformers' cosine schedule with warmup
-        if step < warmup:
-            return (step + 1) / (warmup + 1)
-        progress = (step - warmup) / max(1, num_iters - warmup)
-        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress))))
-
-    return opt, torch.optim.lr_scheduler.LambdaLR(opt, cosine)
-
-
-def rates(opt) -> dict[str, float]:
-    """lr = d x lr for Prodigy (per group lr_<net>, elr_<net> for Schedule-Free), as VoxCPM's worker logs."""
-    out: dict[str, float] = {}
-    for i, g in enumerate(opt.param_groups):
-        d = float(g.get("d", 1.0))
-        if i == 0:
-            out["lr"] = d * float(g["lr"])
-        if "d" in g:
-            out[f"lr_{g['name']}"] = d * float(g["lr"])
-            if "effective_lr" in g:
-                out[f"elr_{g['name']}"] = d * float(g["effective_lr"])
-    return out
-
-
-def format_metrics(values: dict[str, float]) -> str:
-    def fmt(k: str, v: float) -> str:
-        if k == "lr" or k.startswith(("lr_", "elr_")):
-            return f"{k}: {v:.4e}"
-        if k == "log interval":
-            return f"{k}: {v:.2f}s"
-        return f"{k}: {v:.6f}"
-
-    return ", ".join(fmt(k, v) for k, v in values.items())
 
 
 class Clips(Dataset):
@@ -243,23 +165,6 @@ def collate(model, items: list[dict], pad_id: int) -> dict:
     out["latents_sampled"] = model.core.io_helper.sample_from_latent(latents)  # a new draw each step
     out["xvector"] = torch.stack([random.choice(c["xvectors"]) for c in items]).to(dev)
     return out
-
-
-class Batches:
-    """Shuffled batches of encoded clips; one pass = one epoch."""
-
-    def __init__(self, clips: list[dict], batch_size: int, seed: int):
-        self.clips, self.batch_size = clips, batch_size
-        self.per_epoch = max(1, len(clips) // batch_size)
-        self._rng = random.Random(seed)
-        self._order: list[int] = []
-
-    def next(self) -> list[dict]:
-        if len(self._order) < self.batch_size:
-            self._order = list(range(len(self.clips)))
-            self._rng.shuffle(self._order)
-        picked, self._order = self._order[: self.batch_size], self._order[self.batch_size :]
-        return [self.clips[i] for i in picked]
 
 
 def training_layers(model, checkpointing: bool, fused: bool) -> None:

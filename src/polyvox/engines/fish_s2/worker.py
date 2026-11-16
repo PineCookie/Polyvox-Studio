@@ -22,7 +22,7 @@ once per clip, without and with a few references picked once (config
 "cached_references", default 2)
 (train.reference_picks, train.slow_states), instead of every step. Both go into
 a cache shared by the dataset's runs (config "cache_file", <dataset>/.cache/;
-entries per clip as GPT-SoVITS's features: gpt_sovits.features.clip_key), so
+entries per clip as GPT-SoVITS's features: common.cache.clip_key), so
 another run on the same clips (other LoRA settings, a resume) starts training at
 once. Training and validation losses then need only the cached states, so with
 config "offload" the slow transformer (~7.7 GB) loads into CPU memory and visits
@@ -45,8 +45,8 @@ from pathlib import Path
 
 import yaml
 
-from ..dots.worker import Batches, format_metrics, log, make_optimizer, rates, watch_for_stop
-from .lora import REFERENCE_JSON, REFERENCE_WAV
+from ..common.reference import REFERENCE_JSON, REFERENCE_WAV
+from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, watch_for_stop
 
 SAMPLES = 2  # validation clips whose texts are spoken at each validation
 SAMPLE_SEED = 42
@@ -89,16 +89,12 @@ def cache_meta(model_dir: Path) -> dict:
 
 def encode_audio(codec, path: Path | str, seed: int):
     """A clip's codes [codebooks, frames] (int16, CPU), heard with the noise floor."""
-    import numpy as np
     import torch
-    import torchaudio
 
     from ...data import audio_io
     from .train import with_noise_floor
 
-    audio, rate = audio_io.read(path)
-    mono = torch.from_numpy(np.asarray(audio.mean(axis=0) if audio.ndim == 2 else audio, dtype=np.float32))
-    mono = torchaudio.functional.resample(mono.to(next(codec.parameters()).device), rate, codec.sample_rate)
+    mono = audio_io.mono_tensor(path, codec.sample_rate, next(codec.parameters()).device)
     return codec.encode(with_noise_floor(mono, seed)).to(torch.int16).cpu()
 
 
@@ -129,13 +125,13 @@ def encode(codec, store: dict, records: list[dict], keys: list[str], stop: threa
 def write_reference(run_dir: Path, config: dict) -> tuple[Path, str]:
     """The run's reference (its clips joined) in the run folder, once."""
     from ...data import references
-    from .lora import write_reference_clips
+    from ..common.reference import write_joined
 
     wav, info = run_dir / REFERENCE_WAV, run_dir / REFERENCE_JSON
     if not (wav.is_file() and info.is_file()):
         ref = config["reference"]
         clips = [references.Clip(i, Path(c["audio"]), c["text"], 0.0) for i, c in enumerate(ref["clips"])]
-        write_reference_clips(run_dir, clips, ref.get("source", ""))
+        write_joined(run_dir, clips, ref.get("source", ""))
     return wav, json.loads(info.read_text(encoding="utf-8"))["text"]
 
 
@@ -157,8 +153,8 @@ def main() -> None:
     from polyvox import vram
     from polyvox.data import audio_io, manifests
 
-    from ..gpt_sovits.features import clip_key, load_cache, save_cache
-    from . import codec as s2codec
+    from ..common import fish_codec as s2codec
+    from ..common.cache import clip_key, load_cache, save_cache
     from . import decode, generate, prompt
     from . import lora as s2lora
     from . import model as s2model

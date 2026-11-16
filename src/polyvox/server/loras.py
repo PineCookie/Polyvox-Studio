@@ -3,6 +3,7 @@ voices (import of webui weights, default reference clips)."""
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Annotated
 
@@ -12,6 +13,7 @@ from starlette.background import BackgroundTask
 
 from .. import engines, lora_library, sharing
 from ..data import manifests, references
+from ..engines.common import reference
 from ..engines.fish_drama3 import voices as d3voices
 from ..engines.fish_s2 import lora as s2lora
 from ..engines.gpt_sovits import voices
@@ -34,7 +36,7 @@ def router(s: Studio) -> APIRouter:
     settings = s.settings
 
     def reference_text(ckpt: lora_library.LoraCheckpoint) -> str | None:
-        ref = voices.read_reference(ckpt.path) if keeps_reference(ckpt.engine) else None
+        ref = reference.read_reference(ckpt.path) if keeps_reference(ckpt.engine) else None
         return ref[1] if ref else None
 
     @api.get("/api/loras")
@@ -115,7 +117,7 @@ def router(s: Studio) -> APIRouter:
     @api.get("/api/loras/reference")
     def voice_reference(id: str) -> FileResponse:
         """A voice's default reference clip (GPT-SoVITS, S2-Pro, Drama 3)."""
-        ref = voices.read_reference(voice_ckpt(id).path)
+        ref = reference.read_reference(voice_ckpt(id).path)
         if ref is None:
             raise HTTPException(404, "This voice has no reference clip.")
         return FileResponse(ref[0], media_type="audio/wav")
@@ -136,8 +138,8 @@ def router(s: Studio) -> APIRouter:
             if s2:
                 manifest = found(manifests.resolve, settings.data_dir, dataset)
                 root = manifests.legacy_root(settings.data_dir)
-                picked = checked(references.pick, manifest, s2lora.REFERENCE_CLIPS, root)
-                checked(s2lora.write_reference_clips, folder, picked, f"dataset {dataset}")
+                picked = checked(references.pick, manifest, reference.JOINED_CLIPS, root)
+                checked(reference.write_joined, folder, picked, f"dataset {dataset}")
             else:
                 clip, transcript = dataset_reference(dataset)
                 checked(voices.write_reference, folder, clip, transcript, f"dataset {dataset}")
@@ -146,7 +148,7 @@ def router(s: Studio) -> APIRouter:
             try:  # any format audio_io reads
                 if s2:
                     model = engines.classes()[ckpt.engine].name
-                    checked(s2lora.write_reference_file, folder, path, text, "upload", model)
+                    checked(partial(reference.write_file, model=model), folder, path, text, "upload")
                 else:
                     checked(voices.write_reference, folder, path, text, "upload")
             finally:
@@ -175,7 +177,7 @@ def router(s: Studio) -> APIRouter:
             if dataset:
                 manifest = found(manifests.resolve, settings.data_dir, dataset)
                 root = manifests.legacy_root(settings.data_dir)
-                clips = checked(references.pick, manifest, s2lora.REFERENCE_CLIPS, root)
+                clips = checked(references.pick, manifest, reference.JOINED_CLIPS, root)
                 d3voices.create(target, name.strip(), clips=clips, source=f"dataset {dataset}")
             elif audio is not None:
                 path = save_upload(audio)

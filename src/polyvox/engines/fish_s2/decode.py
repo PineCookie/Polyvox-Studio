@@ -26,8 +26,9 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
+from ..common.layers import rms_norm, rotate
 from .generate import DEFAULT_SAMPLING, RAS_TOP_P, RAS_WINDOW, Sampling
-from .model import DualAR, Shape, rms_norm, rotate
+from .model import DualAR, Shape
 
 CAPACITY = 4096  # positions: a 20 s reference, the text, the previous part and 1024 new frames
 WINDOWS = (512, 1024, 2048)

@@ -3,7 +3,7 @@ from its reference as well as the recordings do; what Drama 3 misses comes from 
 
 A voice folder in the LoRA folder (``fish_drama3/<name>/``):
     voice.json       {"engine": "fish_drama3", "base_model": ...}: marks the folder as a voice
-    reference.wav    the reference: a dataset's best few clips joined, or one clip
+    reference.wav    the reference: a dataset's best few clips joined, or one clip (common.reference)
     reference.json   {"text": its transcript, "source": where it came from}
 """
 
@@ -15,7 +15,7 @@ import shutil
 from pathlib import Path
 
 from ...lora_library import VOICE_FILE
-from ..fish_s2 import lora as s2lora
+from ..common import reference
 
 ENGINE = "fish_drama3"
 BASE_MODEL = "fishaudio/drama-3"
@@ -37,9 +37,9 @@ def create(
     shutil.rmtree(staging, ignore_errors=True)
     try:
         if clips:
-            s2lora.write_reference_clips(staging, clips, source)
+            reference.write_joined(staging, clips, source)
         elif audio is not None:
-            s2lora.write_reference_file(staging, audio, text, source, NAME)
+            reference.write_file(staging, audio, text, source, model=NAME)
         else:
             raise ValueError("Give a dataset to pick clips from, or a clip with its transcript.")
         info = {"engine": ENGINE, "base_model": BASE_MODEL}

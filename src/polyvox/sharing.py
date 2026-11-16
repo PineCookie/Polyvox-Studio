@@ -31,6 +31,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .engines import DEFAULT as DEFAULT_ENGINE
+from .engines.common.reference import REFERENCE_JSON, REFERENCE_WAV, read_reference
 from .engines.dots import lora as dots_lora
 from .engines.fish_s2 import lora as s2_lora
 from .engines.gpt_sovits import voices as gsv_voices
@@ -40,7 +41,7 @@ from .lora_library import engine_dir as engine_folder
 README_FILE = "README.md"
 GSV_GPT_FILE = "gpt_weights.ckpt"
 # A GPT-SoVITS voice package's files besides the README (lora_config.json is rewritten on import).
-GSV_PACKAGE_FILES = ("sovits_weights.pth", GSV_GPT_FILE, "reference.wav", "reference.json")
+GSV_PACKAGE_FILES = ("sovits_weights.pth", GSV_GPT_FILE, REFERENCE_WAV, REFERENCE_JSON)
 PACKAGE_FILES = (WEIGHTS_FILE, CONFIG_FILE, README_FILE, *GSV_PACKAGE_FILES)
 # The engines a package can be for, and the base model the export suggests.
 ENGINE_BASE_MODELS = {
@@ -265,7 +266,7 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
     if ckpt.engine == gsv_voices.ENGINE:  # whole models; base_model and half don't apply
         files = gsv_voices.package_files(ckpt.path, name)
         files[README_FILE] = _gsv_readme(name, json.loads(files[CONFIG_FILE])["version"], GSV_GPT_FILE in files,
-                                         gsv_voices.REFERENCE_WAV in files, checkpoint_step(ckpt)).encode()  # fmt: skip
+                                         REFERENCE_WAV in files, checkpoint_step(ckpt)).encode()  # fmt: skip
         return _write_zip(name, files)
     if not HUB_ID.fullmatch(base_model):
         example = ENGINE_BASE_MODELS.get(ckpt.engine, "openbmb/VoxCPM2")
@@ -295,12 +296,10 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
         CONFIG_FILE: (json.dumps(info, indent=2) + "\n").encode(),
     }
     if ckpt.engine == s2_lora.ENGINE:
-        reference = gsv_voices.read_reference(ckpt.path)
+        reference = read_reference(ckpt.path)
         if reference:  # the transcript only: where it came from stays here
-            files[s2_lora.REFERENCE_WAV] = reference[0].read_bytes()
-            files[s2_lora.REFERENCE_JSON] = (
-                json.dumps({"text": reference[1]}, ensure_ascii=False, indent=1) + "\n"
-            ).encode()
+            files[REFERENCE_WAV] = reference[0].read_bytes()
+            files[REFERENCE_JSON] = (json.dumps({"text": reference[1]}, ensure_ascii=False, indent=1) + "\n").encode()
         readme = _s2_readme(name, base_model, config, step, dtype, reference is not None)
     files[README_FILE] = readme.encode()
     return _write_zip(name, files)

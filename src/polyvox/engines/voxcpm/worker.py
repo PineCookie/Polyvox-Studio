@@ -37,12 +37,10 @@ import runpy
 import signal
 import sys
 import threading
-import time
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "vendor" / "train_voxcpm_finetune.py"
 SAMPLE_TAG = re.compile(r"val_sample_(\d+)/(generated|reference)_audio")
-POLL_S = 1.0
 MODEL_INPUT_RATE = 16_000  # VoxCPM2's audio encoder: what training and cloning hear
 SAMPLE_GUIDANCE = 1.6  # validation samples, as the Synthesize tab's default (not the script's 2.0)
 
@@ -461,34 +459,11 @@ def val_manifest_from_config(config_path: Path) -> Path | None:
     return Path(value) if value and Path(value).is_absolute() else None
 
 
-def process_alive(pid: int) -> bool:
-    if sys.platform == "win32":
-        import _winapi
-
-        try:
-            handle = _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, pid)
-        except OSError:
-            return False
-        try:
-            return _winapi.WaitForSingleObject(handle, 0) == _winapi.WAIT_TIMEOUT
-        finally:
-            _winapi.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)  # on Windows this would terminate the process
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        pass
-    return True
-
-
 def watch_for_stop(stop_file: Path, parent_pid: int | None) -> None:
-    while not stop_file.exists():
-        if parent_pid is not None and not process_alive(parent_pid):
-            print("[studio] Server exited.", file=sys.stderr, flush=True)
-            break
-        time.sleep(POLL_S)
-    print("[studio] Stop requested; saving a checkpoint.", file=sys.stderr, flush=True)
+    """The vendored script saves a checkpoint on SIGINT: interrupt it when the stop comes."""
+    from ..common.worker import wait_for_stop
+
+    wait_for_stop(stop_file, parent_pid)
     _thread.interrupt_main(signal.SIGINT)
 
 

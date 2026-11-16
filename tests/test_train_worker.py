@@ -265,10 +265,12 @@ def test_sample_paths_for_tensorboard_tags(tmp_path):
 
 
 def test_process_alive():
-    assert train_worker.process_alive(os.getpid())
+    from polyvox.engines.common.worker import process_alive
+
+    assert process_alive(os.getpid())
     proc = subprocess.Popen([sys.executable, "-c", "pass"])
     proc.wait()
-    assert not train_worker.process_alive(proc.pid)
+    assert not process_alive(proc.pid)
 
 
 def test_stop_file_runs_the_sigint_handler(tmp_path):
@@ -277,8 +279,9 @@ def test_stop_file_runs_the_sigint_handler(tmp_path):
     script.write_text(
         "import signal, sys, threading, time\n"
         "from pathlib import Path\n"
+        "from polyvox.engines.common import worker as common_worker\n"
         "from polyvox.engines.voxcpm import worker as train_worker\n"
-        "train_worker.POLL_S = 0.02\n"
+        "common_worker.POLL_S = 0.02\n"
         "signal.signal(signal.SIGINT, lambda *a: (print('saved', flush=True), sys.exit(0)))\n"
         f"threading.Thread(target=train_worker.watch_for_stop, args=(Path(r'{tmp_path / 'stop'}'), None), daemon=True).start()\n"
         "print('ready', flush=True)\n"

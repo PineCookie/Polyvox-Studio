@@ -163,6 +163,16 @@ def resample(audio: np.ndarray, rate: int, target: int) -> np.ndarray:
     return F.resample(torch.from_numpy(np.ascontiguousarray(audio)), rate, target).numpy()
 
 
+def mono_tensor(path, rate: int, device="cpu"):
+    """The clip as a mono float32 tensor at ``rate`` (resampled on ``device``)."""
+    import torch
+    import torchaudio.functional as F
+
+    audio, source_rate = read(path)
+    mono = torch.from_numpy(np.asarray(audio.mean(axis=0) if audio.ndim == 2 else audio, dtype=np.float32))
+    return F.resample(mono.to(device), source_rate, rate)
+
+
 def load(uri, frame_offset: int = 0, num_frames: int = -1, normalize: bool = True, channels_first: bool = True, **_):
     """``torchaudio.load`` with soundfile / PyAV: (float32 tensor, sample rate)."""
     import torch

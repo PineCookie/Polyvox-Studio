@@ -22,8 +22,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
 from ... import vram
 from ...config import Settings
 from ..base import (
@@ -190,7 +188,7 @@ class Runtime:
     def __init__(self, model_dir: Path, device: str, graphs: bool = True):
         import torch
 
-        from ..fish_s2 import codec
+        from ..common import fish_codec as codec
         from . import model
 
         t0 = time.time()
@@ -220,14 +218,9 @@ class Runtime:
 
     def mono(self, wav: Path):
         """The clip as mono at the codec's rate, on the GPU."""
-        import torch
-        import torchaudio
-
         from ...data import audio_io
 
-        audio, rate = audio_io.read(wav)
-        mono = torch.from_numpy(np.asarray(audio.mean(axis=0) if audio.ndim == 2 else audio, dtype=np.float32))
-        return torchaudio.functional.resample(mono.to(self.device), rate, self.codec.sample_rate)
+        return audio_io.mono_tensor(wav, self.codec.sample_rate, self.device)
 
 
 class FishDrama3Engine(Engine):
@@ -316,7 +309,7 @@ class FishDrama3Engine(Engine):
         transcript = (req.prompt_text or "").strip()
         if req.lora_id:  # a saved voice: its reference, unless the request gives a clip
             from ... import lora_library
-            from ..gpt_sovits.voices import read_reference
+            from ..common.reference import read_reference
 
             voice = lora_library.resolve(self.settings.lora_dir, req.lora_id)
             if voice.engine != ENGINE:

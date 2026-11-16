@@ -23,8 +23,9 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 
+from ..common.layers import rope_table, rotate
 from . import prompt
-from .model import DualAR, rope_table, rotate
+from .model import DualAR
 
 NOISE_FLOOR_DB = -72.0  # dBFS of white noise added to training clips (and to trained voices' references)
 REFERENCE_SHARE = 0.5  # of training sequences that clone from other clips of the voice

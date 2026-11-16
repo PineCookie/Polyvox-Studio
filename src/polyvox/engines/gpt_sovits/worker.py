@@ -50,13 +50,14 @@ import math
 import os
 import random
 import shutil
-import sys
 import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
+
+from ..common.worker import log
 
 if TYPE_CHECKING:
     import torch
@@ -90,10 +91,6 @@ GPT_MAX_SEC, SEMANTIC_HZ = 54, 25
 PHONES_PER_SEC = (3, 25)
 SEMANTIC_PAD = 1024
 GPT_BUCKET_S = 2  # upstream's buckets: 2 s of semantic tokens wide
-
-
-def log(message: str) -> None:
-    print(f"[studio] {message}", file=sys.stderr, flush=True)
 
 
 def sovits_bucket(frames: int) -> int:
@@ -268,7 +265,7 @@ class Run:
         import torch
 
         from ... import vram
-        from ..dots.worker import watch_for_stop
+        from ..common.worker import watch_for_stop
         from . import voices
         from .synth import Pipeline
 

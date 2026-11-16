@@ -5,7 +5,8 @@ import dataclasses
 import pytest
 import torch
 
-from polyvox.engines.fish_s2 import codec, decode, generate, model, prompt, train
+from polyvox.engines.common import fish_codec as codec
+from polyvox.engines.fish_s2 import decode, generate, model, prompt, train
 from polyvox.engines.fish_s2 import lora as s2lora
 from polyvox.engines.fish_s2.engine import FishS2Engine, text_parts
 
