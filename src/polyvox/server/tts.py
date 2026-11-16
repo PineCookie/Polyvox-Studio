@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import os
@@ -15,8 +16,9 @@ from pydantic import ValidationError
 
 from .. import engines, vram
 from ..data import audio_io, manifests, references
+from ..prep.aligner import AlignService
 from ..prep.asr import load_audio
-from .context import Studio, checked, found, save_upload
+from .context import Studio, checked, found, same_gpu, save_upload
 from .schemas import ReferenceClipsIn
 
 
@@ -161,6 +163,58 @@ def router(s: Studio) -> APIRouter:
         buf = io.BytesIO()
         sf.write(buf, result.audio, result.sample_rate, format="WAV")
         headers = {"X-Seed": str(result.seed)} if result.seed is not None else {}
+        return Response(buf.getvalue(), media_type="audio/wav", headers=headers)
+
+    cpu_align: list[AlignService] = []  # for edits whose engine holds the aligner's GPU
+
+    @api.post("/api/tts/edit", responses={200: {"content": {"audio/wav": {}}}})
+    def edit(
+        audio: Annotated[UploadFile, File()],
+        text: Annotated[str, Form()],  # what the clip says
+        new_text: Annotated[str, Form()],  # what it should say
+        engine: Annotated[str, Form()] = "fish_drama3",
+        seed: Annotated[int | None, Form()] = None,
+    ) -> Response:
+        """The clip with the changed words spoken again (the rest kept as it is); headers
+        X-Edit-Start / X-Edit-End: where the new audio is, in seconds."""
+        tts_engine = s.registry.get(engine)
+        if tts_engine is None:
+            raise HTTPException(404, f"Unknown engine '{engine}'.")
+        if not tts_engine.capabilities.speech_edit:
+            raise HTTPException(422, f"{tts_engine.name} can't edit speech.")
+        if reason := tts_engine.unavailable():
+            raise HTTPException(503, f"{tts_engine.name} can't run here: {reason}")
+        if s.profile.exclusive and (running := s.jobs.running("import") or s.jobs.running("check")):
+            raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
+        s.make_room_for_tts(tts_engine)
+
+        def align(path: Path, said: str) -> list[tuple[float, float]]:
+            # The aligner beside the engine on its GPU would squeeze out the engine: then on the CPU.
+            if same_gpu(s.align.device, tts_engine.device) or not s.gpu_free():
+                if not cpu_align:
+                    cpu_align.append(AlignService(dataclasses.replace(s.settings, asr_device="cpu")))
+                (aligned,) = cpu_align[0].align([load_audio(path)], [said])
+            else:
+                (aligned,) = s.aligned([load_audio(path)], [said], "qwen3")
+            return [(w.start, w.end) for w in aligned.words]
+
+        path = audio_io.to_wav(save_upload(audio))
+        try:
+            result = tts_engine.edit(engines.EditRequest(path, text, new_text, align, seed))
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        except Exception as e:
+            if not vram.is_oom(e):
+                raise
+            vram.free_cache()
+            raise HTTPException(507, "Out of GPU memory: free the GPU (other programs, Unload models).") from e
+        finally:
+            path.unlink(missing_ok=True)
+        buf = io.BytesIO()
+        sf.write(buf, result.audio, result.sample_rate, format="WAV")
+        headers = {"X-Seed": str(result.seed)} if result.seed is not None else {}
+        if result.span:
+            headers |= {"X-Edit-Start": f"{result.span[0]:.3f}", "X-Edit-End": f"{result.span[1]:.3f}"}
         return Response(buf.getvalue(), media_type="audio/wav", headers=headers)
 
     @api.get("/api/tts/progress")

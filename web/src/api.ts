@@ -79,6 +79,7 @@ export interface Engine {
     reference_inputs: ReferenceInput[] // the audio inputs its cloning takes
     tag_groups: TagGroup[] // inline tags its model knows (with capabilities.tags)
     free_tags: boolean // any [description] works too
+    speech_edit: boolean // edits recorded speech: changed words spoken again, the rest kept
   }
   params: EngineParam[] // synthesis settings
   model_setting: string // its base model in the Models list
@@ -324,6 +325,28 @@ export async function synthesize(p: SynthesisParams): Promise<SynthesisOutput> {
   const resp = await request('/api/tts', { method: 'POST', body: form })
   const seed = resp.headers.get('X-Seed')
   return { audio: await resp.blob(), seed: seed === null ? null : Number(seed) }
+}
+
+export interface EditOutput extends SynthesisOutput {
+  span: [number, number] | null // where the new audio is, in seconds
+}
+
+/** `audio` (which says `text`) made to say `newText`: only the changed words are spoken again. */
+export async function editSpeech(engine: string, audio: Blob, text: string, newText: string): Promise<EditOutput> {
+  const form = new FormData()
+  form.set('engine', engine)
+  form.set('audio', audio, 'take.wav')
+  form.set('text', text)
+  form.set('new_text', newText)
+  const resp = await request('/api/tts/edit', { method: 'POST', body: form })
+  const seed = resp.headers.get('X-Seed')
+  const start = resp.headers.get('X-Edit-Start')
+  const end = resp.headers.get('X-Edit-End')
+  return {
+    audio: await resp.blob(),
+    seed: seed === null ? null : Number(seed),
+    span: start !== null && end !== null ? [Number(start), Number(end)] : null,
+  }
 }
 
 // Training

@@ -240,6 +240,13 @@ export const zh: Messages = {
   download: '下载',
   remove: '移除',
   removeClip: '移除此条',
+  editWords: '修改文字',
+  editHint: (engine) =>
+    `可以改词、加词或删词。${engine} 只重新说改动的词（加词或删词时连同后面一个词），这条音频的其余部分保持不变。`,
+  applyEdit: '应用',
+  editingWords: '正在修改…',
+  editedVoice: (voice) => `${voice} · 已修改`,
+  editedSpan: (start, end) => `新音频 ${start}–${end} 秒`,
 
   // 音色面板
   voice: '音色',

@@ -38,7 +38,14 @@ model; a voice with several checkpoints lets you pick one. Then:
 - **Advanced**: guidance, steps, seed and the model's own settings; for Drama 3
   a language hint and a length in seconds (it keeps to it closely; for a text
   short enough for one take).
-- **History** keeps this session's clips to compare and download.
+- **History** keeps this session's clips to compare and download. **Edit
+  words** changes what a clip says without generating it again: change, add or
+  remove words in its text and **Apply**. With Fish Audio Drama 3 downloaded,
+  this works on clips of any model: Drama 3 speaks only the changed words again
+  (the whole words around a change, plus the word after an insertion or a
+  deletion), in the voice of the audio around them, and the rest of the clip is
+  kept as it was. The edited clip is added to History, showing where its new
+  audio is.
 
 GPT-SoVITS always speaks from a reference clip, and S2-Pro voices trained here
 keep the clips they were trained with: each such voice has a default reference,
@@ -56,6 +63,15 @@ memory, and the most used ones are also kept on the GPU (the rest are read over
 PCIe as needed). A long text is spoken in parts of whole sentences (a line
 break ends one too), each part with the same reference, style and hints. A take
 that runs far longer than its text is drawn again once.
+
+Editing (History's **Edit words**) follows the "speech editing by infilling"
+format of Drama 3's technical report: the audio before and after the change
+and the clip's whole new text go into the prompt, and the model speaks the gap.
+The words are found on the clip with the forced aligner (on the CPU when
+Drama 3 holds the aligner's GPU). A new part that comes out much longer than
+the words it replaces has run on into the words after it: it is made again
+with one more word, and once more; when all three run on, the edit is refused
+with a hint to change a few more words. An edit takes about 2 s.
 
 ## Preparing datasets
 

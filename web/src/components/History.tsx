@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useT } from '../i18n'
 import { AudioPlayer } from './AudioPlayer'
 
@@ -9,12 +10,17 @@ export interface Clip {
   seed: number | null
   elapsedMs: number
   createdAt: Date
+  edited?: [number, number] // an edit's new audio, in seconds
 }
 
 interface Props {
   clips: Clip[]
   onUseSeed: (seed: number) => void
   onRemove: (id: number) => void
+  // The engine that edits speech (null: none can here), and the edit itself: resolves true when done.
+  editor: string | null
+  busy: boolean
+  onEdit: (clip: Clip, newText: string) => Promise<boolean>
 }
 
 function fileName(clip: Clip): string {
@@ -25,7 +31,7 @@ function fileName(clip: Clip): string {
   return `${slug || 'voxcpm'}_${clip.seed ?? clip.id}.wav`
 }
 
-export function History({ clips, onUseSeed, onRemove }: Props) {
+export function History({ clips, ...props }: Props) {
   const t = useT()
   if (clips.length === 0) {
     return (
@@ -46,25 +52,46 @@ export function History({ clips, onUseSeed, onRemove }: Props) {
       </header>
       <ol className="history">
         {clips.map((clip) => (
-          <HistoryClip key={clip.id} clip={clip} onUseSeed={onUseSeed} onRemove={onRemove} />
+          <HistoryClip key={clip.id} clip={clip} {...props} />
         ))}
       </ol>
     </section>
   )
 }
 
-function HistoryClip({ clip, onUseSeed, onRemove }: { clip: Clip } & Omit<Props, 'clips'>) {
+function HistoryClip({ clip, onUseSeed, onRemove, editor, busy, onEdit }: { clip: Clip } & Omit<Props, 'clips'>) {
   const t = useT()
+  const [draft, setDraft] = useState<string | null>(null) // the new text while editing
+  const [editing, setEditing] = useState(false)
+  const changed = draft !== null && draft.trim() !== '' && draft.trim() !== clip.text
+
+  async function apply() {
+    setEditing(true)
+    try {
+      if (await onEdit(clip, draft!.trim())) setDraft(null)
+    } finally {
+      setEditing(false)
+    }
+  }
+
   return (
     <li className="clip">
       <p className="clip-text">{clip.text}</p>
       <AudioPlayer url={clip.url} />
       <div className="clip-meta">
         <span className="tag">{clip.voice}</span>
-        {clip.seed !== null && <span className="muted">{t.seedValue(clip.seed)}</span>}
+        {clip.edited && (
+          <span className="muted">{t.editedSpan(clip.edited[0].toFixed(2), clip.edited[1].toFixed(2))}</span>
+        )}
+        {!clip.edited && clip.seed !== null && <span className="muted">{t.seedValue(clip.seed)}</span>}
         <span className="muted">{t.seconds((clip.elapsedMs / 1000).toFixed(1))}</span>
         <span className="spacer" />
-        {clip.seed !== null && (
+        {editor && draft === null && (
+          <button type="button" className="ghost small" onClick={() => setDraft(clip.text)}>
+            {t.editWords}
+          </button>
+        )}
+        {!clip.edited && clip.seed !== null && (
           <button type="button" className="ghost small" onClick={() => onUseSeed(clip.seed!)}>
             {t.useSeed}
           </button>
@@ -76,6 +103,26 @@ function HistoryClip({ clip, onUseSeed, onRemove }: { clip: Clip } & Omit<Props,
           {t.remove}
         </button>
       </div>
+      {draft !== null && editor && (
+        <div className="take-edit">
+          <textarea
+            value={draft}
+            rows={2}
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label={t.editWords}
+            disabled={editing}
+          />
+          <span className="muted hint">{t.editHint(editor)}</span>
+          <div className="actions">
+            <button type="button" className="small" disabled={!changed || busy} onClick={apply}>
+              {editing ? t.editingWords : t.applyEdit}
+            </button>
+            <button type="button" className="ghost small" disabled={editing} onClick={() => setDraft(null)}>
+              {t.cancel}
+            </button>
+          </div>
+        </div>
+      )}
     </li>
   )
 }

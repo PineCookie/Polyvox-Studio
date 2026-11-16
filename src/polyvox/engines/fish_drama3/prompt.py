@@ -9,12 +9,18 @@ tags "[sighs]", scoped tags "<whisper>...</whisper>", a style prefix "[with brig
 excitement] line", "[language: en]" and "[audio tokens: N]" (a length in frames) at the end.
 (The report's line-separated turns, lines joined by <|audio_separator|>, don't work with the
 released weights: they never emit the separator, and such takes tend not to end.)
+
+Speech editing (infill) follows the report's Fig. 14, without its optional duration hint: with it,
+Chinese edits tended to run on past the gap.
 """
 
 from __future__ import annotations
 
 TTS = "convert the provided text to speech"
 TTS_REF = "convert the provided text to speech reference to the following:"
+INFILL = (
+    "fill in the missing part of the speech; the suffix follows <|fim_suffix|> and the prefix follows <|fim_prefix|>"
+)
 SPEAKER = "<|speaker:0|>"
 # Written by the builder only: text can't hold them.
 STRUCTURAL = ("<|im_start|>", "<|im_end|>", "<|voice|>", "<|text|>", "<|interleave|>", "<|semantic:",
@@ -58,6 +64,17 @@ def parts(tokenizer, text: str, references, semantic_begin: int, hints: str = ""
     head += ["<|im_end|>\n", "<|im_start|>user\n"]
     tail = [user_text(text, hints), "<|im_end|>\n", "<|im_start|>assistant\n<|voice|>"]
     return torch.cat(_rows(tokenizer, head, semantic_begin)), torch.cat(_rows(tokenizer, tail, semantic_begin))
+
+
+def infill(tokenizer, text: str, before, after, semantic_begin: int):
+    """[rows, 11] for speech editing (the report's Fig. 14): ``text`` is the clip's whole new
+    transcript, ``before`` / ``after`` [10, T] the audio kept on each side; the model speaks what
+    goes between them. The suffix comes first, so the prefix sits next to the new audio."""
+    import torch
+
+    segments = ["<|im_start|>system\n", INFILL, "<|im_end|>\n", "<|im_start|>user\n", speaker_tagged(check(text)) + "\n",
+                "<|fim_suffix|>", after, "<|fim_prefix|>", before, "<|im_end|>\n", "<|im_start|>assistant\n<|voice|>"]  # fmt: skip
+    return torch.cat(_rows(tokenizer, segments, semantic_begin))
 
 
 def _rows(tokenizer, segments, semantic_begin: int):

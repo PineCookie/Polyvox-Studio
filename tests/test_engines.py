@@ -121,6 +121,43 @@ def test_tts_option_errors(client):
     assert client.post("/api/tts", data={"text": "hi", "options": '{"cfg_value": 9}'}).status_code == 422
 
 
+class EditingEngine(OtherEngine):
+    """Edits speech: records the words the server aligned for it."""
+
+    id = "editor"
+    name = "Editor"
+    capabilities = Capabilities(24_000, 24_000, ("zh",), True, True, False, False, False, speech_edit=True)
+
+    def edit(self, req):
+        self.requests.append((req.text, req.new_text, req.align(req.audio, req.text)))
+        return SynthesisResult(24_000, np.zeros(2400, dtype=np.float32), 5, span=(0.25, 0.5))
+
+
+def test_speech_edits_reach_an_engine_that_can_edit(settings, service, manager, align_service):
+    import io
+
+    import soundfile as sf
+
+    editor = EditingEngine()
+    registry = {"voxcpm": VoxCPMEngine(settings, service), "editor": editor}
+    client = TestClient(create_app(settings, service, manager, align=align_service, engines_=registry))
+    buf = io.BytesIO()
+    sf.write(buf, 0.3 * np.sin(np.arange(16_000) / 5).astype(np.float32), 16_000, format="WAV")
+    files = {"audio": ("take.wav", buf.getvalue(), "audio/wav")}
+    data = {"text": "你好世界", "new_text": "你好朋友", "engine": "editor"}
+
+    resp = client.post("/api/tts/edit", data=data, files=files)
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.headers["X-Edit-Start"], resp.headers["X-Edit-End"], resp.headers["X-Seed"]) == ("0.250", "0.500", "5")
+    text, new_text, words = editor.requests[0]
+    assert (text, new_text, len(words)) == ("你好世界", "你好朋友", 4)  # one span per aligner word
+    assert all(start < end for start, end in words)
+    assert client.get("/api/engines").json()[1]["capabilities"]["speech_edit"] is True
+    refused = client.post("/api/tts/edit", data={**data, "engine": "voxcpm"}, files=files)
+    assert refused.status_code == 422 and "can't edit" in refused.json()["detail"]
+
+
 def test_one_tts_engine_per_gpu(client, service, other):
     service.device = "cuda:0"
     client.post("/api/tts", data={"text": "hi"})

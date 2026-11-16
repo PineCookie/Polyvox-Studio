@@ -216,6 +216,13 @@ export const en = {
   download: 'Download',
   remove: 'Remove',
   removeClip: 'Remove clip',
+  editWords: 'Edit words',
+  editHint: (engine: string) =>
+    `Change, add or remove words. ${engine} speaks only the changed words again (with the word after an insertion or deletion); the rest of the take stays as it is.`,
+  applyEdit: 'Apply',
+  editingWords: 'Editing…',
+  editedVoice: (voice: string) => `${voice} · edited`,
+  editedSpan: (start: string, end: string) => `new ${start}–${end} s`,
 
   // Voice panel
   voice: 'Voice',

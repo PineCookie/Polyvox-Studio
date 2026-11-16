@@ -26,7 +26,16 @@ import numpy as np
 
 from ... import vram
 from ...config import Settings
-from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
+from ..base import (
+    Capabilities,
+    EditRequest,
+    Engine,
+    Param,
+    ReferenceInput,
+    SynthesisRequest,
+    SynthesisResult,
+    TagGroup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +55,13 @@ CLAUSE_MARKS = frozenset(",:，：、")
 # Never cut inside: special tokens, a tag pair and what it holds, [bracketed] tags.
 PROTECTED = re.compile(r"<\|[^|>]*\|>|<([A-Za-z][\w-]*)\b[^>]*>.*?</\1>|\[[^\[\]]*\]", re.S)
 KEPT_CLIPS = 4  # reference clips whose codes are kept
+EDIT_SAMPLING = (0.7, 0.7, 30)  # temperature, top-p, top-k: the report's evaluation settings
+EDIT_CAP_MIN = 48  # frames an edit's new part may run to at least (~2.2 s)
+# A new part this many times longer than expected has run on: in test edits right ones came out
+# at 0.6-1.4x, run-ons at 1.8x and more. Whether a span runs on depends on the clip (its pauses,
+# the aligned word edges), not on which model made it.
+EDIT_RUNON = 1.6
+EDIT_TRIES = ((0, 0), (1, 0), (1, 1))  # (more words after the span, seed offset) per try
 FRAMES_PER_SECOND = 44_100 / 2048  # the codec's
 # The report's examples (Table 10) and common sounds; any words in brackets work.
 TAG_GROUPS = (
@@ -185,20 +201,23 @@ class Runtime:
         encoded again, and so keeps the model's kept states for it (model.prefill)."""
         import hashlib
 
+        key = hashlib.sha1(Path(wav).read_bytes()).hexdigest()
+        if key in self._codes:
+            return self._codes[key]
+        codes = self.codec.encode(self.mono(wav)).cpu()
+        self._codes = {**dict(list(self._codes.items())[-(KEPT_CLIPS - 1) :]), key: codes}
+        return codes
+
+    def mono(self, wav: Path):
+        """The clip as mono at the codec's rate, on the GPU."""
         import torch
         import torchaudio
 
         from ...data import audio_io
 
-        key = hashlib.sha1(Path(wav).read_bytes()).hexdigest()
-        if key in self._codes:
-            return self._codes[key]
         audio, rate = audio_io.read(wav)
         mono = torch.from_numpy(np.asarray(audio.mean(axis=0) if audio.ndim == 2 else audio, dtype=np.float32))
-        mono = torchaudio.functional.resample(mono.to(self.device), rate, self.codec.sample_rate)
-        codes = self.codec.encode(mono).cpu()
-        self._codes = {**dict(list(self._codes.items())[-(KEPT_CLIPS - 1) :]), key: codes}
-        return codes
+        return torchaudio.functional.resample(mono.to(self.device), rate, self.codec.sample_rate)
 
 
 class FishDrama3Engine(Engine):
@@ -219,6 +238,7 @@ class FishDrama3Engine(Engine):
         training=False,
         # A clip with its transcript (several are joined into one).
         reference_inputs=(ReferenceInput("reference", "prompt", "required"),),
+        speech_edit=True,  # edit.py: changed words spoken again by infilling
     )
     params = (
         Param("temperature", "float", 1.0, 0.1, 1.5, 0.05),
@@ -335,6 +355,58 @@ class FishDrama3Engine(Engine):
                 if sum(chars) >= LEARN_MIN_CHARS and not timed:
                     self._frames_per_char = 0.7 * self._frames_per_char + 0.3 * codes.shape[1] / sum(chars)
                 return SynthesisResult(rt.codec.sample_rate, audio, seed)
+            finally:
+                self._progress.phase = "idle"
+
+    def edit(self, req: EditRequest) -> SynthesisResult:
+        import torch
+
+        from . import edit, model, prompt
+
+        text, new_text = edit.untagged(req.text), req.new_text.strip()
+        if not text or not new_text:
+            raise ValueError("Give the clip's transcript and the new text.")
+        prompt.check(new_text)
+        if reason := self.unavailable():
+            raise ValueError(f"Fish Audio Drama 3 can't run: {reason}")
+        words = req.align(req.audio, text)  # before taking the model: the aligner runs elsewhere
+        with self._lock:
+            self._progress = Progress(phase="loading" if self._runtime is None else "preparing", started=time.time())
+            try:
+                rt = self._ensure_runtime()
+                m = rt.model
+                codes = rt.encode(req.audio)
+                if edit.plan(text, edit.untagged(new_text), words, codes.shape[1]) is None:
+                    raise ValueError("The new text has the same words as the clip.")
+                seed = req.seed if req.seed is not None else random.randrange(2**31)
+                decoder = getattr(m, "decoder", None)
+                self._progress.phase = "generating" if decoder is None or decoder.warm else "compiling"
+                # A fill that runs on (says the words after the gap as well) comes out much longer
+                # than expected: then again with one more word in the span, which mostly fixes it.
+                for attempt, (wider, draw) in enumerate(EDIT_TRIES):
+                    span = edit.plan(text, edit.untagged(new_text), words, codes.shape[1], wider)
+                    assert span is not None
+                    before, after = codes[:, : span.start], codes[:, span.end :]
+                    rows = prompt.infill(m.tokenizer, new_text, before, after, m.semantic_begin)
+                    old, new = (len(re.sub(r"\W", "", s)) for s in (span.old, span.new))
+                    frames = span.end - span.start
+                    want = round(frames * new / old) if old and frames else round(new * self._frames_per_char)
+                    cap = max(EDIT_CAP_MIN, round(want * CAP_FACTOR))
+                    self._progress.expected, self._progress.attempt, self._progress.step = want, attempt, 0
+                    torch.manual_seed(seed + draw)
+                    middle = m.generate(rows, model.Sampling(*EDIT_SAMPLING), cap, self._count)
+                    if middle.shape[1] <= EDIT_RUNON * max(1, want) and middle.shape[1] < cap:
+                        break
+                    logger.warning("Drama 3: an edit ran on (%d frames for ~%d)", middle.shape[1], want)
+                else:
+                    raise ValueError(
+                        "Fish Audio Drama 3 kept speaking past the edit: try changing a few more words around it."
+                    )
+                decoded = rt.codec.decode(torch.cat([before, middle, after], 1).to(rt.device)).float().cpu().numpy()
+                original = rt.mono(req.audio).float().cpu().numpy()
+                audio = edit.splice(original, decoded, span, middle.shape[1])
+                seconds = (span.start * edit.FRAME / edit.RATE, (span.start + middle.shape[1]) * edit.FRAME / edit.RATE)
+                return SynthesisResult(rt.codec.sample_rate, audio, seed, span=seconds)
             finally:
                 self._progress.phase = "idle"
 

@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { DEFAULT_ENGINE, getStatus, importLora, listEngines, listLoras, synthesize, unloadModel } from './api'
+import {
+  DEFAULT_ENGINE,
+  editSpeech,
+  getStatus,
+  importLora,
+  listEngines,
+  listLoras,
+  synthesize,
+  unloadModel,
+} from './api'
 import type { Engine, Lora, Status, SynthesisParams } from './api'
 import { BASE_VOICE, engineName } from './engines'
 import type { VoiceChoice } from './engines'
@@ -85,6 +94,38 @@ export default function App() {
       setClips((prev) => [clip, ...prev])
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      setBusy(false)
+      refreshStatus()
+    }
+  }
+
+  // The engine that edits recorded speech (any take: it keeps the voice from the audio itself).
+  const editor = engines.find((e) => e.capabilities.speech_edit && !e.unavailable) ?? null
+
+  async function editClip(clip: Clip, newText: string): Promise<boolean> {
+    if (!editor) return false
+    setBusy(true)
+    setError(null)
+    const started = performance.now()
+    try {
+      const audio = await (await fetch(clip.url)).blob()
+      const out = await editSpeech(editor.id, audio, clip.text, newText)
+      const edited: Clip = {
+        id: nextClipId.current++,
+        url: URL.createObjectURL(out.audio),
+        text: newText,
+        voice: t.editedVoice(clip.voice),
+        seed: out.seed,
+        elapsedMs: performance.now() - started,
+        createdAt: new Date(),
+        edited: out.span ?? undefined,
+      }
+      setClips((prev) => [edited, ...prev])
+      return true
+    } catch (e) {
+      setError((e as Error).message)
+      return false
     } finally {
       setBusy(false)
       refreshStatus()
@@ -199,7 +240,14 @@ export default function App() {
             isBase={!voice.lora}
             voiceVersion={loras.find((l) => l.id === voice.lora)?.version ?? null}
           />
-          <History clips={clips} onUseSeed={setSeed} onRemove={removeClip} />
+          <History
+            clips={clips}
+            onUseSeed={setSeed}
+            onRemove={removeClip}
+            editor={editor ? editor.name : null}
+            busy={busy}
+            onEdit={editClip}
+          />
         </div>
         <aside className="side-col">
           <VoicePanel

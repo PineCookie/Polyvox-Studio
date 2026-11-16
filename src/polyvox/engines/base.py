@@ -4,6 +4,7 @@ UI work the same for each model family."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -94,6 +95,8 @@ class Capabilities:
     # Inline tags (``tags``): the ones its model knows, and whether any [description] works.
     tag_groups: tuple[TagGroup, ...] = ()
     free_tags: bool = False
+    # Edits recorded speech (Engine.edit): changed words spoken again, the rest kept.
+    speech_edit: bool = False
 
     def reference_input(self, slot: str) -> ReferenceInput | None:
         return next((i for i in self.reference_inputs if i.slot == slot), None)
@@ -126,10 +129,24 @@ class SynthesisRequest:
 
 
 @dataclass
+class EditRequest:
+    """Speech in ``audio`` (transcript ``text``) made to say ``new_text``. ``align(audio, text)``
+    gives (start, end) in seconds of each of the text's aligner words (aligner.split_words)."""
+
+    audio: Path
+    text: str
+    new_text: str
+    align: Callable[[Path, str], list[tuple[float, float]]]
+    seed: int | None = None
+
+
+@dataclass
 class SynthesisResult:
     sample_rate: int
     audio: np.ndarray
     seed: int | None
+    # An edit's new audio: (start, end) in seconds of the result.
+    span: tuple[float, float] | None = None
 
 
 class Engine(ABC):
@@ -160,6 +177,10 @@ class Engine(ABC):
 
     @abstractmethod
     def synthesize(self, req: SynthesisRequest) -> SynthesisResult: ...
+
+    def edit(self, req: EditRequest) -> SynthesisResult:
+        """``req.audio`` saying ``req.new_text`` (capabilities.speech_edit)."""
+        raise ValueError(f"{self.name} can't edit speech.")
 
     @abstractmethod
     def progress(self) -> dict:
