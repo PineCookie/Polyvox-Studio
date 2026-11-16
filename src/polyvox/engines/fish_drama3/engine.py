@@ -236,6 +236,8 @@ class FishDrama3Engine(Engine):
         free_tags=True,
         lora_hot_swap=False,
         training=False,
+        voice_reference=True,  # its voices: saved references (voices.py)
+        reference_voices=True,
         # A clip with its transcript (several are joined into one).
         reference_inputs=(ReferenceInput("reference", "prompt", "required"),),
         speech_edit=True,  # edit.py: changed words spoken again by infilling
@@ -298,12 +300,21 @@ class FishDrama3Engine(Engine):
         style = re.sub(r"\s+", " ", req.style or "").strip().strip("[]")
         if style:  # a style prefix on every part
             parts = [f"[{style}] {part}" for part in parts]
-        if req.lora_id:
-            raise ValueError("Fish Audio Drama 3 has no trained voices yet.")
         if reason := self.unavailable():
             raise ValueError(f"Fish Audio Drama 3 can't run: {reason}")
         clip = req.prompt_wav or req.reference_wav
         transcript = (req.prompt_text or "").strip()
+        if req.lora_id:  # a saved voice: its reference, unless the request gives a clip
+            from ... import lora_library
+            from ..gpt_sovits.voices import read_reference
+
+            voice = lora_library.resolve(self.settings.lora_dir, req.lora_id)
+            if voice.engine != ENGINE:
+                raise ValueError(f"'{req.lora_id}' is not a Fish Audio Drama 3 voice.")
+            if clip is None and (own := read_reference(voice.path)):
+                clip, transcript = own[0], own[1].strip()
+            if clip is None:
+                raise ValueError("This voice has no reference clip: add one in the Voices panel.")
         if clip is not None and not transcript:
             raise ValueError("Fish Audio Drama 3 needs the reference clip's transcript.")
         options = self.options(req.options)

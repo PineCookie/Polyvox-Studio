@@ -9,6 +9,7 @@ import type { Messages } from '../i18n'
 import { ExportDialog } from './ExportDialog'
 import { Chevron } from './Fold'
 import { GptSovitsImportDialog } from './GptSovitsImportDialog'
+import { ReferenceVoiceDialog } from './ReferenceVoiceDialog'
 import { VoiceReference } from './VoiceReference'
 
 interface Props {
@@ -20,7 +21,7 @@ interface Props {
   onSelect: (choice: VoiceChoice) => void
   onRefresh: () => void
   onImport: (file: File) => Promise<void>
-  onImported: (id: string, engine: string) => void // a voice made from GPT-SoVITS webui weights
+  onImported: (id: string, engine: string) => void // a voice made here (GPT-SoVITS weights, a saved reference)
   onError: (message: string) => void
   loading: boolean
 }
@@ -100,7 +101,11 @@ export function VoicePanel({
   const [exporting, setExporting] = useState<Lora | null>(null)
   const [importing, setImporting] = useState(false)
   const [importingGsv, setImportingGsv] = useState(false)
+  const [savingVoice, setSavingVoice] = useState<Engine | null>(null) // a saved-reference voice being made
   const fileInput = useRef<HTMLInputElement>(null)
+  const selectedEngine = engines.find((e) => e.id === selected.engine) ?? null
+  // Engines whose voices are saved references only: no layout or steps to show.
+  const referenceOnly = (id: string) => !!engines.find((e) => e.id === id)?.capabilities.reference_voices
 
   const engineName = (id: string) => engines.find((e) => e.id === id)?.name ?? id
   // Voices of these engines keep a default reference clip.
@@ -274,7 +279,7 @@ export function VoicePanel({
               </select>
             )}
             <p className="voice-meta">
-              {engineName(current.engine)} · {layout(current)}
+              {engineName(current.engine)} · {referenceOnly(current.engine) ? t.savedReference : layout(current)}
               <br />
               <span title={current.base_model ?? undefined}>
                 {t.baseOf(current.base_model_id ?? current.base_model ?? t.notRecorded)}
@@ -286,7 +291,14 @@ export function VoicePanel({
           </>
         ) : (
           <>
-            <span className="voice-name">{t.baseModel}</span>
+            <div className="voice-current-head">
+              <span className="voice-name">{t.baseModel}</span>
+              {selectedEngine?.capabilities.reference_voices && !selectedEngine.unavailable && (
+                <button type="button" className="ghost small" onClick={() => setSavingVoice(selectedEngine)}>
+                  {t.saveAsVoice}
+                </button>
+              )}
+            </div>
             <p className="voice-meta">
               {engineName(selected.engine)} · {t.noLora}
               {selected.engine === DEFAULT_ENGINE && modelId ? ` · ${modelId}` : ''}
@@ -336,6 +348,14 @@ export function VoicePanel({
         {voices.length > 0 && shown.length === 0 && <p className="muted empty">{t.noVoiceMatches(filter)}</p>}
       </div>
 
+      {savingVoice && (
+        <ReferenceVoiceDialog
+          engine={savingVoice}
+          onCreated={onImported}
+          onError={onError}
+          onClose={() => setSavingVoice(null)}
+        />
+      )}
       {importingGsv && (
         <GptSovitsImportDialog onImported={onImported} onError={onError} onClose={() => setImportingGsv(false)} />
       )}

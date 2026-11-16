@@ -12,10 +12,10 @@ interface Props {
   onError: (message: string) => void
 }
 
-/** A voice's default reference clip (GPT-SoVITS, S2-Pro): listen, read its transcript, replace it. */
+/** A voice's default reference clip (GPT-SoVITS, S2-Pro, Drama 3): listen, read its transcript, replace it. */
 export function VoiceReference({ lora, onChanged, onError }: Props) {
-  // S2-Pro joins a dataset's best few clips (it clones better from ~20 s); GPT-SoVITS takes one of 3–10 s.
-  const joined = lora.engine === 'fish_s2'
+  // S2-Pro and Drama 3 join a dataset's best few clips (they clone better from ~20 s); GPT-SoVITS takes one of 3–10 s.
+  const joined = lora.engine !== 'gpt_sovits'
   const t = useT()
   const [editing, setEditing] = useState(false)
   const [source, setSource] = useState<'dataset' | 'clip'>('dataset')

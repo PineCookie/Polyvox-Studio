@@ -1,5 +1,6 @@
-"""Discovery and metadata for trained checkpoints: LoRAs (VoxCPM, dots.tts) and
-GPT-SoVITS voices (full weights; engines/gpt_sovits/voices.py), all in the LoRA folder.
+"""Discovery and metadata for trained checkpoints: LoRAs (VoxCPM, dots.tts), GPT-SoVITS
+voices (full weights; engines/gpt_sovits/voices.py) and saved-reference voices (Drama 3;
+engines/fish_drama3/voices.py), all in the LoRA folder.
 
 The LoRA folder has one folder per engine (``voxcpm/``, ``dots_tts/``,
 ``gpt_sovits/``) holding its runs and voices; a checkpoint's id is its path
@@ -25,7 +26,10 @@ logger = logging.getLogger(__name__)
 WEIGHTS_FILE = "lora_weights.safetensors"
 # A GPT-SoVITS voice's weights (its folder also holds a GPT checkpoint).
 VOICE_WEIGHTS_FILES = ("sovits_weights.pth", "gpt_weights.ckpt")
-MARKERS = (WEIGHTS_FILE, VOICE_WEIGHTS_FILES[0])  # a folder holding one of these is a checkpoint
+# A voice that is only a saved reference (engines with capabilities.reference_voices):
+# {"engine": ..., "base_model": ...}, read like lora_config.json.
+VOICE_FILE = "voice.json"
+MARKERS = (WEIGHTS_FILE, VOICE_WEIGHTS_FILES[0], VOICE_FILE)  # a folder holding one of these is a checkpoint
 # {"lora_config": {...}, "base_model": ..., "engine": ...}; no engine: VoxCPM.
 CONFIG_FILE = "lora_config.json"
 
@@ -55,9 +59,9 @@ class LoraCheckpoint:
 
     @property
     def weights_mtime(self) -> float:
-        """When its weights last changed (any of its weight files)."""
-        files = [self.path / f for f in (WEIGHTS_FILE, *VOICE_WEIGHTS_FILES)]
-        return max(f.stat().st_mtime for f in files if f.is_file())
+        """When its weights last changed (any of its weight files; a saved-reference voice: its file)."""
+        files = [self.path / f for f in (WEIGHTS_FILE, *VOICE_WEIGHTS_FILES, VOICE_FILE)]
+        return max((f.stat().st_mtime for f in files if f.is_file()), default=0.0)
 
     @property
     def rank(self) -> int | None:
@@ -123,6 +127,8 @@ def covers(layout: LoRAConfig, config: LoRAConfig) -> bool:
 def _load(lora_dir: Path, ckpt_dir: Path) -> LoraCheckpoint:
     ckpt = LoraCheckpoint(id=ckpt_dir.relative_to(lora_dir).as_posix(), path=ckpt_dir, config=None, base_model=None)
     config_file = ckpt_dir / CONFIG_FILE
+    if not config_file.is_file():
+        config_file = ckpt_dir / VOICE_FILE
     if not config_file.is_file():
         return ckpt
     try:

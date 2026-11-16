@@ -87,6 +87,9 @@ class Capabilities:
     # Trained voices keep a default reference clip (reference.wav + reference.json), used
     # when a request gives none; changeable in the Voices panel.
     voice_reference: bool = False
+    # Its voices are saved references only (no training): made in the Voices panel from a
+    # dataset's clips or an uploaded clip (lora_library.VOICE_FILE marks the folder).
+    reference_voices: bool = False
     training: bool = True  # New run offers it
     # Training updates every weight (no LoRA rank, no optimizer choice).
     full_finetune: bool = False

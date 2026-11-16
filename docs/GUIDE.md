@@ -51,6 +51,14 @@ GPT-SoVITS always speaks from a reference clip, and S2-Pro voices trained here
 keep the clips they were trained with: each such voice has a default reference,
 picked from its dataset, that you can change in the Voice panel.
 
+Drama 3 voices are saved references, with no training: with Drama 3's base
+model chosen, **Save as a voice…** asks for a name and a dataset (its three best
+checked clips are joined, about 20 s) or a clip with its transcript. The voice
+is listed with the others and speaks with its reference whenever no other clip
+is given; change the clips in the Voice panel. (Training Drama 3 was measured
+first: with a reference its codebook decoder already renders a voice as well as
+the real recordings, so a LoRA there would add little.)
+
 The first generation after a model loads takes longer while the model is
 compiled (about 30 s for VoxCPM2, a minute for dots.tts, a few seconds for
 S2-Pro; several minutes the very first time); later ones are fast.

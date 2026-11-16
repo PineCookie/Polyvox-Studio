@@ -240,7 +240,7 @@ def test_the_engine_needs_its_model_and_a_transcript(settings, monkeypatch, tmp_
     clip = tmp_path / "ref.wav"
     with pytest.raises(ValueError, match="transcript"):
         tts.synthesize(SynthesisRequest(text="你好。", reference_wav=clip))
-    with pytest.raises(ValueError, match="trained voices"):
+    with pytest.raises(KeyError):  # no such voice (saved voices: test_drama3_voices)
         tts.synthesize(SynthesisRequest(text="你好。", lora_id="voxcpm/someone"))
     assert engine.frame_cap(1000) == engine.MAX_FRAMES and engine.frame_cap(50) == 150
 

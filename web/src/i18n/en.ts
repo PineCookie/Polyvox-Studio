@@ -248,6 +248,12 @@ export const en = {
   gsvReferenceLaterHint: 'Add one in the Voice panel; until then give a clip with each synthesis.',
   gsvReferencePickHint: 'A checked clip of 4–10 s without flags, with its transcript.',
   gsvClipExample: 'Path of a 3–10 s clip on this computer',
+  saveAsVoice: 'Save as a voice…',
+  savedReference: 'saved reference (no training)',
+  referenceVoiceTitle: (engine: string) => `New ${engine} voice`,
+  referenceVoiceIntro:
+    'A name and the clips it clones from: the voice then appears in this list and speaks with them whenever no other clip is given. Nothing is trained.',
+  referenceVoicePickHint: "The dataset's three best checked clips, about 20 s together (clones better than one clip).",
   gsvAddReference: 'Add',
   gsvChangeReference: 'Change',
   gsvNoTranscript: '(no transcript: only its timbre is followed)',

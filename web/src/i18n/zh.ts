@@ -272,6 +272,12 @@ export const zh: Messages = {
   gsvReferenceLaterHint: '稍后在音色面板中添加；在此之前每次合成都需提供参考音频。',
   gsvReferencePickHint: '选一段已检查、无标记、4–10 秒的片段及其文本。',
   gsvClipExample: '本机上一段 3–10 秒音频的路径',
+  saveAsVoice: '保存为音色…',
+  savedReference: '已保存的参考（无训练）',
+  referenceVoiceTitle: (engine) => `新建 ${engine} 音色`,
+  referenceVoiceIntro:
+    '一个名称和用于克隆的音频：保存后音色会出现在列表中，没有另给参考音频时就用它们来说话。不需要训练。',
+  referenceVoicePickHint: '数据集中检查过的最好的三段，合计约 20 秒（比单段克隆效果更好）。',
   gsvAddReference: '添加',
   gsvChangeReference: '更换',
   gsvNoTranscript: '（无文本：只跟随其音色）',

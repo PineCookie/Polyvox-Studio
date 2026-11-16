@@ -114,19 +114,21 @@ def write_reference_clips(folder: Path, clips: list, source: str) -> str:
     return text
 
 
-def write_reference_file(folder: Path, source: Path, text: str, origin: str = "") -> None:
-    """Any readable clip of at most MAX_REFERENCE_S as the voice's reference."""
+def write_reference_file(folder: Path, source: Path, text: str, origin: str = "", model: str = "S2-Pro") -> None:
+    """Any readable clip of at most MAX_REFERENCE_S as the voice's reference (``model``: for messages)."""
     import numpy as np
     import soundfile as sf
 
     from ...data import audio_io
 
     if not text.strip():
-        raise ValueError("S2-Pro needs the reference clip's transcript.")
+        raise ValueError(f"{model} needs the reference clip's transcript.")
     audio, rate = audio_io.read(source)
     mono = audio.mean(axis=0) if audio.ndim == 2 else audio
     if len(mono) / rate > MAX_REFERENCE_S:
-        raise ValueError(f"The reference clip is {len(mono) / rate:.0f} s; S2-Pro takes at most {MAX_REFERENCE_S:g} s.")
+        raise ValueError(
+            f"The reference clip is {len(mono) / rate:.0f} s; {model} takes at most {MAX_REFERENCE_S:g} s."
+        )
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / f".{REFERENCE_WAV}.tmp"
     sf.write(tmp, np.asarray(mono, dtype=np.float32), rate, format="WAV", subtype="PCM_16")

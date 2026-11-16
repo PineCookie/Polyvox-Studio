@@ -74,6 +74,7 @@ export interface Engine {
     lora_hot_swap: boolean
     reference_required: boolean // always clones a clip: the request's or the voice's own
     voice_reference: boolean // trained voices keep a default reference clip (used when none is given)
+    reference_voices: boolean // its voices are saved references only, made in the Voices panel
     training: boolean // New run offers it
     full_finetune: boolean // trains every weight: no LoRA rank or optimizer choice
     reference_inputs: ReferenceInput[] // the audio inputs its cloning takes
@@ -279,6 +280,24 @@ export async function setVoiceReference(
     form.set('text', source.text)
   }
   return (await request('/api/loras/reference', { method: 'POST', body: form })).json()
+}
+
+/** A saved voice (engines with capabilities.reference_voices): a dataset's best clips, or one clip. */
+export async function createReferenceVoice(
+  engine: string,
+  name: string,
+  source: { dataset: string } | { audio: File; text: string },
+): Promise<{ id: string; engine: string }> {
+  const form = new FormData()
+  form.set('engine', engine)
+  form.set('name', name)
+  if ('dataset' in source) {
+    form.set('dataset', source.dataset)
+  } else {
+    form.set('audio', source.audio)
+    form.set('text', source.text)
+  }
+  return (await request('/api/loras/reference-voice', { method: 'POST', body: form })).json()
 }
 
 export async function unloadModel(): Promise<Status> {
