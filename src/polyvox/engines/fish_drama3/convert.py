@@ -6,10 +6,11 @@ picked by a search for the least error:
   HIGGS (Malinovskii et al., "Pushing the Limits of Large Language Model Quantization"): each
   block of 128 inputs rotated by a randomized Hadamard matrix (outliers spread over the block,
   the weights become near Gaussian), then rounded to the 16 levels with the least error for a
-  Gaussian. The engine rotates the experts'
-  inputs the same way, so their outputs are unchanged. Teacher-forced on real speech, this won
-  back about three quarters of what plain 4-bit rounding of the experts cost (GPTQ, calibrated
-  on speech, about half);
+  Gaussian. The engine rotates the experts' inputs the same way, so their outputs are unchanged.
+  tools/convert_drama3_higgs.py writes the same files without this package (a test keeps them
+  equal); the build in models.DRAMA3_BUILD_REPO was made with it.
+  Teacher-forced on real speech, this won back about three quarters of what plain 4-bit rounding
+  of the experts cost (GPTQ, calibrated on speech, about half);
 - the full-attention q / k / v / o and linear-attention in_proj_qkv / in_proj_z / out_proj:
   symmetric INT4 (q - 8) x scale in groups of 32: these have outlier weights, and finer groups cut
   their worst error by a third for 60 MB more.
@@ -51,6 +52,34 @@ GRID = (-2.7326, -2.0690, -1.6181, -1.2562, -0.9424, -0.6568, -0.3881, -0.1284,
 GRID_SCALES = (1.0, 0.5, 26)  # torch.linspace of the group's amax / GRID[-1] tried as its scale
 ROTATION = 128  # Hadamard block = the experts' group
 SIGNS = "quant.hadamard_signs.{}"  # the rotation's random signs for an input size K
+NOTICE = "NOTICE"  # the attribution and the changes, as the Fish Audio Community License asks of a Derivative Work
+
+
+def notice(experts: str = "higgs", dense_group: int = DENSE_GROUP) -> str:
+    """The build's NOTICE text: the license's attribution line, then how the weights were changed."""
+    expert_change = (
+        "each block of 128 input weights rotated by a randomized Hadamard matrix, then rounded to 16\n"
+        "  levels fitted to a Gaussian, with one fp16 scale per group of 128 (the HIGGS method). The sign\n"
+        '  vectors of the rotation are stored as "quant.hadamard_signs.<K>".'
+        if experts == "higgs"
+        else f"symmetric 4-bit integers with one fp16 scale per group of {GROUP}."
+    )
+    return (
+        "These Fish Audio Materials are licensed under the Fish Audio Community License, Version 1.0. "
+        "Copyright © 39 AI, INC. All Rights Reserved.\n\n"
+        "Built with Fish Audio.\n\n"
+        "This is a Derivative Work of Fish Audio Drama 3 (https://huggingface.co/fishaudio/drama-3). The\n"
+        "attribution above applies to the Fish Audio Materials. Changes made to them:\n\n"
+        f"- The routed experts' weights (FP8 with block scales in the original) were converted to 4 bits:\n  {expert_change}\n"
+        "- The backbone's full-attention q / k / v / o and linear-attention in_proj_qkv / in_proj_z /\n"
+        "  out_proj weights (bf16 in the original) were converted to symmetric 4-bit integers with one\n"
+        f"  fp16 scale per group of {dense_group}.\n"
+        '- config.json gained a "quantization_config" describing these formats; quant_stats.json records\n'
+        "  the conversion's weight errors.\n"
+        "- Everything else (shared experts, routers, embeddings, output head, the codebook decoder, the\n"
+        "  audio codec, the tokenizer files and the chat template) is unchanged.\n\n"
+        "Converted with convert_drama3_higgs.py (Apache-2.0).\n"
+    )
 
 
 def hadamard(n: int = ROTATION, device=None):
@@ -320,8 +349,13 @@ def convert(
                   "targets": DENSE_TARGETS},
     }  # fmt: skip
     (work / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+    (work / NOTICE).write_text(notice(experts, dense_group), encoding="utf-8")
     for f in src.iterdir():
-        if not f.is_file() or f.suffix == ".safetensors" or f.name in ("model.safetensors.index.json", "config.json"):
+        if (
+            not f.is_file()
+            or f.suffix == ".safetensors"
+            or f.name in ("model.safetensors.index.json", "config.json", NOTICE)
+        ):
             continue
         try:
             os.link(f, work / f.name)  # the codec (1.9 GB) needn't be copied

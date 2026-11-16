@@ -227,10 +227,11 @@ class Engine(ABC):
 
     @classmethod
     def base_repo(cls) -> str | None:
-        """The Hugging Face repo of its base model (models.MODELS)."""
+        """The Hugging Face repo of its base model (models.MODELS): the model's own, also when it
+        is downloaded from a converted copy (Drama 3)."""
         from ..models import MODELS
 
-        return next((m.repo for m in MODELS if m.setting == cls.model_setting), None)
+        return next((m.model_repo for m in MODELS if m.setting == cls.model_setting), None)
 
     def public(self) -> dict:
         return {

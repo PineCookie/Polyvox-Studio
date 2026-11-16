@@ -31,7 +31,8 @@ It also clones voices zero-shot with
 
 - 🎙️ **Five TTS models, one workflow.** VoxCPM2, dots.tts, GPT-SoVITS (v2Pro,
   v2ProPlus, v4) and Fish Audio S2-Pro: prepare a dataset once and train any of
-  them. Fish Audio Drama 3, a 35B model run in 4 bits, clones zero-shot.
+  them. Fish Audio Drama 3, a 35B model run in 4 bits, clones zero-shot
+  (**Built with Fish Audio**).
 - ✏️ **Fix a word without starting over.** Change the text of a generated clip
   and Drama 3 speaks only the changed words again, in the clip's own voice; the
   rest of the clip stays as it was.
@@ -120,8 +121,7 @@ How each is done, and more numbers, in the [guide](docs/GUIDE.md#speed).
   32 GB of RAM. AMD GPUs on Linux should work but are untested. Without a GPU
   you can only prepare datasets.
 - 💾 Disk space for models: about 5 GB per TTS model (S2-Pro 11 GB, Drama 3
-  22 GB, plus 39 GB while it is downloaded and converted), plus about 6 GB for
-  the dataset tools (speech recognition and alignment).
+  22 GB), plus about 6 GB for the dataset tools (speech recognition and alignment).
 
 ## 📖 Learn more
 
@@ -138,4 +138,4 @@ Models downloaded in the Models tab keep their own licenses, shown there. Fish A
 S2-Pro's weights, and voices trained on them here, are for research and
 non-commercial use only (Fish Audio Research License). Fish Audio Drama 3's
 weights are under the Fish Audio Community License (free below USD 500,000
-yearly revenue; no hosted services).
+yearly revenue; no hosted services). Drama 3 support is **Built with Fish Audio**.

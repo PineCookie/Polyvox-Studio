@@ -35,7 +35,11 @@ those weights, so the same terms apply to using them.
 
 Fish Audio Drama 3 (`src/polyvox/engines/fish_drama3/`) follows sglang-omni's
 implementation (see above); it contains no Fish Audio code. Its weights, downloaded
-from `fishaudio/drama-3` in the Models tab and converted to 4 bits on your computer,
-are under the Fish Audio Community License: free for research, non-commercial use
+in the Models tab as a 4-bit build of `fishaudio/drama-3` (`PineCookie/drama-3-int4-higgs`,
+made by `convert.py`; the official weights are converted on your computer instead if
+that build is unavailable), are under the Fish Audio Community License: free for research, non-commercial use
 and businesses below USD 500,000 yearly revenue, no hosted services; read the
-license file that comes with them.
+license file that comes with them. Built with Fish Audio.
+
+> These Fish Audio Materials are licensed under the Fish Audio Community License,
+> Version 1.0. Copyright © 39 AI, INC. All Rights Reserved.

@@ -30,7 +30,7 @@
 
 - 🎙️ **五种 TTS 模型，一套流程。** VoxCPM2、dots.tts、GPT-SoVITS（v2Pro、v2ProPlus、v4）和
   Fish Audio S2-Pro：数据集准备一次，就能训练任意一种模型。Fish Audio Drama 3（35B 模型，以 4 位运行）
-  可以零样本克隆。
+  可以零样本克隆（**Built with Fish Audio**）。
 - ✏️ **改一个词，不用重新生成。** 修改已生成音频的文字，Drama 3 只用这段音频本身的声音重新说改动的词，
   其余部分保持不变。
 - ✂️ **放进原始录音，得到干净的数据集。** 几个小时的音频（m4a、视频文件也可以）会自动在词与词之间
@@ -105,7 +105,7 @@
 - 🖥️ Windows 或 Linux。
 - 🎮 8 GB 及以上显存的 NVIDIA 显卡；16 GB 可以全速训练。S2-Pro 合成需要 16 GB，训练需要 12 GB；Drama 3 需要 12 GB 显存和 32 GB 内存。Linux 上的 AMD 显卡
   应该可用，但未经测试。没有显卡时只能准备数据集。
-- 💾 模型所需磁盘空间：每个 TTS 模型约 5 GB（S2-Pro 11 GB；Drama 3 22 GB，下载和转换期间另需 39 GB），
+- 💾 模型所需磁盘空间：每个 TTS 模型约 5 GB（S2-Pro 11 GB；Drama 3 22 GB），
   数据集工具（语音识别和对齐）另需约 6 GB。
 
 ## 📖 了解更多
@@ -120,4 +120,5 @@
 
 在「模型」页下载的模型遵循各自的许可证（页面上有标注）。Fish Audio S2-Pro 的权重，以及在这里基于它
 训练的音色，仅限研究和非商业用途（Fish Audio Research License）。Fish Audio Drama 3 的权重遵循
-Fish Audio Community License（年收入低于 50 万美元可免费使用；不得用于托管服务）。
+Fish Audio Community License（年收入低于 50 万美元可免费使用；不得用于托管服务）。Drama 3 的支持
+**Built with Fish Audio**。

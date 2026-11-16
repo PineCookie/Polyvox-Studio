@@ -89,6 +89,32 @@ def test_convert_quantizes_experts_and_dense_linears_and_copies_the_rest(tmp_pat
     assert seen[-1] == 1.0
 
 
+def test_the_standalone_script_writes_the_same_build(tmp_path):
+    """tools/convert_drama3_higgs.py (published with the 4-bit build, needs no polyvox) = convert.py."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).parents[1] / "tools" / "convert_drama3_higgs.py"
+    spec = importlib.util.spec_from_file_location("convert_drama3_higgs", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    fake_fp8_checkpoint(tmp_path / "fp8")
+    convert.convert(tmp_path / "fp8", tmp_path / "ours", device="cpu")
+    script.convert(tmp_path / "fp8", tmp_path / "theirs", device="cpu", report=lambda line: None)
+    ours = sorted(p.name for p in (tmp_path / "ours").iterdir())
+    assert ours == sorted(p.name for p in (tmp_path / "theirs").iterdir())
+    for name in ours:
+        assert (tmp_path / "ours" / name).read_bytes() == (tmp_path / "theirs" / name).read_bytes(), name
+    out = read_all(tmp_path / "theirs")
+    base = EXPERT.removesuffix(".weight")
+    signs = out[convert.SIGNS.format(384)]
+    x = torch.randn(3, 384)
+    w = script.dequant_expert(out[base + ".qweight"], out[base + ".scales"])  # rotated W^T [K, N]
+    want = convert.unrotate(convert.dequant(out[base + ".qweight"], out[base + ".scales"], torch.float32,
+                                            torch.tensor(convert.GRID)).T, signs)  # fmt: skip
+    assert torch.allclose(script.rotate(x, signs) @ w, x @ want.T, atol=1e-4)  # the reader as documented
+
+
 def test_plain_4_bit_experts_keep_the_community_layout(tmp_path):
     expert, _, _ = fake_fp8_checkpoint(tmp_path / "fp8")
     convert.convert(tmp_path / "fp8", tmp_path / "int4", device="cpu", experts="int4")
@@ -135,16 +161,39 @@ def test_a_cancelled_build_leaves_no_model(tmp_path):
     assert not (tmp_path / "int4").exists()
 
 
-def test_download_builds_the_model_and_removes_the_source(tmp_path, monkeypatch):
+def small_drama3_spec():
+    """Drama 3's spec with a fallback that fetches one file of a made-up FP8 checkpoint."""
     spec = models.BY_SETTING["drama3_model"]
-    small = models.ModelSpec(
-        spec.setting, spec.name, spec.purpose, spec.repo, spec.folder, spec.files, 1, revision=spec.revision,
-        source=models.Source("fp8", ("config.json",), spec.source.build),
-    )  # fmt: skip
+    fallback = models.Source("fp8", ("config.json",), spec.fallback.build, repo=spec.fallback.repo,
+                             revision=spec.fallback.revision)  # fmt: skip
+    files = ("config.json", "model.safetensors.index.json", convert.NOTICE, convert.STATS)
+    return models.ModelSpec(spec.setting, spec.name, spec.purpose, spec.repo, spec.folder, files, 1,
+                            revision=spec.revision, fallback=fallback)  # fmt: skip
+
+
+def test_drama3_downloads_the_prebuilt_build(tmp_path, monkeypatch):
+    small = small_drama3_spec()
     fetched = []
 
     def fake_fetch(repo, revision, folder, files, endpoint, report):
-        fetched.append((repo, revision, files))
+        fetched.append((repo, revision))
+        for f in files:
+            (folder / f).write_text("{}")
+        report(1, 1)
+
+    monkeypatch.setattr(models, "_fetch_hf", fake_fetch)
+    models.download(small, tmp_path)
+    assert fetched == [(models.DRAMA3_BUILD_REPO, models.DRAMA3_BUILD_REVISION)] and small.downloaded(tmp_path)
+
+
+def test_drama3_is_built_from_the_official_weights_when_the_build_is_gone(tmp_path, monkeypatch):
+    small = small_drama3_spec()
+    fetched = []
+
+    def fake_fetch(repo, revision, folder, files, endpoint, report):
+        fetched.append((repo, revision))
+        if repo == models.DRAMA3_BUILD_REPO:
+            raise FileNotFoundError(f"{repo} has no config.json.")
         folder.rmdir()
         fake_fp8_checkpoint(folder)
         report(1 << 20, 1 << 20)
@@ -152,9 +201,21 @@ def test_download_builds_the_model_and_removes_the_source(tmp_path, monkeypatch)
     monkeypatch.setattr(models, "_fetch_hf", fake_fetch)
     progress = []
     models.download(small, tmp_path, progress=lambda done, total: progress.append((done, total)))
-    assert fetched == [(spec.repo, spec.revision, ("config.json",))]
+    assert fetched == [(models.DRAMA3_BUILD_REPO, models.DRAMA3_BUILD_REVISION),
+                       ("fishaudio/drama-3", models.BY_SETTING["drama3_model"].fallback.revision)]  # fmt: skip
     assert small.downloaded(tmp_path) and not (tmp_path / "fp8").exists()
+    assert "Built with Fish Audio" in (tmp_path / small.folder / convert.NOTICE).read_text(encoding="utf-8")
     assert progress[-1][0] == progress[-1][1] > 0  # download + build reach the end of one bar
+
+
+def test_a_network_error_is_not_a_reason_to_build(tmp_path, monkeypatch):
+    def offline(repo, revision, folder, files, endpoint, report):
+        raise ConnectionError("no network")
+
+    monkeypatch.setattr(models, "_fetch_hf", offline)
+    with pytest.raises(ConnectionError):
+        models.download(small_drama3_spec(), tmp_path)
+    assert not (tmp_path / "fp8").exists()
 
 
 def expert_stacks(experts=6, hidden=128, inner=128, higgs=False):

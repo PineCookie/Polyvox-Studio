@@ -8,6 +8,7 @@ a downloaded copy unless a model was configured explicitly.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import threading
 import zipfile
@@ -15,7 +16,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 HF_ENDPOINT = "https://huggingface.co"
+# Drama 3 in 4 bits as fish_drama3/convert.py makes it from the official weights (78e5ab7).
+DRAMA3_BUILD_REPO = "PineCookie/drama-3-int4-higgs"
+DRAMA3_BUILD_REVISION = "dedb85dba9318b2353cec15eda1142f8586a4e80"
 POLL_S = 0.5
 
 
@@ -23,12 +29,15 @@ POLL_S = 0.5
 class Source:
     """The files a model is built from (downloaded into their own folder); ``build`` names
     "module:function"(source dir, model dir, progress(fraction)), which writes the model's
-    folder complete or not at all. The source folder is removed after a build unless ``keep``."""
+    folder complete or not at all. The source folder is removed after a build unless ``keep``.
+    ``repo`` / ``revision``: where the files are (None: the model's own repo and revision)."""
 
     folder: str
     files: tuple[str, ...]
     build: str
     keep: bool = False
+    repo: str | None = None
+    revision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,10 +59,18 @@ class ModelSpec:
     revision: str | None = None  # a pinned commit of the repo (None: its main branch)
     # Built from other files of the repo (``files`` are then the build's, ``size_mb`` the download's).
     source: Source | None = None
+    # The files come built from ``repo``; when that repo / revision / file isn't there (removed,
+    # say), the model is built from this instead.
+    fallback: Source | None = None
 
     def path(self, models_dir: Path) -> Path:
         folder = models_dir / self.folder
         return folder / self.entry if self.entry else folder
+
+    @property
+    def model_repo(self) -> str:
+        """The repo that names the model: the one it's built from when ``repo`` holds a build."""
+        return (self.fallback.repo if self.fallback else None) or self.repo
 
     def downloaded(self, models_dir: Path) -> bool:
         folder = models_dir / self.folder
@@ -171,25 +188,28 @@ MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         "drama3_model",
         "Fish Audio Drama 3",
-        "Text to speech (44.1 kHz), zero-shot cloning: the official weights, converted to 4 bits "
-        "(22 GB) on this computer after the download",
-        "fishaudio/drama-3",
+        "Text to speech (44.1 kHz), zero-shot cloning: the official weights in 4 bits (22 GB); if that "
+        "build can't be downloaded, the official weights (39 GB) are converted on this computer",
+        DRAMA3_BUILD_REPO,
         "fishaudio__drama-3__int4",
         (
             "config.json",
             "model.safetensors.index.json",
+            *(f"model-{i:05d}-of-00011.safetensors" for i in range(1, 12)),
             "codec.pth",
             "tokenizer.json",
             "tokenizer_config.json",
             "special_tokens_map.json",
             "chat_template.jinja",
             "LICENSE",
+            "NOTICE",
             "quant_stats.json",
         ),
-        39_600,
-        license="Fish Audio Community License (free below USD 500k yearly revenue; no hosted services)",
-        revision="78e5ab79e49aa9a25abe8799eff2c4d73a1c3216",
-        source=Source(
+        22_960,
+        license="Fish Audio Community License (free below USD 500k yearly revenue; no hosted services); "
+        "Built with Fish Audio",
+        revision=DRAMA3_BUILD_REVISION,
+        fallback=Source(
             "fishaudio__drama-3",
             (
                 "config.json",
@@ -203,6 +223,8 @@ MODELS: tuple[ModelSpec, ...] = (
                 "LICENSE",
             ),
             "polyvox.engines.fish_drama3.convert:build",
+            repo="fishaudio/drama-3",
+            revision="78e5ab79e49aa9a25abe8799eff2c4d73a1c3216",
         ),
     ),
     ModelSpec(
@@ -437,7 +459,19 @@ def download(spec: ModelSpec, models_dir: Path, endpoint: str | None = None, pro
     folder = models_dir / spec.folder
     mb = 1 << 20
     if spec.source:
-        _download_and_build(spec, models_dir, endpoint, progress)
+        _download_and_build(spec, models_dir, endpoint, progress, spec.source)
+        return
+    if spec.fallback:
+        from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError, RevisionNotFoundError
+
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            _fetch_hf(spec.repo, spec.revision, folder, spec.files, endpoint,
+                      lambda done, total: progress(done // mb, total // mb))  # fmt: skip
+            return
+        except (RepositoryNotFoundError, RevisionNotFoundError, EntryNotFoundError, FileNotFoundError) as e:
+            logger.warning("%s isn't available (%s); building %s from its source instead", spec.repo, e, spec.name)
+        _download_and_build(spec, models_dir, endpoint, progress, spec.fallback)
         return
     folder.mkdir(parents=True, exist_ok=True)
     received = _Received()
@@ -512,12 +546,13 @@ def _fetch_hf(
 BUILD_SHARE = 0.25  # of the download, how much of the progress bar a build takes
 
 
-def _download_and_build(spec: ModelSpec, models_dir: Path, endpoint: str | None, progress: Progress) -> None:
-    """Download ``spec.source`` (resuming), build the model's folder from it, then remove it."""
+def _download_and_build(
+    spec: ModelSpec, models_dir: Path, endpoint: str | None, progress: Progress, source: Source
+) -> None:
+    """Download ``source`` (resuming), build the model's folder from it, then remove it."""
     import importlib
 
-    source = spec.source
-    assert source is not None
+    repo, revision = (source.repo, source.revision) if source.repo else (spec.repo, spec.revision)
     src = models_dir / source.folder
     src.mkdir(parents=True, exist_ok=True)
     mb = 1 << 20
@@ -527,7 +562,7 @@ def _download_and_build(spec: ModelSpec, models_dir: Path, endpoint: str | None,
         downloaded[0] = total
         progress(done // mb, int(total * (1 + BUILD_SHARE)) // mb)
 
-    _fetch_hf(spec.repo, spec.revision, src, source.files, endpoint, report)
+    _fetch_hf(repo, revision, src, source.files, endpoint, report)
     total = downloaded[0]
     module, name = source.build.split(":")
     build = getattr(importlib.import_module(module), name)
