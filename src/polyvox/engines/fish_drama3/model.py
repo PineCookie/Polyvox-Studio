@@ -8,7 +8,8 @@
 - Routed experts (16.6 GB in 4 bits): pinned CPU memory, the most used of them also in GPU slots
   (as many as fit). A decoding step reads each picked expert from its slot, or straight from
   CPU memory over PCIe (kernels.py), so nothing waits on the CPU; ``plan`` refreshes which
-  experts are held from their use (the prompt's, then the frames').
+  experts are held from their use (the prompt's, then the frames'). In a HIGGS build
+  (convert.py) their values are levels of a 16-entry grid and their inputs are rotated.
 - Tower: 4 shared + 9 residual layers predicting codes 1..9 of each frame from the backbone's
   state (layer r embeds code r; its head gives code r + 1).
 - Sampling: temperature / top-p / top-k; a semantic token seen in the last 16 frames is drawn
@@ -47,6 +48,7 @@ CODES, CODEBOOK = 10, 4096
 PREFIXES = 2  # voices whose prompt states are kept
 ROUTED_TOKENS = 48  # up to this many tokens, experts are read per token (no layer-wide copies)
 TOWER_LINEARS = ("eh_proj", "wqkv", "wo", "w1", "w2", "w3")
+KERNEL_ROWS = 64  # up to this many rows a HIGGS input rotation runs as one Triton kernel
 
 
 @dataclass(frozen=True)
@@ -104,14 +106,45 @@ def release_buffers() -> None:
     _STAGING.clear()
 
 
+class Rotation:
+    """A HIGGS build's input rotation (convert.rotate), per input size: the experts' weights were
+    stored rotated, so their inputs are rotated the same way."""
+
+    def __init__(self, signs: dict[int, torch.Tensor], device):
+        from .convert import ROTATION, hadamard
+
+        self.signs = {k: v.to(device, torch.float32) for k, v in signs.items()}
+        self.h = hadamard(ROTATION, device)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        signs = self.signs[x.shape[-1]]
+        if x.is_cuda and x.dim() == 2 and x.shape[0] <= KERNEL_ROWS:  # a decoding step: one kernel
+            from .kernels import rotate
+
+            return rotate(x, signs, self.h)
+        from .convert import rotate
+
+        return rotate(x, signs, self.h)
+
+
 class Experts(nn.Module):
     """One layer's routed experts: 4-bit stacks in pinned CPU memory ({gate,up,down}_{q,s},
-    [E, ...]), ``slots`` of them also on the GPU (``table``: an expert's slot, or -1)."""
+    [E, ...]), ``slots`` of them also on the GPU (``table``: an expert's slot, or -1). A HIGGS
+    build's experts have a ``grid`` (their 16 levels) and a ``rotation`` of their inputs."""
 
-    def __init__(self, stacks: dict[str, torch.Tensor], slots: int, device):
+    def __init__(
+        self,
+        stacks: dict[str, torch.Tensor],
+        slots: int,
+        device,
+        grid: torch.Tensor | None = None,
+        rotation: Rotation | None = None,
+    ):
         super().__init__()
         self.cpu = stacks
         self.device = device
+        self.grid = None if grid is None else grid.to(device, torch.float32)
+        self.rotate = rotation or (lambda x: x)
         self.slots = slots
         self.experts = next(iter(stacks.values())).shape[0]
         self.gpu = {k: torch.empty((slots, *v.shape[1:]), dtype=v.dtype, device=device) for k, v in stacks.items()}
@@ -158,6 +191,7 @@ class Experts(nn.Module):
         if self.fast and hidden.shape[0] <= ROUTED_TOKENS:  # a text after kept references: per token
             return self.routed_tokens(hidden, top_k_index, top_k_weights)
         out = torch.zeros_like(hidden)
+        hidden = self.rotate(hidden)  # once for all experts: they share it
         flat = top_k_index.flatten()
         self.counts.index_add_(0, flat, torch.ones_like(flat, dtype=torch.float32))
         order = flat.argsort(stable=True)
@@ -203,64 +237,69 @@ class Experts(nn.Module):
         """routed's expert outputs before weighting: [k, dim] float32 (and their use counted)."""
         k = experts.shape[0]
         self.counts.index_add_(0, experts, torch.ones(k, dtype=torch.float32, device=experts.device))
+        hidden = self.rotate(hidden)
         if self.fast:
-            from .kernels import int4_gemv_routed
-
             ids = experts.to(torch.int32)
-            g, h = self.gpu, self.host
-            gate = int4_gemv_routed(
-                hidden, self.zeros[:k], ids, self.table, g["gate_q"], g["gate_s"], h["gate_q"], h["gate_s"]
-            )
-            up = int4_gemv_routed(hidden, self.zeros[:k], ids, self.table, g["up_q"], g["up_s"], h["up_q"], h["up_s"])
-            act = (F.silu(gate) * up).to(hidden.dtype)
-            down = int4_gemv_routed(
-                act, self.rows[:k], ids, self.table, g["down_q"], g["down_s"], h["down_q"], h["down_s"]
-            )
+            gate = self._gemv("gate", hidden, self.zeros[:k], ids)
+            up = self._gemv("up", hidden, self.zeros[:k], ids)
+            act = self.rotate((F.silu(gate) * up).to(hidden.dtype))
+            down = self._gemv("down", act, self.rows[:k], ids)
         else:  # reference path (CPU): the experts' weights unpacked
             picked = experts.cpu()
-            w = {n: dequant(self.cpu[n + "_q"][picked], self.cpu[n + "_s"][picked], torch.float32).to(hidden.device)
-                 for n in ("gate", "up", "down")}  # fmt: skip
+            w = {n: dequant(self.cpu[n + "_q"][picked], self.cpu[n + "_s"][picked], torch.float32, self.grid)
+                    .to(hidden.device) for n in ("gate", "up", "down")}  # fmt: skip
             x = hidden[0].float()
             gate, up = torch.einsum("d,edi->ei", x, w["gate"]), torch.einsum("d,edi->ei", x, w["up"])
-            act = (F.silu(gate) * up).to(hidden.dtype).float()
+            act = self.rotate((F.silu(gate) * up).to(hidden.dtype)).float()
             down = torch.einsum("ei,eid->ed", act, w["down"])
         return down
 
-    def routed_tokens(self, hidden, top_k_index, top_k_weights):
-        """A few tokens [T, dim]: each (token, expert) pair read as in ``routed`` (CUDA)."""
+    def _gemv(self, part, x, x_rows, ids):
+        """kernels.int4_gemv_routed over one of the experts' matrices ("gate" / "up" / "down")."""
         from .kernels import int4_gemv_routed
 
+        g, h = self.gpu, self.host
+        q, s = part + "_q", part + "_s"
+        return int4_gemv_routed(x, x_rows, ids, self.table, g[q], g[s], h[q], h[s], self.grid)
+
+    def routed_tokens(self, hidden, top_k_index, top_k_weights):
+        """A few tokens [T, dim]: each (token, expert) pair read as in ``routed`` (CUDA)."""
         t, k = top_k_index.shape
         ids = top_k_index.flatten()
         self.counts.index_add_(0, ids, torch.ones_like(ids, dtype=torch.float32))
         ids = ids.to(torch.int32)
         tokens = torch.arange(t, dtype=torch.int32, device=hidden.device).repeat_interleave(k)
         rows = torch.arange(t * k, dtype=torch.int32, device=hidden.device)
-        g, h = self.gpu, self.host
-        gate = int4_gemv_routed(hidden, tokens, ids, self.table, g["gate_q"], g["gate_s"], h["gate_q"], h["gate_s"])
-        up = int4_gemv_routed(hidden, tokens, ids, self.table, g["up_q"], g["up_s"], h["up_q"], h["up_s"])
-        act = (F.silu(gate) * up).to(hidden.dtype)
-        down = int4_gemv_routed(act, rows, ids, self.table, g["down_q"], g["down_s"], h["down_q"], h["down_s"])
+        x = self.rotate(hidden)
+        gate, up = self._gemv("gate", x, tokens, ids), self._gemv("up", x, tokens, ids)
+        act = self.rotate((F.silu(gate) * up).to(hidden.dtype))
+        down = self._gemv("down", act, rows, ids)
         return (down.view(t, k, -1) * top_k_weights.float()[:, :, None]).sum(1).to(hidden.dtype)
 
-    @staticmethod
-    def _run(parts, experts, hidden, groups, out):
-        """``groups``: expert -> (its rows of ``hidden``, their router weights)."""
+    def _run(self, parts, experts, hidden, groups, out):
+        """``groups``: expert -> (its rows of ``hidden`` (rotated already), their router weights)."""
         if hidden.is_cuda and hidden.dtype == torch.bfloat16:
-            from .kernels import int4_dequant as unpack
+            from .kernels import int4_dequant
+
+            def unpack(q, s):
+                return int4_dequant(q, s, self.grid)
         else:
 
             def unpack(q, s):
-                return dequant(q, s, hidden.dtype)
+                return dequant(q, s, hidden.dtype, self.grid)
 
         wg = unpack(parts["gate_q"], parts["gate_s"])
         wu = unpack(parts["up_q"], parts["up_s"])
         wd = unpack(parts["down_q"], parts["down_s"])
+        acts = []
         for j, e in enumerate(experts):
+            x = hidden[groups[e][0]]
+            acts.append(F.silu(x @ wg[j]) * (x @ wu[j]))
+        # The down projections' inputs rotated all at once (a HIGGS build's; else as they are).
+        acts = self.rotate(torch.cat(acts)).split([len(a) for a in acts])
+        for j, (e, act) in enumerate(zip(experts, acts, strict=True)):
             tok, gate = groups[e]
-            x = hidden[tok]
-            y = (F.silu(x @ wg[j]) * (x @ wu[j])) @ wd[j]
-            out.index_add_(0, tok, (y * gate[:, None]).to(out.dtype))
+            out.index_add_(0, tok, ((act @ wd[j]) * gate[:, None]).to(out.dtype))
 
 
 def linear(x, w):
@@ -508,6 +547,18 @@ class Drama3(nn.Module):
         return torch.cat(frames)[:, 1:].T.cpu()
 
 
+def expert_format(experts: dict, weight_map: dict, get: Callable, device):
+    """The experts' (grid, rotation) from the build's config: (None, None) for plain 4 bits."""
+    method = experts.get("quant_method", "gptq")
+    if method == "gptq":
+        return None, None
+    if method != "higgs":
+        raise ValueError(f"Drama 3's experts are in a format this version doesn't know ({method}).")
+    prefix = experts["rotation"]["signs"].replace("<K>", "")
+    signs = {int(key.removeprefix(prefix)): get(key) for key in weight_map if key.startswith(prefix)}
+    return torch.tensor(experts["grid"], dtype=torch.float32), Rotation(signs, device)
+
+
 def load(
     root: Path,
     device: str = "cuda",
@@ -633,7 +684,8 @@ def load(
     m.decoder = Decoder(m, graphs=graphs, fused=graphs)
     slots = expert_budget(expert_bytes(stacks[0]) * len(stacks)) if expert_budget else 0
     slots = max(0, min(slots, m.text_config.num_experts))
+    grid, rotation = expert_format(cfg["quantization_config"].get("experts") or {}, weight_map, get, device)
     for layer, parts in zip(m.backbone.layers, stacks, strict=True):
-        layer.mlp.experts = Experts(parts, slots, device)
+        layer.mlp.experts = Experts(parts, slots, device, grid, rotation)
     logger.info("Drama 3 loaded in %.0f s; %d experts per layer held on the GPU", time.time() - t0, slots)
     return m

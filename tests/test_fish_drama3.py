@@ -67,8 +67,16 @@ def test_convert_quantizes_experts_and_dense_linears_and_copies_the_rest(tmp_pat
     out = read_all(tmp_path / "int4")
     base = EXPERT.removesuffix(".weight")
     assert out[base + ".qweight"].shape == (384 // 8, 256) and out[base + ".scales"].dtype == torch.float16
-    restored = convert.dequant(out[base + ".qweight"], out[base + ".scales"], torch.float32).T
-    assert ((restored - expert).norm() / expert.norm()) < 0.12  # 4-bit error on Gaussian weights ~0.10
+    # The expert is stored rotated, on the grid: rotated back it's the weight with less error than
+    # plain 4 bits (~0.10 on Gaussian weights).
+    signs = out[convert.SIGNS.format(384)]
+    grid = torch.tensor(convert.GRID)
+    restored = convert.unrotate(
+        convert.dequant(out[base + ".qweight"], out[base + ".scales"], torch.float32, grid).T, signs
+    )
+    assert ((restored - expert).norm() / expert.norm()) < 0.095
+    experts = json.loads((tmp_path / "int4" / "config.json").read_text())["quantization_config"]["experts"]
+    assert experts["quant_method"] == "higgs" and experts["grid"] == list(convert.GRID)
     dense = DENSE.removesuffix(".weight")
     assert bool((out[dense + ".qzeros"] == convert.ZERO_POINTS).all())
     assert torch.equal(out[dense + ".g_idx"], torch.arange(256, dtype=torch.int32) // convert.DENSE_GROUP)
@@ -79,6 +87,31 @@ def test_convert_quantizes_experts_and_dense_linears_and_copies_the_rest(tmp_pat
     assert (tmp_path / "int4" / "codec.pth").read_bytes() == b"made up codec.pth"
     assert (tmp_path / "int4" / convert.STATS).is_file() and not (tmp_path / "int4.build").exists()
     assert seen[-1] == 1.0
+
+
+def test_plain_4_bit_experts_keep_the_community_layout(tmp_path):
+    expert, _, _ = fake_fp8_checkpoint(tmp_path / "fp8")
+    convert.convert(tmp_path / "fp8", tmp_path / "int4", device="cpu", experts="int4")
+    out = read_all(tmp_path / "int4")
+    base = EXPERT.removesuffix(".weight")
+    restored = convert.dequant(out[base + ".qweight"], out[base + ".scales"], torch.float32).T
+    assert ((restored - expert).norm() / expert.norm()) < 0.12
+    assert not any(k.startswith("quant.") for k in out)
+    experts = json.loads((tmp_path / "int4" / "config.json").read_text())["quantization_config"]["experts"]
+    assert experts["quant_method"] == "gptq"
+
+
+def test_the_rotation_keeps_products_and_spreads_outliers():
+    torch.manual_seed(4)
+    signs = convert.rotation_signs(256)
+    w, x = torch.randn(32, 256), torch.randn(5, 256)
+    w[3, 17] = 40.0
+    assert torch.allclose(convert.rotate(x, signs) @ convert.rotate(w, signs).T, x @ w.T, atol=1e-3)
+    assert torch.allclose(convert.unrotate(convert.rotate(w, signs), signs), w, atol=1e-5)
+    assert convert.rotate(w, signs)[3].abs().max() < 10  # 40 spread over its block of 128: ~40 / sqrt(128) each
+    q, s = convert.quantize_grid(w)
+    assert q.max() <= 15 and s.shape == (32, 2)
+    assert torch.equal(convert.rotation_signs(256), signs)  # fixed per size
 
 
 def test_pack_layout_matches_the_readers():
@@ -124,19 +157,33 @@ def test_download_builds_the_model_and_removes_the_source(tmp_path, monkeypatch)
     assert progress[-1][0] == progress[-1][1] > 0  # download + build reach the end of one bar
 
 
-def expert_stacks(experts=6, hidden=128, inner=128):
-    """4-bit stacks for ``experts`` made-up experts, as model.load builds them."""
+def expert_stacks(experts=6, hidden=128, inner=128, higgs=False):
+    """4-bit stacks for ``experts`` made-up experts, as model.load builds them (HIGGS: rotated, on
+    the grid)."""
     torch.manual_seed(1)
     stacks = {}
     for short, (k, n) in (("gate", (hidden, inner)), ("up", (hidden, inner)), ("down", (inner, hidden))):
-        qs = [convert.quantize(torch.randn(n, k) * 0.05) for _ in range(experts)]
+        ws = [torch.randn(n, k) * 0.05 for _ in range(experts)]
+        if higgs:
+            qs = [convert.quantize_grid(convert.rotate(w, convert.rotation_signs(k))) for w in ws]
+        else:
+            qs = [convert.quantize(w) for w in ws]
         stacks[short + "_q"] = torch.stack([convert.pack(q) for q, _ in qs])
         stacks[short + "_s"] = torch.stack([s.t().contiguous().half() for _, s in qs])
     return stacks
 
 
-def dense_moe(stacks, hidden, index, weights):
-    w = {k: convert.dequant(stacks[k + "_q"], stacks[k + "_s"], torch.float32) for k in ("gate", "up", "down")}
+def higgs_format(hidden=128, inner=128):
+    """(grid, rotation) for HIGGS stacks, as model.load makes them."""
+    signs = {k: convert.rotation_signs(k) for k in {hidden, inner}}
+    return torch.tensor(convert.GRID), model.Rotation(signs, "cpu")
+
+
+def dense_moe(stacks, hidden, index, weights, grid=None, rotation=None):
+    """The experts' weighted sum from their weights unpacked (rotated back to the inputs' space)."""
+    w = {k: convert.dequant(stacks[k + "_q"], stacks[k + "_s"], torch.float32, grid) for k in ("gate", "up", "down")}
+    if rotation is not None:  # x @ W = rotate(x) @ W_stored for every x: W = rotate(I) @ W_stored
+        w = {k: rotation(torch.eye(v.shape[1])) @ v for k, v in w.items()}
     out = torch.zeros_like(hidden)
     for t in range(hidden.shape[0]):
         for e, g in zip(index[t].tolist(), weights[t], strict=True):
@@ -145,19 +192,33 @@ def dense_moe(stacks, hidden, index, weights):
     return out
 
 
+@pytest.mark.parametrize("higgs", [False, True])
 @pytest.mark.parametrize("slots", [0, 2, 6])
-def test_cached_and_streamed_experts_compute_the_same(slots):
+def test_cached_and_streamed_experts_compute_the_same(slots, higgs):
     """Whatever the GPU slots hold (nothing, some, all), the layer's output is the experts'
-    weighted sum; planning between calls moves the used ones into the slots."""
-    stacks = expert_stacks()
-    layer = model.Experts(stacks, slots, "cpu")
-    for _ in range(3):
-        hidden = torch.randn(5, 128)
-        index = torch.stack([torch.randperm(6)[:2] for _ in range(5)])
-        weights = torch.rand(5, 2)
-        assert torch.allclose(layer(hidden, index, weights), dense_moe(stacks, hidden, index, weights), atol=1e-4)
+    weighted sum, for many tokens and one; planning between calls moves the used ones into the
+    slots. HIGGS experts: their inputs rotated, their values on the grid."""
+    stacks = expert_stacks(higgs=higgs)
+    fmt = higgs_format() if higgs else (None, None)
+    layer = model.Experts(stacks, slots, "cpu", *fmt)
+    for tokens in (5, 1, 5):
+        hidden = torch.randn(tokens, 128)
+        index = torch.stack([torch.randperm(6)[:2] for _ in range(tokens)])
+        weights = torch.rand(tokens, 2)
+        want = dense_moe(stacks, hidden, index, weights, *fmt)
+        assert torch.allclose(layer(hidden, index, weights), want, atol=1e-4)
         layer.plan()
     assert len(layer.held) == slots
+
+
+def test_higgs_experts_are_closer_to_their_weights_than_plain_4_bits():
+    torch.manual_seed(5)
+    w = torch.randn(64, 256) * 0.05
+    w[:, 7] *= 8  # an outlier input channel, as real experts have
+    signs = convert.rotation_signs(256)
+    plain = convert.restore(*convert.quantize(w))
+    higgs = convert.unrotate(convert.restore_grid(*convert.quantize_grid(convert.rotate(w, signs))), signs)
+    assert (higgs - w).norm() < 0.8 * (plain - w).norm()
 
 
 class Letters:
@@ -245,9 +306,9 @@ def test_the_engine_needs_its_model_and_a_transcript(settings, monkeypatch, tmp_
     assert engine.frame_cap(1000) == engine.MAX_FRAMES and engine.frame_cap(50) == 150
 
 
-def tiny_drama3(slots=0):
+def tiny_drama3(slots=0, higgs=False):
     """A made-up Drama 3 small enough for the CPU: 3 Gated DeltaNet layers and one attention layer,
-    6 experts in 4 bits, a 2-layer tower at the real codebook size."""
+    6 experts in 4 bits (plain or HIGGS), a 2-layer tower at the real codebook size."""
     from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeTextConfig
     from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeTextModel
 
@@ -286,8 +347,11 @@ def tiny_drama3(slots=0):
     m.shared = m.shared[:1] + m.shared[1:]
     m.heads = [torch.randn(4096, dim) * 0.3 for _ in range(9)]
     m.decoder = Decoder(m, graphs=False)
+    fmt = higgs_format(dim, 128) if higgs else (None, None)
     for layer in m.backbone.layers:
-        layer.mlp.experts = model.Experts(expert_stacks(experts=6, hidden=dim, inner=128), slots, "cpu")
+        layer.mlp.experts = model.Experts(
+            expert_stacks(experts=6, hidden=dim, inner=128, higgs=higgs), slots, "cpu", *fmt
+        )
     return m
 
 
@@ -317,10 +381,11 @@ def test_the_decoding_step_matches_the_backbone():
         assert torch.allclose(got, want, atol=2e-5, rtol=1e-4), (got - want).abs().max()
 
 
+@pytest.mark.parametrize("higgs", [False, True])
 @torch.inference_mode()
-def test_the_decoder_speaks_as_plain_decoding(monkeypatch):
+def test_the_decoder_speaks_as_plain_decoding(monkeypatch, higgs):
     """Greedy (one candidate) the decoder's frames equal the reference loop's."""
-    m = tiny_drama3()
+    m = tiny_drama3(higgs=higgs)
     monkeypatch.setattr(model, "REDRAW", model.Sampling(1.0, 0.95, 1))
     m.decoder.redraw[2].fill_(1)
     rows = tiny_prompt(m)
@@ -381,6 +446,42 @@ def test_dense_linears_can_have_smaller_groups(tmp_path):
     assert out[EXPERT.removesuffix(".weight") + ".scales"].shape == (384 // 128, 256)  # experts keep 128
     config = json.loads((tmp_path / "int4" / "config.json").read_text())["quantization_config"]
     assert config["dense"]["group_size"] == 32 and config["experts"]["group_size"] == 128
+
+
+def test_a_higgs_build_tells_the_model_its_grid_and_rotation(tmp_path):
+    fake_fp8_checkpoint(tmp_path / "fp8")
+    convert.convert(tmp_path / "fp8", tmp_path / "int4", device="cpu")
+    out = read_all(tmp_path / "int4")
+    config = json.loads((tmp_path / "int4" / "config.json").read_text())["quantization_config"]
+    grid, rotation = model.expert_format(config["experts"], out, out.__getitem__, "cpu")
+    assert torch.equal(grid, torch.tensor(convert.GRID))
+    assert list(rotation.signs) == [384] and torch.equal(rotation.signs[384], convert.rotation_signs(384))
+    assert model.expert_format({"quant_method": "gptq"}, out, out.__getitem__, "cpu") == (None, None)
+    with pytest.raises(ValueError, match="format"):
+        model.expert_format({"quant_method": "nf3"}, out, out.__getitem__, "cpu")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="the Triton kernels need CUDA")
+def test_the_kernels_read_the_grid():
+    from polyvox.engines.fish_drama3 import kernels
+
+    stacks = expert_stacks(higgs=True)
+    grid = torch.tensor(convert.GRID, device="cuda")
+    q, s = stacks["gate_q"].cuda(), stacks["gate_s"].cuda()
+    want = convert.dequant(q, s, torch.float32, grid)  # [E, K, N]
+    assert torch.equal(kernels.int4_dequant(q, s, grid), want.to(torch.bfloat16))
+    # Expert 4 in a GPU slot, expert 1 read from pinned CPU memory.
+    table = torch.full((6,), -1, dtype=torch.int32, device="cuda")
+    table[4] = 0
+    host_q, host_s = (
+        kernels.HostPointer(stacks["gate_q"].pin_memory()),
+        kernels.HostPointer(stacks["gate_s"].pin_memory()),
+    )
+    x = torch.randn(1, 128, device="cuda").bfloat16()
+    ids = torch.tensor([1, 4], dtype=torch.int32, device="cuda")
+    rows = torch.zeros(2, dtype=torch.int32, device="cuda")
+    got = kernels.int4_gemv_routed(x, rows, ids, table, q[4:5], s[4:5], host_q, host_s, grid)
+    assert torch.allclose(got, (x.float() @ want[[1, 4]])[:, 0], rtol=1e-3, atol=1e-3)
 
 
 def test_8_bit_linears_stay_close_to_their_weights():

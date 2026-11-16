@@ -68,7 +68,10 @@ per second of audio on a 16 GB GPU. The model's state after a reference is
 kept, so the lines after the first one with the same reference start sooner. It is a 35B mixture of experts, of which 3B
 work for each frame: its routed experts (17 GB in 4 bits) stay in the computer's
 memory, and the most used ones are also kept on the GPU (the rest are read over
-PCIe as needed). A long text is spoken in parts of whole sentences (a line
+PCIe as needed). The conversion needs no calibration data: the experts are
+stored as HIGGS (each block of 128 inputs rotated by a Hadamard matrix, then
+rounded to 16 levels fitted to a Gaussian), which on real speech came closer to
+the official weights than plain 4-bit rounding or GPTQ. A long text is spoken in parts of whole sentences (a line
 break ends one too), each part with the same reference, style and hints. A take
 that runs far longer than its text is drawn again once.
 
@@ -447,7 +450,7 @@ src/polyvox/
     fish_s2/       engine.py; model.py (our implementation); decode.py (CUDA graphs);
                    lora.py, train.py, worker.py (training)
     fish_drama3/   engine.py; model.py + decode.py + kernels.py (4-bit Triton kernels);
-                   prompt.py; edit.py (speech editing); convert.py (FP8 -> 4 bits)
+                   prompt.py; edit.py (speech editing); convert.py (FP8 -> 4 bits, experts as HIGGS)
   data/            manifests.py (training manifests); record.py (dataset.json);
                    audio_io.py (audio without a system FFmpeg)
   prep/            dataset preparation: steps.py (the dataset page's steps), importer.py,

@@ -1,17 +1,26 @@
 """The official Drama 3 checkpoint (block-FP8 routed experts, bf16 elsewhere) -> 4-bit weights.
 
-Quantized to INT4 (symmetric, one scale per group of weights along the input dimension, round to
-nearest after a search over 20 clip ratios per group; no calibration data):
-- the routed experts (FP8 with 128 x 128 block scales, dequantized first), groups of 128;
-- the full-attention q / k / v / o and linear-attention in_proj_qkv / in_proj_z / out_proj,
-  groups of 32: these have outlier weights, and finer groups cut their worst error by a third
-  for 60 MB more (groups of 128 would make the community builds' layout exactly).
+No calibration data. One scale per group of weights along the input dimension, each group's scale
+picked by a search for the least error:
+- the routed experts (FP8 with 128 x 128 block scales, dequantized first), groups of 128, as
+  HIGGS (Malinovskii et al., "Pushing the Limits of Large Language Model Quantization"): each
+  block of 128 inputs rotated by a randomized Hadamard matrix (outliers spread over the block,
+  the weights become near Gaussian), then rounded to the 16 levels with the least error for a
+  Gaussian. The engine rotates the experts'
+  inputs the same way, so their outputs are unchanged. Teacher-forced on real speech, this won
+  back about three quarters of what plain 4-bit rounding of the experts cost (GPTQ, calibrated
+  on speech, about half);
+- the full-attention q / k / v / o and linear-attention in_proj_qkv / in_proj_z / out_proj:
+  symmetric INT4 (q - 8) x scale in groups of 32: these have outlier weights, and finer groups cut
+  their worst error by a third for 60 MB more.
 The shared experts stay bf16 (4 bits there breaks the model: its gate and up errors multiply).
 Everything else is copied unchanged.
 
-Layout as the community drama-3-int4 builds (sglang-omni's GPTQ readers load it): experts as
-``qweight`` int32 [K/8, N] (value k at bits 4 * (k % 8) of word k // 8, stored + 8) and
-``scales`` fp16 [K/G, N]; dense linears also get ``qzeros`` (all 8) and a sorted ``g_idx``.
+Layout: ``qweight`` int32 [K/8, N] (value k at bits 4 * (k % 8) of word k // 8) and ``scales``
+fp16 [K/G, N]. The dense linears' values are stored + 8 with ``qzeros`` (all 8) and a sorted
+``g_idx`` (as GPTQ readers expect); the experts' are indices into the grid in the config, their
+rotation's signs stored as ``quant.hadamard_signs.<K>``. (``experts="int4"`` writes the experts as
+the dense linears: the community drama-3-int4 builds' layout.)
 """
 
 from __future__ import annotations
@@ -36,6 +45,76 @@ DENSE_TARGETS = [
 ZERO_POINTS = -2004318072  # 0x88888888: eight 4-bit zero points of 8
 SHARD_BYTES = 2_000_000_000
 STATS = "quant_stats.json"  # written last: a folder with it is complete
+# The experts' 16 levels: least squared error for a standard Gaussian (Lloyd-Max).
+GRID = (-2.7326, -2.0690, -1.6181, -1.2562, -0.9424, -0.6568, -0.3881, -0.1284,
+        0.1284, 0.3881, 0.6568, 0.9424, 1.2562, 1.6181, 2.0690, 2.7326)  # fmt: skip
+GRID_SCALES = (1.0, 0.5, 26)  # torch.linspace of the group's amax / GRID[-1] tried as its scale
+ROTATION = 128  # Hadamard block = the experts' group
+SIGNS = "quant.hadamard_signs.{}"  # the rotation's random signs for an input size K
+
+
+def hadamard(n: int = ROTATION, device=None):
+    """The orthonormal Hadamard matrix [n, n] (Sylvester), float32."""
+    import torch
+
+    h = torch.ones(1, 1)
+    while h.shape[0] < n:
+        h = torch.cat((torch.cat((h, h), 1), torch.cat((h, -h), 1)), 0)
+    return (h / math.sqrt(n)).to(device)
+
+
+def rotation_signs(k: int):
+    """The rotation's ±1 per input position (fixed per K; stored with the weights anyway)."""
+    import torch
+
+    g = torch.Generator().manual_seed(k)
+    return (torch.randint(0, 2, (k,), generator=g) * 2 - 1).to(torch.float32)
+
+
+def rotate(x, signs, h=None):
+    """x [..., K] times blockdiag(diag(signs) H) along K, in float32 (returned in x's dtype). The
+    same for weights [N, K] and for the inputs they multiply: x W^T = rotate(x) rotate(W)^T."""
+    k = x.shape[-1]
+    h = hadamard(ROTATION, x.device) if h is None else h
+    y = (x.float() * signs.to(x.device)).reshape(*x.shape[:-1], k // ROTATION, ROTATION) @ h
+    return y.reshape(x.shape).to(x.dtype)
+
+
+def unrotate(x, signs, h=None):
+    """rotate's inverse."""
+    k = x.shape[-1]
+    h = hadamard(ROTATION, x.device) if h is None else h
+    y = (x.float().reshape(*x.shape[:-1], k // ROTATION, ROTATION) @ h.T).reshape(x.shape)
+    return (y * signs.to(x.device)).to(x.dtype)
+
+
+def quantize_grid(w, grid=GRID, group: int = GROUP):
+    """float32 [N, K] -> (q uint8 [N, K]: indices into ``grid``, scales float32 [N, K / group])."""
+    import torch
+
+    n, k = w.shape
+    wg = w.view(n, k // group, group)
+    levels = torch.tensor(grid, device=w.device)
+    edges = (levels[1:] + levels[:-1]) / 2
+    base = wg.abs().amax(-1, keepdim=True).clamp_min(1e-12) / levels.abs().max()
+    best_err = torch.full_like(base, float("inf"))
+    best_s = base.clone()
+    for c in torch.linspace(*GRID_SCALES).tolist():
+        s = (base * c).half().float()  # as stored
+        err = ((levels[torch.bucketize(wg / s, edges)] * s - wg) ** 2).sum(-1, keepdim=True)
+        better = err < best_err
+        best_err = torch.where(better, err, best_err)
+        best_s = torch.where(better, s, best_s)
+    q = torch.bucketize(wg / best_s, edges)
+    return q.view(n, k).to(torch.uint8), best_s.squeeze(-1)
+
+
+def restore_grid(q, s, grid=GRID):
+    """quantize_grid's output -> float32 [N, K]."""
+    import torch
+
+    group = q.shape[1] // s.shape[1]
+    return torch.tensor(grid, device=q.device)[q.long()] * s.float().repeat_interleave(group, 1)
 
 
 def dequant_fp8(w, s):
@@ -89,12 +168,15 @@ def unpack(qweight):
     return ((qweight.unsqueeze(-2) >> shifts.view(8, 1)) & 0xF).flatten(-3, -2)
 
 
-def dequant(qweight, scales, dtype=None):
-    """int32 [..., K/8, N] + fp16 [..., K/G, N] -> W [..., K, N] = (q - 8) x scale."""
+def dequant(qweight, scales, dtype=None, grid=None):
+    """int32 [..., K/8, N] + fp16 [..., K/G, N] -> W [..., K, N] = (q - 8) x scale, or
+    grid[q] x scale with a grid (a float32 tensor of 16 levels: the experts')."""
     import torch
 
     group = qweight.shape[-2] * 8 // scales.shape[-2]
-    w = (unpack(qweight) - 8).to(torch.float32) * scales.to(torch.float32).repeat_interleave(group, dim=-2)
+    q = unpack(qweight)
+    values = (q - 8).to(torch.float32) if grid is None else grid.to(q.device)[q.long()]
+    w = values * scales.to(torch.float32).repeat_interleave(group, dim=-2)
     return w.to(dtype or torch.bfloat16)
 
 
@@ -104,14 +186,20 @@ def convert(
     progress: Callable[[float], None] | None = None,
     device: str | None = None,
     dense_group: int = DENSE_GROUP,
+    experts: str = "higgs",
 ) -> dict:
     """Write the 4-bit model of ``src`` into ``dst`` (built in ``dst.build`` and renamed when
-    complete). ``progress(fraction)`` may raise to cancel. Returns the quantization error stats."""
+    complete). ``progress(fraction)`` may raise to cancel. ``experts``: "higgs" (rotation + grid)
+    or "int4" (as the dense linears, groups of 128). Returns the quantization error stats."""
     import torch
     from safetensors import safe_open
     from safetensors.torch import save_file
 
+    if experts not in ("higgs", "int4"):
+        raise ValueError(f"unknown experts format {experts!r}")
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    h = hadamard(ROTATION, device)
+    signs: dict[int, object] = {}  # input size -> the rotation's signs (written once each)
     progress = progress or (lambda fraction: None)
     weight_map = json.loads((src / "model.safetensors.index.json").read_text(encoding="utf-8"))["weight_map"]
     handles: dict[str, object] = {}
@@ -147,8 +235,9 @@ def convert(
         if out_bytes > SHARD_BYTES:
             flush()
 
-    def record(kind, w, q, s, src_bytes, int4_bytes):
-        err = ((restore(q, s) - w).norm() / w.norm().clamp_min(1e-12)).item()
+    def record(kind, w, q, s, src_bytes, int4_bytes, grid=None):
+        back = restore(q, s) if grid is None else restore_grid(q, s, grid)
+        err = ((back - w).norm() / w.norm().clamp_min(1e-12)).item()  # (a rotation keeps norms)
         st = stats.setdefault(
             kind, {"tensors": 0, "rel_err_sum": 0.0, "rel_err_max": 0.0, "src_bytes": 0, "int4_bytes": 0}
         )
@@ -170,9 +259,18 @@ def convert(
                 if raw.dtype != torch.float8_e4m3fn:
                     raise ValueError(f"{key}: expected FP8 experts, found {raw.dtype}")
                 w = dequant_fp8(raw.to(device), block.to(device))
-                q, s = quantize(w)
+                if experts == "higgs":
+                    k = w.shape[1]
+                    if k not in signs:
+                        signs[k] = rotation_signs(k)
+                        put(SIGNS.format(k), signs[k])
+                    w = rotate(w, signs[k], h)
+                    q, s = quantize_grid(w)
+                else:
+                    q, s = quantize(w)
                 qw, sc = pack(q), s.t().contiguous().half()
-                record("experts", w, q, s, raw.numel() + block.numel() * 4, qw.numel() * 4 + sc.numel() * 2)
+                record("experts", w, q, s, raw.numel() + block.numel() * 4, qw.numel() * 4 + sc.numel() * 2,
+                       GRID if experts == "higgs" else None)  # fmt: skip
                 put(base + ".qweight", qw)
                 put(base + ".scales", sc)
             elif DENSE.search(key):
@@ -210,9 +308,14 @@ def convert(
     index = {"metadata": {"total_size": total}, "weight_map": final}
     (work / "model.safetensors.index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
     config = json.loads((src / "config.json").read_text(encoding="utf-8"))
+    expert_format = (
+        {"quant_method": "higgs", "bits": 4, "group_size": GROUP, "grid": list(GRID),
+         "rotation": {"kind": "randomized_hadamard", "block": ROTATION, "signs": SIGNS.format("<K>")}}
+        if experts == "higgs" else {"quant_method": "gptq", "bits": 4, "group_size": GROUP, "sym": True}
+    )  # fmt: skip
     config["quantization_config"] = {
         "quant_method": "drama3-int4", "bits": 4, "group_size": GROUP, "sym": True, "desc_act": False,
-        "experts": {"quant_method": "gptq", "bits": 4, "group_size": GROUP, "sym": True},
+        "experts": expert_format,
         "dense": {"quant_method": "gptq_marlin", "bits": 4, "group_size": dense_group, "sym": True, "desc_act": False,
                   "targets": DENSE_TARGETS},
     }  # fmt: skip

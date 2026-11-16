@@ -4,7 +4,9 @@
 the packed weights directly: int32 [S, K/8, N] (value k at bits 4 * (k % 8) of word k // 8, stored
 + 8) with fp16 scales [S, K/G, N] (G: 128 or another power of two from 8). One program covers
 BLOCK_N outputs of one row and walks K a scale group at a time; each packed word is read once.
-The routed kernel's experts are always in groups of 128.
+The routed kernel's experts are always in groups of 128. With a ``grid`` (16 float32 levels: the
+experts' of a HIGGS build, convert.py) a stored value q means grid[q] x scale instead of
+(q - 8) x scale.
 """
 
 from __future__ import annotations
@@ -67,7 +69,26 @@ def _split(programs: int, groups: int, target: int = 128) -> int:
 
 
 @triton.jit
-def _int4_dequant(qw_ptr, sc_ptr, out_ptr, K, N, BLOCK_W: tl.constexpr, BLOCK_N: tl.constexpr, WORDS: tl.constexpr):
+def _value(nibble, grid_ptr, GRID: tl.constexpr):
+    """A stored 4-bit value as a float32 level: grid[q], or q - 8. (Computing the levels as a
+    polynomial of q instead of reading them was no faster: the cost is the extra math per weight.)"""
+    if GRID:
+        return tl.load(grid_ptr + nibble)
+    return nibble.to(tl.float32) - 8.0
+
+
+def _grid_mode(grid: torch.Tensor | None) -> bool:
+    if grid is None:
+        return False
+    assert grid.dtype == torch.float32 and grid.numel() == 16, (grid.dtype, grid.shape)
+    return True
+
+
+@triton.jit
+def _int4_dequant(
+    qw_ptr, sc_ptr, grid_ptr, out_ptr, K, N,
+    BLOCK_W: tl.constexpr, BLOCK_N: tl.constexpr, WORDS: tl.constexpr, GRID: tl.constexpr,
+):  # fmt: skip
     """[S, K/8, N] int32 + [S, K/G, N] fp16 -> [S, K, N] bf16; one program per BLOCK_W packed rows."""
     wrow = tl.program_id(0) * BLOCK_W + tl.arange(0, BLOCK_W)  # over S * K/8
     offs_n = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
@@ -82,7 +103,7 @@ def _int4_dequant(qw_ptr, sc_ptr, out_ptr, K, N, BLOCK_W: tl.constexpr, BLOCK_N:
     s = s.to(tl.float32)
     base = (slot.to(tl.int64) * K + (wrow % kw).to(tl.int64) * 8)[:, None] * N + offs_n[None, :]
     for j in tl.static_range(8):
-        q = ((w >> (4 * j)) & 0xF).to(tl.float32) - 8.0
+        q = _value((w >> (4 * j)) & 0xF, grid_ptr, GRID)
         tl.store(out_ptr + base + j * N, (q * s).to(tl.bfloat16), mask=mask_n[None, :])
 
 
@@ -93,15 +114,15 @@ def _words(qweight: torch.Tensor, scales: torch.Tensor) -> int:
     return words
 
 
-def int4_dequant(qweight: torch.Tensor, scales: torch.Tensor) -> torch.Tensor:
-    """[S, K/8, N] int32 + [S, K/G, N] fp16 -> W [S, K, N] bf16."""
+def int4_dequant(qweight: torch.Tensor, scales: torch.Tensor, grid: torch.Tensor | None = None) -> torch.Tensor:
+    """[S, K/8, N] int32 + [S, K/G, N] fp16 (+ the 16 levels, if any) -> W [S, K, N] bf16."""
     s, kw, n = qweight.shape
     k = kw * 8
     out = torch.empty(s, k, n, device=qweight.device, dtype=torch.bfloat16)
     block_w, block_n = 16, 128
     _int4_dequant[(triton.cdiv(s * kw, block_w), triton.cdiv(n, block_n))](
-        qweight.contiguous(), scales.contiguous(), out, k, n,
-        BLOCK_W=block_w, BLOCK_N=block_n, WORDS=_words(qweight, scales), num_warps=4,
+        qweight.contiguous(), scales.contiguous(), scales if grid is None else grid, out, k, n,
+        BLOCK_W=block_w, BLOCK_N=block_n, WORDS=_words(qweight, scales), GRID=_grid_mode(grid), num_warps=4,
     )  # fmt: skip
     return out
 
@@ -116,11 +137,13 @@ def _int4_gemv_routed(
     sc_ptr,  # [S, K/128, N] fp16
     host_qw_ptr,  # [E, K/8, N] int32 (pinned CPU memory, read over PCIe)
     host_sc_ptr,  # [E, K/128, N] fp16
+    grid_ptr,  # [16] float32 levels (GRID)
     out_ptr,  # [SPLIT, R, N] fp32
     K,
     N,
     BLOCK_N: tl.constexpr,
     SPLIT: tl.constexpr,
+    GRID: tl.constexpr,
 ):
     row = tl.program_id(0)
     offs_n = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
@@ -145,11 +168,33 @@ def _int4_gemv_routed(
         part = tl.zeros((16, BLOCK_N), dtype=tl.float32)
         for j in tl.static_range(8):
             xj = tl.load(x_base + g * 128 + words * 8 + j).to(tl.float32)
-            q = ((w >> (4 * j)) & 0xF).to(tl.float32) - 8.0
+            q = _value((w >> (4 * j)) & 0xF, grid_ptr, GRID)
             part += xj[:, None] * q
         acc += part * s[None, :]
     rows = tl.num_programs(0)
     tl.store(out_ptr + (part_id * rows + row) * N + offs_n, tl.sum(acc, axis=0), mask=mask_n)
+
+
+@triton.jit
+def _rotate(x_ptr, signs_ptr, h_ptr, out_ptr, K, B: tl.constexpr):
+    """One block of B inputs of one row: out = (x * signs) @ H (convert.rotate), in float32."""
+    row = tl.program_id(0).to(tl.int64)
+    block = tl.program_id(1)
+    i = tl.arange(0, B)
+    offs = block * B + i
+    x = tl.load(x_ptr + row * K + offs).to(tl.float32) * tl.load(signs_ptr + offs)
+    h = tl.load(h_ptr + i[:, None] * B + i[None, :])
+    tl.store(out_ptr + row * K + offs, tl.sum(x[:, None] * h, axis=0).to(out_ptr.dtype.element_ty))
+
+
+def rotate(x: torch.Tensor, signs: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
+    """convert.rotate in one kernel (rows [R, K], K a multiple of H's size): for the few rows of a
+    decoding step, where the plain version's several small kernels cost more than the work."""
+    rows, k = x.shape
+    b = h.shape[0]
+    out = torch.empty_like(x)
+    _rotate[(rows, k // b)](x.contiguous(), signs, h, out, k, B=b, num_warps=4)
+    return out
 
 
 class HostPointer:
@@ -165,7 +210,9 @@ class HostPointer:
         return self.tensor.data_ptr()
 
 
-def int4_gemv_routed(x, x_rows, experts, table, qweight, scales, host_qweight: HostPointer, host_scales: HostPointer):
+def int4_gemv_routed(
+    x, x_rows, experts, table, qweight, scales, host_qweight: HostPointer, host_scales: HostPointer, grid=None
+):
     """As int4_gemv, with each row's weights found by expert: its GPU slot (``table``), else
     read from the host stacks. Graph-safe: nothing is decided on the CPU."""
     k = x.shape[1]
@@ -176,8 +223,8 @@ def int4_gemv_routed(x, x_rows, experts, table, qweight, scales, host_qweight: H
     split = _split(rows * blocks, k // 128)
     out = torch.empty(split, rows, n, device=x.device, dtype=torch.float32)
     _int4_gemv_routed[(rows, blocks, split)](
-        x, x_rows, experts, table, qweight, scales, host_qweight, host_scales, out, k, n,
-        BLOCK_N=block_n, SPLIT=split, num_warps=4,
+        x, x_rows, experts, table, qweight, scales, host_qweight, host_scales, scales if grid is None else grid,
+        out, k, n, BLOCK_N=block_n, SPLIT=split, GRID=_grid_mode(grid), num_warps=4,
     )  # fmt: skip
     return out[0] if split == 1 else out.sum(0)
 
