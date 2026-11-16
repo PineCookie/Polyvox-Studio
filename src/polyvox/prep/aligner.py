@@ -234,7 +234,9 @@ def ctc_alignment(emission, tokens: list[list[int]], words: list[str], blank: in
     flat = [t for ts in tokens for t in ts]
     if not flat:
         return Alignment([Word(w, 0.0, 0.0, aligned=False) for w in words], 0.0)
-    targets = torch.tensor([flat], dtype=torch.int32, device=emission.device)
+    # On the CPU: torchaudio builds for newer CUDA versions than its last release ship CPU-only (PyPI).
+    emission = emission.cpu()
+    targets = torch.tensor([flat], dtype=torch.int32)
     try:
         path, scores = F.forced_align(emission[None], targets, blank=blank)
     except RuntimeError:  # more tokens than frames: the text cannot be this audio
