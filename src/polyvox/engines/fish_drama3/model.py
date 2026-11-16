@@ -192,8 +192,13 @@ class Experts(nn.Module):
     def routed(self, hidden, experts, weights):
         """One token [1, dim] through its experts [k] with their weights [k]. On CUDA nothing is
         decided on the CPU (graph-safe): each expert is read from its slot or from CPU memory."""
+        down = self.routed_down(hidden, experts)
+        return (down * weights.float()[:, None]).sum(0, keepdim=True).to(hidden.dtype)
+
+    def routed_down(self, hidden, experts):
+        """routed's expert outputs before weighting: [k, dim] float32 (and their use counted)."""
         k = experts.shape[0]
-        self.counts.index_add_(0, experts, torch.ones_like(weights, dtype=torch.float32))
+        self.counts.index_add_(0, experts, torch.ones(k, dtype=torch.float32, device=experts.device))
         if self.fast:
             from .kernels import int4_gemv_routed
 
@@ -215,7 +220,7 @@ class Experts(nn.Module):
             gate, up = torch.einsum("d,edi->ei", x, w["gate"]), torch.einsum("d,edi->ei", x, w["up"])
             act = (F.silu(gate) * up).to(hidden.dtype).float()
             down = torch.einsum("ei,eid->ed", act, w["down"])
-        return (down * weights.float()[:, None]).sum(0, keepdim=True).to(hidden.dtype)
+        return down
 
     def routed_tokens(self, hidden, top_k_index, top_k_weights):
         """A few tokens [T, dim]: each (token, expert) pair read as in ``routed`` (CUDA)."""
@@ -431,7 +436,18 @@ class Drama3(nn.Module):
         head: int = 0,
     ) -> torch.Tensor:
         """``head``: the rows the references make up (prompt.parts): their states are kept."""
-        return self.decoder.generate(rows, sampling, max_frames, on_frame, head)
+        from .decode import Decoder
+
+        try:
+            return self.decoder.generate(rows, sampling, max_frames, on_frame, head)
+        except Exception as e:  # fusing failed (torch.compile: no working Triton, say): decode unfused
+            if not self.decoder.fused or isinstance(e, torch.OutOfMemoryError):
+                raise
+            logger.warning("Drama 3: fusing the decoding steps failed (%s); decoding unfused", e)
+            graphs = self.decoder.graphs
+            self.decoder = None
+            self.decoder = Decoder(self, graphs=graphs)
+            return self.decoder.generate(rows, sampling, max_frames, on_frame, head)
 
     @torch.inference_mode()
     def generate_reference(
@@ -569,7 +585,9 @@ def load(
     ]
     m.heads = [get(f"audio_decoder_mtp.heads.{i}.weight").to(device) for i in range(9)]
     handles.clear()
-    m.decoder = Decoder(m, graphs=graphs and str(device).startswith("cuda"))
+    graphs = graphs and on_cuda
+    # The small steps between the linear layers fused by torch.compile (with the graphs).
+    m.decoder = Decoder(m, graphs=graphs, fused=graphs)
     slots = expert_budget(expert_bytes(stacks[0]) * len(stacks)) if expert_budget else 0
     slots = max(0, min(slots, m.text_config.num_experts))
     for layer, parts in zip(m.backbone.layers, stacks, strict=True):

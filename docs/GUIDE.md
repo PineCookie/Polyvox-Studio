@@ -43,7 +43,7 @@ The first generation after a model loads takes longer while the model is
 compiled (about 30 s for VoxCPM2, a minute for dots.tts, a few seconds for
 S2-Pro; several minutes the very first time); later ones are fast.
 
-**Fish Audio Drama 3** clones zero-shot only (no training yet), at about 0.8 s
+**Fish Audio Drama 3** clones zero-shot only (no training yet), at about 0.6 s
 per second of audio on a 16 GB GPU. The model's state after a reference is
 kept, so the lines after the first one with the same reference start sooner. It is a 35B mixture of experts, of which 3B
 work for each frame: its routed experts (17 GB in 4 bits) stay in the computer's
@@ -268,7 +268,7 @@ plain PyTorch loop:
 | dots.tts synthesis | compiled; every decoding step replayed as a CUDA graph | about 4x faster |
 | GPT-SoVITS synthesis | the GPT's decoding step as one CUDA graph with a static cache and fused layer math; v4's diffusion model compiled | about 2.5x faster (v2Pro / v2ProPlus), 1.3x (v4) |
 | S2-Pro synthesis | our own implementation: each audio frame (the slow step and the fast transformer's ten) as one CUDA graph, the steps between its linear layers fused | about 0.6 s per second of audio |
-| Drama 3 synthesis | our own decoding step, each audio frame one CUDA graph; the 4-bit experts read in a Triton kernel from GPU slots or straight from CPU memory, so routing needs no CPU | about 7x faster than a plain loop over transformers' modules |
+| Drama 3 synthesis | our own decoding step, each audio frame one CUDA graph, the steps between its linear layers fused; the 4-bit weights read in Triton kernels, the experts from GPU slots or straight from CPU memory, so routing needs no CPU; a voice's prompt states kept | about 10x faster than a plain loop over transformers' modules |
 | VoxCPM2 training | frozen weights in bfloat16 (half the memory, so batches of 4 fit 16 GB); each clip's audio encoded once; transformer layers fused | about 1.6x faster per step; 2.3x on 8 GB cards |
 | dots.tts training | each clip encoded once and cached on disk; no vocabulary logits; fused layers | about 3x faster per step |
 | GPT-SoVITS training | no per-parameter GPU syncs; features cached per clip in the dataset; v4's diffusion blocks compiled | about 1.2x faster per step; starts in seconds |
