@@ -32,6 +32,9 @@ It also clones voices zero-shot with
 - 🎙️ **Five TTS models, one workflow.** VoxCPM2, dots.tts, GPT-SoVITS (v2Pro,
   v2ProPlus, v4) and Fish Audio S2-Pro: prepare a dataset once and train any of
   them. Fish Audio Drama 3, a 35B model run in 4 bits, clones zero-shot.
+- ✏️ **Fix a word without starting over.** Change the text of a generated clip
+  and Drama 3 speaks only the changed words again, in the clip's own voice; the
+  rest of the clip stays as it was.
 - ✂️ **Raw recordings in, clean dataset out.** Hours of audio, even m4a or video
   files, are cut into clips between words and transcribed automatically. Music,
   reverb and noise can be removed.
