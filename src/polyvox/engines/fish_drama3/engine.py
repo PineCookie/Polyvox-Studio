@@ -239,7 +239,7 @@ class FishDrama3Engine(Engine):
         free_tags=True,
         lora_hot_swap=False,
         training=False,
-        voice_reference=True,  # its voices: saved references (voices.py)
+        voice_reference=True,  # its voices: saved references (common.reference.create_voice)
         voice_reference_clips=3,
         reference_voices=True,
         # A clip with its transcript (several are joined into one).

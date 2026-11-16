@@ -428,18 +428,26 @@ as upstream has it, with any changes listed in each package's `__init__.py`.
 ```
 models/            downloaded models (git-ignored)
 data/              datasets: <name>/train.jsonl, audio, dataset.json (git-ignored)
-lora/              training runs, LoRAs and voices: voxcpm/, dots_tts/, gpt_sovits/, fish_s2/ (git-ignored)
+lora/              training runs, LoRAs and voices: voxcpm/, dots_tts/, gpt_sovits/, fish_s2/,
+                   fish_drama3/ (git-ignored)
 src/polyvox/
   config.py        settings from POLYVOX_* env vars
   models.py        the models used, and downloading them
   vram.py          settings per GPU size (batches, which models share the GPU)
-  engines/         TTS engines behind one interface (base.py; __init__.py: the registry)
+  engines/         TTS engines behind one interface (base.py: Engine, Capabilities;
+                   __init__.py: the registry). No engine imports another; what several share
+                   is in common/
+    common/        lora.py (LoRA hooks), worker.py (training-worker helpers), cache.py
+                   (per-clip dataset caches), reference.py (voices' default references,
+                   saved-reference voices), layers.py, fish_codec.py (Fish Audio's codec)
     voxcpm/        engine.py; inference.py (model cache, LoRA hot-swap); worker.py (training)
     dots/          engine.py; lora.py (LoRA layers, merging); worker.py (training)
     gpt_sovits/    engine.py; synth.py (synthesis); voices.py (voice folders, webui import);
                    features.py + worker.py (training: SoVITS then GPT)
-    fish_s2/       engine.py; model.py + codec.py (our implementation); decode.py (CUDA graphs);
+    fish_s2/       engine.py; model.py (our implementation); decode.py (CUDA graphs);
                    lora.py, train.py, worker.py (training)
+    fish_drama3/   engine.py; model.py + decode.py + kernels.py (4-bit Triton kernels);
+                   prompt.py; edit.py (speech editing); convert.py (FP8 -> 4 bits)
   data/            manifests.py (training manifests); record.py (dataset.json);
                    audio_io.py (audio without a system FFmpeg)
   prep/            dataset preparation: steps.py (the dataset page's steps), importer.py,

@@ -1,6 +1,6 @@
 """Discovery and metadata for trained checkpoints: LoRAs (VoxCPM, dots.tts), GPT-SoVITS
 voices (full weights; engines/gpt_sovits/voices.py) and saved-reference voices (Drama 3;
-engines/fish_drama3/voices.py), all in the LoRA folder.
+engines/common/reference.create_voice), all in the LoRA folder.
 
 The LoRA folder has one folder per engine (``voxcpm/``, ``dots_tts/``,
 ``gpt_sovits/``) holding its runs and voices; a checkpoint's id is its path
