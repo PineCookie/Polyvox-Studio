@@ -14,15 +14,10 @@ from starlette.background import BackgroundTask
 from .. import engines, lora_library, sharing
 from ..data import manifests, references
 from ..engines.common import reference
-from ..engines.fish_drama3 import voices as d3voices
-from ..engines.fish_s2 import lora as s2lora
 from ..engines.gpt_sovits import voices
 from ..prep import importer
 from .context import Studio, checked, found, save_upload
 from .schemas import GptSovitsImportIn, LoraConfigOut, LoraOut
-
-# Engines whose voices keep a dataset's best few clips joined (GPT-SoVITS: one clip of 3-10 s).
-JOINED_REFERENCES = (s2lora.ENGINE, d3voices.ENGINE)
 
 
 def keeps_reference(engine: str) -> bool:
@@ -130,15 +125,16 @@ def router(s: Studio) -> APIRouter:
         dataset: Annotated[str | None, Form()] = None,
         audio: Annotated[UploadFile | None, File()] = None,
     ) -> LoraOut:
-        """Change a voice's default reference clip: GPT-SoVITS takes the dataset's best
-        clip (3-10 s), S2-Pro its best few joined (as training picked them)."""
+        """Change a voice's default reference clip: the dataset's best clips joined as the
+        engine keeps them (capabilities.voice_reference_clips; GPT-SoVITS: one of 3-10 s)."""
         ckpt = voice_ckpt(id)
-        folder, s2 = ckpt.path, ckpt.engine in JOINED_REFERENCES
+        cls = engines.classes()[ckpt.engine]
+        folder, joined = ckpt.path, cls.capabilities.voice_reference_clips > 1
         if dataset:
-            if s2:
+            if joined:
                 manifest = found(manifests.resolve, settings.data_dir, dataset)
                 root = manifests.legacy_root(settings.data_dir)
-                picked = checked(references.pick, manifest, reference.JOINED_CLIPS, root)
+                picked = checked(references.pick, manifest, cls.capabilities.voice_reference_clips, root)
                 checked(reference.write_joined, folder, picked, f"dataset {dataset}")
             else:
                 clip, transcript = dataset_reference(dataset)
@@ -146,9 +142,8 @@ def router(s: Studio) -> APIRouter:
         elif audio is not None:
             path = save_upload(audio)
             try:  # any format audio_io reads
-                if s2:
-                    model = engines.classes()[ckpt.engine].name
-                    checked(partial(reference.write_file, model=model), folder, path, text, "upload")
+                if joined:
+                    checked(partial(reference.write_file, model=cls.name), folder, path, text, "upload")
                 else:
                     checked(voices.write_reference, folder, path, text, "upload")
             finally:
@@ -160,28 +155,29 @@ def router(s: Studio) -> APIRouter:
     @api.post("/api/loras/reference-voice")
     def create_reference_voice(
         name: Annotated[str, Form()],
-        engine: Annotated[str, Form()] = d3voices.ENGINE,
+        engine: Annotated[str | None, Form()] = None,  # none: the first engine whose voices are references
         # The dataset's best few clips joined, or an uploaded clip with its transcript.
         dataset: Annotated[str | None, Form()] = None,
         audio: Annotated[UploadFile | None, File()] = None,
         text: Annotated[str, Form()] = "",
     ) -> dict:
         """A saved voice for an engine whose voices are references only (capabilities.reference_voices)."""
-        cls = engines.classes().get(engine)
-        if cls is None or not cls.capabilities.reference_voices:
+        cls = engines.with_capability("reference_voices", engine)
+        if cls is None:
             raise HTTPException(422, f"Voices of '{engine}' aren't saved references.")
-        target = lora_library.engine_dir(settings.lora_dir, engine)
+        target = lora_library.engine_dir(settings.lora_dir, cls.id)
         target.mkdir(parents=True, exist_ok=True)
         path = None
+        create = partial(reference.create_voice, target, name.strip(), cls.id, cls.base_repo(), cls.name)
         try:
             if dataset:
                 manifest = found(manifests.resolve, settings.data_dir, dataset)
                 root = manifests.legacy_root(settings.data_dir)
-                clips = checked(references.pick, manifest, reference.JOINED_CLIPS, root)
-                d3voices.create(target, name.strip(), clips=clips, source=f"dataset {dataset}")
+                clips = checked(references.pick, manifest, cls.capabilities.voice_reference_clips, root)
+                create(clips=clips, source=f"dataset {dataset}")
             elif audio is not None:
                 path = save_upload(audio)
-                d3voices.create(target, name.strip(), audio=path, text=text, source="upload")
+                create(audio=path, text=text, source="upload")
             else:
                 raise HTTPException(422, "Give a dataset to pick clips from, or a clip with its transcript.")
         except FileExistsError as e:
@@ -191,6 +187,6 @@ def router(s: Studio) -> APIRouter:
         finally:
             if path is not None:
                 path.unlink(missing_ok=True)
-        return {"id": f"{engine}/{name.strip()}", "engine": engine}
+        return {"id": f"{cls.id}/{name.strip()}", "engine": cls.id}
 
     return api

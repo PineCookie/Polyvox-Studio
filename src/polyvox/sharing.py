@@ -32,7 +32,6 @@ from pathlib import Path, PurePosixPath
 
 from .engines import DEFAULT as DEFAULT_ENGINE
 from .engines.common.reference import REFERENCE_JSON, REFERENCE_WAV, read_reference
-from .engines.dots import lora as dots_lora
 from .engines.fish_s2 import lora as s2_lora
 from .engines.gpt_sovits import voices as gsv_voices
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
@@ -43,16 +42,17 @@ GSV_GPT_FILE = "gpt_weights.ckpt"
 # A GPT-SoVITS voice package's files besides the README (lora_config.json is rewritten on import).
 GSV_PACKAGE_FILES = ("sovits_weights.pth", GSV_GPT_FILE, REFERENCE_WAV, REFERENCE_JSON)
 PACKAGE_FILES = (WEIGHTS_FILE, CONFIG_FILE, README_FILE, *GSV_PACKAGE_FILES)
-# The engines a package can be for, and the base model the export suggests.
-ENGINE_BASE_MODELS = {
-    DEFAULT_ENGINE: "openbmb/VoxCPM2",
-    dots_lora.ENGINE: "rednote-hilab/dots.tts-soar",
-    s2_lora.ENGINE: "fishaudio/s2-pro",
-}
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)  # zip's earliest date: entries carry no export time
 PACKAGE_NAME = r"^[^\W_][\w.-]{0,79}$"  # Unicode letters allowed, like run names
 HUB_ID = re.compile(r"[A-Za-z0-9][\w.-]*/[\w.-]+")
 MAX_PACKAGE_BYTES = 2 * 1024**3
+
+
+def lora_package_engines() -> dict:
+    """The engines whose checkpoints export as LoRA packages (capabilities.package "lora")."""
+    from . import engines
+
+    return {id: cls for id, cls in engines.classes().items() if cls.capabilities.package == "lora"}
 
 
 def hub_id(base_model: str | None) -> str | None:
@@ -268,11 +268,11 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
         files[README_FILE] = _gsv_readme(name, json.loads(files[CONFIG_FILE])["version"], GSV_GPT_FILE in files,
                                          REFERENCE_WAV in files, checkpoint_step(ckpt)).encode()  # fmt: skip
         return _write_zip(name, files)
-    if not HUB_ID.fullmatch(base_model):
-        example = ENGINE_BASE_MODELS.get(ckpt.engine, "openbmb/VoxCPM2")
-        raise ValueError(f"Base model must be a Hugging Face id such as '{example}'.")
-    if ckpt.engine not in ENGINE_BASE_MODELS:
+    cls = lora_package_engines().get(ckpt.engine)
+    if cls is None:
         raise ValueError(f"LoRAs for '{ckpt.engine}' can't be exported.")
+    if not HUB_ID.fullmatch(base_model):
+        raise ValueError(f"Base model must be a Hugging Face id such as '{cls.base_repo()}'.")
 
     tensors = load_file(str(ckpt.path / WEIGHTS_FILE))
     if half:
@@ -366,7 +366,7 @@ def _check_config(data: bytes) -> str:
     try:
         info = json.loads(data)
         engine = str(info.get("engine") or DEFAULT_ENGINE)
-        if engine not in ENGINE_BASE_MODELS:
+        if engine not in lora_package_engines():
             raise ValueError(f"unknown engine '{engine}'")
         if engine == DEFAULT_ENGINE:
             LoRAConfig(**info["lora_config"])

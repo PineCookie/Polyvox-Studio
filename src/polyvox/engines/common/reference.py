@@ -4,8 +4,12 @@ In the voice's (or run's / checkpoint's) folder:
     reference.wav    PCM16 mono at the clip's own rate
     reference.json   {"text": its transcript, "source": where it came from}
 
-Engines that clone better from a longer reference (S2-Pro, Drama 3) join a dataset's best
-JOINED_CLIPS clips into one; GPT-SoVITS keeps one clip of 3-10 s.
+Engines that clone better from a longer reference (S2-Pro, Drama 3) join a dataset's best few
+clips into one (Capabilities.voice_reference_clips: ~20 s cloned clearly better than one clip);
+GPT-SoVITS keeps one clip of 3-10 s.
+
+An engine whose voices are only such a reference (Drama 3: capabilities.reference_voices) saves
+them with create_voice: no weights, a voice.json beside the reference marks the folder.
 """
 
 from __future__ import annotations
@@ -16,8 +20,8 @@ from pathlib import Path
 import numpy as np
 
 REFERENCE_WAV, REFERENCE_JSON = "reference.wav", "reference.json"
-JOINED_CLIPS = 3  # dataset clips joined into one: ~20 s cloned clearly better than one clip
 MAX_SECONDS = 30.0
+VOICE_NAME = r"^[^\W_][\w.-]{0,79}$"  # as run and package names
 
 
 def read_reference(folder: Path) -> tuple[Path, str] | None:
@@ -30,6 +34,48 @@ def read_reference(folder: Path) -> tuple[Path, str] | None:
     except (OSError, ValueError):
         text = ""
     return wav, text
+
+
+def create_voice(
+    engine_dir: Path,
+    name: str,
+    engine: str,
+    base_model: str | None,
+    model: str,
+    clips: list | None = None,
+    audio: Path | None = None,
+    text: str = "",
+    source: str = "",
+) -> Path:
+    """A saved voice of an engine whose voices are references only (capabilities.reference_voices):
+    ``<engine_dir>/<name>/`` with the reference (dataset clips joined, or one ``audio`` clip with
+    its transcript ``text``) and lora_library.VOICE_FILE {"engine", "base_model"}, which lists it."""
+    import re
+    import shutil
+
+    from ...lora_library import VOICE_FILE
+
+    if not re.fullmatch(VOICE_NAME, name):
+        raise ValueError("A voice name may contain letters (any language), digits, '.', '_' and '-' only.")
+    folder = engine_dir / name
+    if folder.exists():
+        raise FileExistsError(f"A voice named '{name}' already exists.")
+    staging = engine_dir / f".{name}.new"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        if clips:
+            write_joined(staging, clips, source)
+        elif audio is not None:
+            write_file(staging, audio, text, source, model=model)
+        else:
+            raise ValueError("Give a dataset to pick clips from, or a clip with its transcript.")
+        info = {"engine": engine, "base_model": base_model}
+        (staging / VOICE_FILE).write_text(json.dumps(info, indent=1), encoding="utf-8")
+        staging.rename(folder)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return folder
 
 
 def write_info(folder: Path, text: str, source: str) -> None:

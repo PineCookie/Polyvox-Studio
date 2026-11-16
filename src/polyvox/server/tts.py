@@ -172,14 +172,17 @@ def router(s: Studio) -> APIRouter:
         audio: Annotated[UploadFile, File()],
         text: Annotated[str, Form()],  # what the clip says
         new_text: Annotated[str, Form()],  # what it should say
-        engine: Annotated[str, Form()] = "fish_drama3",
+        engine: Annotated[str | None, Form()] = None,  # none: the first engine that edits speech
         seed: Annotated[int | None, Form()] = None,
     ) -> Response:
         """The clip with the changed words spoken again (the rest kept as it is); headers
         X-Edit-Start / X-Edit-End: where the new audio is, in seconds."""
-        tts_engine = s.registry.get(engine)
+        if engine:
+            tts_engine = s.registry.get(engine)
+        else:
+            tts_engine = next((e for e in s.registry.values() if e.capabilities.speech_edit), None)
         if tts_engine is None:
-            raise HTTPException(404, f"Unknown engine '{engine}'.")
+            raise HTTPException(404, f"Unknown engine '{engine}'." if engine else "No engine edits speech here.")
         if not tts_engine.capabilities.speech_edit:
             raise HTTPException(422, f"{tts_engine.name} can't edit speech.")
         if reason := tts_engine.unavailable():

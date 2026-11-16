@@ -8,14 +8,14 @@ import { FilePicker } from './FilePicker'
 
 interface Props {
   lora: Lora
+  // The engine joins a dataset's best few clips (capabilities.voice_reference_clips > 1), else takes one.
+  joined: boolean
   onChanged: () => void
   onError: (message: string) => void
 }
 
 /** A voice's default reference clip (GPT-SoVITS, S2-Pro, Drama 3): listen, read its transcript, replace it. */
-export function VoiceReference({ lora, onChanged, onError }: Props) {
-  // S2-Pro and Drama 3 join a dataset's best few clips (they clone better from ~20 s); GPT-SoVITS takes one of 3–10 s.
-  const joined = lora.engine !== 'gpt_sovits'
+export function VoiceReference({ lora, joined, onChanged, onError }: Props) {
   const t = useT()
   const [editing, setEditing] = useState(false)
   const [source, setSource] = useState<'dataset' | 'clip'>('dataset')

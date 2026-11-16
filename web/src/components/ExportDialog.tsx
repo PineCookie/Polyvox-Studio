@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { exportLora } from '../api'
-import type { Lora } from '../api'
+import type { Engine, Lora } from '../api'
 import { formatStep } from '../format'
 import { useT } from '../i18n'
 
 interface Props {
   lora: Lora
+  engine: Engine | null // the checkpoint's engine (what its package holds)
   // The run's last checkpoint: named after the run alone.
   final: boolean
   onError: (message: string) => void
@@ -15,12 +16,6 @@ interface Props {
 
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
 const HUB_ID_PATTERN = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/
-// The usual base model per engine (sharing.ENGINE_BASE_MODELS).
-const BASE_MODELS: Record<string, string> = {
-  voxcpm: 'openbmb/VoxCPM2',
-  dots_tts: 'rednote-hilab/dots.tts-soar',
-  fish_s2: 'fishaudio/s2-pro',
-}
 
 // "voxcpm/speaker_r64/checkpoints/step_0004000" -> "speaker_r64_step4000"; the run name for its final weights.
 function defaultName(lora: Lora, final: boolean): string {
@@ -37,7 +32,7 @@ function save(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-export function ExportDialog({ lora, final, onError, onClose }: Props) {
+export function ExportDialog({ lora, engine, final, onError, onClose }: Props) {
   const t = useT()
   const dialog = useRef<HTMLDialogElement>(null)
   const [name, setName] = useState(() => defaultName(lora, final))
@@ -49,8 +44,8 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
     dialog.current?.showModal()
   }, [])
 
-  // A GPT-SoVITS voice: whole models in the webui's format, with its reference (no base model or precision to set).
-  const voice = lora.engine === 'gpt_sovits'
+  // Whole models (GPT-SoVITS: the webui's format, with its reference): no base model or precision to set.
+  const voice = engine?.capabilities.package === 'voice'
   const nameOk = NAME_PATTERN.test(name)
   const baseOk = voice || HUB_ID_PATTERN.test(baseModel)
 
@@ -86,7 +81,7 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
 
         <p className="muted hint">
           {voice ? t.exportVoiceIntro : t.exportIntro}
-          {lora.engine === 'fish_s2' && ` ${t.exportReferenceNote}`}
+          {!voice && engine?.capabilities.voice_reference && ` ${t.exportReferenceNote}`}
         </p>
 
         <label className="field">
@@ -104,7 +99,7 @@ export function ExportDialog({ lora, final, onError, onClose }: Props) {
               <input
                 value={baseModel}
                 onChange={(e) => setBaseModel(e.target.value)}
-                placeholder={BASE_MODELS[lora.engine] ?? BASE_MODELS.voxcpm}
+                placeholder={engine?.base_repo ?? ''}
               />
             </label>
             <label className="check">

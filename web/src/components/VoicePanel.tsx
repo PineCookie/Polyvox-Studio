@@ -76,9 +76,6 @@ function groupVoices(loras: Lora[], t: Messages): Voice[] {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
 }
 
-// Engines whose checkpoints export as packages (sharing.ENGINE_BASE_MODELS, GPT-SoVITS voices).
-const EXPORTABLE = new Set([DEFAULT_ENGINE, 'dots_tts', 'gpt_sovits', 'fish_s2'])
-
 function shortModel(id: string): string {
   return id.split('/').at(-1) ?? id
 }
@@ -107,7 +104,8 @@ export function VoicePanel({
   // Engines whose voices are saved references only: no layout or steps to show.
   const referenceOnly = (id: string) => !!engines.find((e) => e.id === id)?.capabilities.reference_voices
 
-  const engineName = (id: string) => engines.find((e) => e.id === id)?.name ?? id
+  const engineOf = (id: string) => engines.find((e) => e.id === id) ?? null
+  const engineName = (id: string) => engineOf(id)?.name ?? id
   // Voices of these engines keep a default reference clip.
   const keepsReference = (id: string) => !!engines.find((e) => e.id === id)?.capabilities.voice_reference
   const current = loras.find((l) => l.id === selected.lora) ?? null
@@ -258,7 +256,7 @@ export function VoicePanel({
           <>
             <div className="voice-current-head">
               <span className="voice-name">{currentVoice.name}</span>
-              {EXPORTABLE.has(current.engine) && (
+              {!!engineOf(current.engine)?.capabilities.package && (
                 <button type="button" className="ghost small" onClick={() => setExporting(current)}>
                   {t.export}
                 </button>
@@ -286,7 +284,12 @@ export function VoicePanel({
               </span>
             </p>
             {keepsReference(current.engine) && (
-              <VoiceReference lora={current} onChanged={onRefresh} onError={onError} />
+              <VoiceReference
+                lora={current}
+                joined={(engineOf(current.engine)?.capabilities.voice_reference_clips ?? 1) > 1}
+                onChanged={onRefresh}
+                onError={onError}
+              />
             )}
           </>
         ) : (
@@ -362,6 +365,7 @@ export function VoicePanel({
       {exporting && (
         <ExportDialog
           lora={exporting}
+          engine={engineOf(exporting.engine)}
           final={currentVoice?.checkpoints[0]?.lora.id === exporting.id}
           onError={onError}
           onClose={() => setExporting(null)}

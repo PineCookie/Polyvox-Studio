@@ -103,6 +103,7 @@ class VoxCPMEngine(Engine):
             ),
         ),
         lora_hot_swap=True,
+        package="lora",
         reference_inputs=(
             # reference_wav_path: who it sounds like.
             ReferenceInput("reference", "reference", "none"),

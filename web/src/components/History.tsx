@@ -28,7 +28,7 @@ function fileName(clip: Clip): string {
     .slice(0, 32)
     .replace(/[^\p{L}\p{N}]+/gu, '_')
     .replace(/^_|_$/g, '')
-  return `${slug || 'voxcpm'}_${clip.seed ?? clip.id}.wav`
+  return `${slug || 'speech'}_${clip.seed ?? clip.id}.wav`
 }
 
 export function History({ clips, ...props }: Props) {

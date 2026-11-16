@@ -33,6 +33,7 @@ __all__ = [
     "TagGroup",
     "classes",
     "create",
+    "with_capability",
 ]
 
 
@@ -50,6 +51,14 @@ def classes() -> dict[str, type[Engine]]:
         FishS2Engine.id: FishS2Engine,
         FishDrama3Engine.id: FishDrama3Engine,
     }
+
+
+def with_capability(capability: str, engine: str | None = None) -> type[Engine] | None:
+    """``engine``'s class if it has ``capability`` (a true Capabilities field), else None;
+    without ``engine``, the first engine that has it."""
+    found = classes()
+    candidates = [found[engine]] if engine in found else [] if engine else list(found.values())
+    return next((cls for cls in candidates if getattr(cls.capabilities, capability)), None)
 
 
 def create(settings: Settings, **instances: Engine) -> dict[str, Engine]:

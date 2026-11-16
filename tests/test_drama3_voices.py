@@ -10,10 +10,11 @@ import soundfile as sf
 import torch
 from fastapi.testclient import TestClient
 
-from polyvox import lora_library
+from polyvox import engines, lora_library
 from polyvox.data import manifests
 from polyvox.engines import SynthesisRequest
-from polyvox.engines.fish_drama3 import engine, voices
+from polyvox.engines.common import reference
+from polyvox.engines.fish_drama3 import engine
 from polyvox.server import create_app
 
 RATE = 16_000
@@ -38,21 +39,28 @@ def dataset(data_dir, texts=("第一句话。", "第二句话。", "第三句话
     return folder / "train.jsonl"
 
 
+def create(target, name, **kw):
+    cls = engine.FishDrama3Engine
+    return reference.create_voice(target, name, cls.id, cls.base_repo(), cls.name, **kw)
+
+
 def test_a_voice_is_its_reference_and_lists_like_the_others(lora_dir, tmp_path):
-    target = lora_library.engine_dir(lora_dir, voices.ENGINE)
-    voices.create(target, "voice_a", audio=tone(tmp_path / "clip.wav", 6.0), text="示例。", source="upload")
+    target = lora_library.engine_dir(lora_dir, "fish_drama3")
+    create(target, "voice_a", audio=tone(tmp_path / "clip.wav", 6.0), text="示例。", source="upload")
 
     (voice,) = lora_library.scan(lora_dir)
-    assert (voice.id, voice.engine, voice.base_model) == ("fish_drama3/voice_a", "fish_drama3", voices.BASE_MODEL)
+    assert (voice.id, voice.engine, voice.base_model) == ("fish_drama3/voice_a", "fish_drama3", "fishaudio/drama-3")
     assert voice.voice_path == "fish_drama3/voice_a" and voice.weights_mtime > 0
     assert lora_library.resolve(lora_dir, "fish_drama3/voice_a").engine == "fish_drama3"
     with pytest.raises(FileExistsError):
-        voices.create(target, "voice_a", audio=tmp_path / "clip.wav", text="示例。")
+        create(target, "voice_a", audio=tmp_path / "clip.wav", text="示例。")
     with pytest.raises(ValueError, match="transcript"):
-        voices.create(target, "voice_b", audio=tmp_path / "clip.wav", text="")
+        create(target, "voice_b", audio=tmp_path / "clip.wav", text="")
     with pytest.raises(ValueError, match="name"):
-        voices.create(target, "../x", audio=tmp_path / "clip.wav", text="示例。")
+        create(target, "../x", audio=tmp_path / "clip.wav", text="示例。")
     assert sorted(p.name for p in target.iterdir()) == ["voice_a"]  # nothing half-made left
+    assert engines.with_capability("reference_voices") is engine.FishDrama3Engine
+    assert engines.with_capability("reference_voices", "fish_s2") is None
 
 
 class Letters:
@@ -85,8 +93,8 @@ class FakeRuntime:
 
 
 def test_a_voice_speaks_with_its_reference_unless_given_another(settings, lora_dir, monkeypatch, tmp_path):
-    voices.create(
-        lora_library.engine_dir(lora_dir, voices.ENGINE),
+    create(
+        lora_library.engine_dir(lora_dir, "fish_drama3"),
         "voice_a",
         audio=tone(tmp_path / "c.wav", 6.0),
         text="她的参考。",
@@ -117,6 +125,11 @@ def test_voices_are_made_and_changed_through_the_api(settings, service, training
     assert r.status_code == 200 and r.json() == {"id": "fish_drama3/voice_a", "engine": "fish_drama3"}
     (voice,) = [v for v in client.get("/api/loras").json() if v["engine"] == "fish_drama3"]
     assert voice["reference_text"].count("句话") == 3  # the best three clips, joined
+    listed = {e["id"]: e for e in client.get("/api/engines").json()}
+    caps = {i: (e["capabilities"]["package"], e["capabilities"]["voice_reference_clips"]) for i, e in listed.items()}
+    assert caps == {"voxcpm": ("lora", 1), "dots_tts": ("lora", 1), "gpt_sovits": ("voice", 1),
+                    "fish_s2": ("lora", 3), "fish_drama3": (None, 3)}  # fmt: skip
+    assert listed["fish_drama3"]["base_repo"] == "fishaudio/drama-3"
     assert client.get("/api/loras/reference", params={"id": "fish_drama3/voice_a"}).status_code == 200
 
     clip = tone(tmp_path / "up.wav", 4.0).read_bytes()

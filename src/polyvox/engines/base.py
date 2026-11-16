@@ -87,6 +87,11 @@ class Capabilities:
     # Trained voices keep a default reference clip (reference.wav + reference.json), used
     # when a request gives none; changeable in the Voices panel.
     voice_reference: bool = False
+    # How many of a dataset's best clips such a reference joins (more clone better on some models).
+    voice_reference_clips: int = 1
+    # What an exported voice package holds (sharing.py): "lora" = the LoRA weights + config (a
+    # base model and precision to choose), "voice" = whole models; None = no export.
+    package: Literal["lora", "voice"] | None = None
     # Its voices are saved references only (no training): made in the Voices panel from a
     # dataset's clips or an uploaded clip (lora_library.VOICE_FILE marks the folder).
     reference_voices: bool = False
@@ -117,7 +122,7 @@ class SynthesisRequest:
     lora_id: str | None = None
     reference_wav: Path | None = None
     prompt_text: str | None = None  # transcript of prompt_wav
-    # More clips of the same voice (engines with capabilities.several_references).
+    # More clips of the same voice (engines whose reference input takes several: ReferenceInput.several).
     extra_references: list[Path] = field(default_factory=list)
     seed: int | None = None
     # Values for the engine's Params, by name; missing ones take their defaults.
@@ -220,6 +225,13 @@ class Engine(ABC):
         """A run's config made ready to resume (e.g. paths of runs made elsewhere)."""
         return config
 
+    @classmethod
+    def base_repo(cls) -> str | None:
+        """The Hugging Face repo of its base model (models.MODELS)."""
+        from ..models import MODELS
+
+        return next((m.repo for m in MODELS if m.setting == cls.model_setting), None)
+
     def public(self) -> dict:
         return {
             "id": self.id,
@@ -229,6 +241,7 @@ class Engine(ABC):
             "capabilities": asdict(self.capabilities),
             "params": [asdict(p) for p in self.params],
             "model_setting": self.model_setting,
+            "base_repo": self.base_repo(),
             "loaded": self.loaded,
         }
 

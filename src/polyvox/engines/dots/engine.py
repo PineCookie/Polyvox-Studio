@@ -68,6 +68,7 @@ class DotsEngine(Engine):
         style=False,
         tags=False,
         lora_hot_swap=True,
+        package="lora",
         # One clip: its speaker embedding, and with its transcript also speech to continue.
         reference_inputs=(ReferenceInput("clip", "prompt", "optional"),),
     )

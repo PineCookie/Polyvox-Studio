@@ -74,6 +74,8 @@ export interface Engine {
     lora_hot_swap: boolean
     reference_required: boolean // always clones a clip: the request's or the voice's own
     voice_reference: boolean // trained voices keep a default reference clip (used when none is given)
+    voice_reference_clips: number // how many of a dataset's best clips that reference joins
+    package: 'lora' | 'voice' | null // what an export holds: LoRA weights (base model, precision) or whole models
     reference_voices: boolean // its voices are saved references only, made in the Voices panel
     training: boolean // New run offers it
     full_finetune: boolean // trains every weight: no LoRA rank or optimizer choice
@@ -84,6 +86,7 @@ export interface Engine {
   }
   params: EngineParam[] // synthesis settings
   model_setting: string // its base model in the Models list
+  base_repo: string | null // that model's Hugging Face repo
   loaded: boolean
 }
 

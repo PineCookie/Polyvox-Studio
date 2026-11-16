@@ -190,6 +190,8 @@ class FishS2Engine(Engine):
         free_tags=True,
         lora_hot_swap=True,
         voice_reference=True,
+        voice_reference_clips=3,
+        package="lora",
         # A clip with its transcript (several are joined into one).
         reference_inputs=(ReferenceInput("reference", "prompt", "required"),),
     )
@@ -335,7 +337,6 @@ class FishS2Engine(Engine):
         ``params``). The run's reference (samples, the voice's default) is the
         dataset's best few clips joined."""
         from ...data import manifests, references
-        from ..common.reference import JOINED_CLIPS
 
         if reason := self.training_unavailable():
             raise ValueError(f"Fish Audio S2-Pro can't train here: {reason}")
@@ -347,7 +348,8 @@ class FishS2Engine(Engine):
         if params.s2_slow and params.optimizer != "adamw":
             raise ValueError("Training the slow transformer needs AdamW (Prodigy can't give it a smaller rate).")
         dataset = manifests.resolve(self.settings.data_dir, params.dataset)
-        picked = references.pick(dataset, JOINED_CLIPS, manifests.legacy_root(self.settings.data_dir))
+        clips = self.capabilities.voice_reference_clips
+        picked = references.pick(dataset, clips, manifests.legacy_root(self.settings.data_dir))
         return {
             "pretrained_path": self.settings.model_path(self.model_setting),
             "train_manifest": str(train_manifest),
