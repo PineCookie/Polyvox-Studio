@@ -87,18 +87,13 @@
 
 ## 🚀 快速开始
 
-1. 安装 [uv](https://docs.astral.sh/uv/)：
-
-   ```powershell
-   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
-   curl -LsSf https://astral.sh/uv/install.sh | sh                                       # Linux
-   ```
-
-2. 下载[最新版本](../../releases/latest)（Windows 用 `.zip`，Linux 用 `.tar.gz`），解压后运行
-   `run.bat` 或 `./run.sh`。首次启动会安装所有依赖，需要几分钟。
-3. 打开 http://127.0.0.1:8808 ，在「模型」页下载 **VoxCPM2**。在中国大陆可以在该页选择
+1. 下载[最新版本](../../releases/latest)（Windows 用 `.zip`，Linux 用 `.tar.gz`），解压后运行
+   `run.bat` 或 `./run.sh`。首次启动会安装所有依赖，需要几分钟。安装依赖要用到
+   [uv](https://docs.astral.sh/uv/)（它负责安装 Python 和其余依赖）：如果还没有安装 uv，
+   `run.bat` / `run.sh` 会询问是否帮你安装。
+2. 打开 http://127.0.0.1:8808 ，在「模型」页下载 **VoxCPM2**。在中国大陆可以在该页选择
    hf-mirror.com 镜像（首次使用时自动下载的模型也会从镜像下载）。
-4. 在「合成」页输入文字，点击「生成」。🎉
+3. 在「合成」页输入文字，点击「生成」。🎉
 
 **更新：** 有新版本时程序会提示。关闭程序后，运行其文件夹中的 `update.bat`（Linux 上为
 `./update.sh`）：程序文件会被替换，模型、数据集和音色都会保留。

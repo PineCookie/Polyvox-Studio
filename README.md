@@ -100,18 +100,13 @@ How each is done, and more numbers, in the [guide](docs/GUIDE.md#speed).
 
 ## 🚀 Quick start
 
-1. Install [uv](https://docs.astral.sh/uv/):
-
-   ```powershell
-   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
-   curl -LsSf https://astral.sh/uv/install.sh | sh                                       # Linux
-   ```
-
-2. Download the [latest release](../../releases/latest) (`.zip` for Windows,
+1. Download the [latest release](../../releases/latest) (`.zip` for Windows,
    `.tar.gz` for Linux), unpack it and run `run.bat` or `./run.sh`. The first
-   start installs everything, which takes a few minutes.
-3. Open http://127.0.0.1:8808 and download **VoxCPM2** in the **Models** tab.
-4. Type something in **Synthesize** and press **Generate**. 🎉
+   start installs everything, which takes a few minutes. It needs
+   [uv](https://docs.astral.sh/uv/), which installs Python and the rest: if uv
+   is missing, `run.bat` / `run.sh` offers to install it.
+2. Open http://127.0.0.1:8808 and download **VoxCPM2** in the **Models** tab.
+3. Type something in **Synthesize** and press **Generate**. 🎉
 
 **Updating:** the studio says when a new version is out. Close it, then run
 `update.bat` (`./update.sh` on Linux) in its folder: the program files are

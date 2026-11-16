@@ -12,10 +12,33 @@ export POLYVOX_MODELS_DIR="${POLYVOX_MODELS_DIR:-$here/models}"
 export POLYVOX_LORA_DIR="${POLYVOX_LORA_DIR:-$here/lora}"
 export POLYVOX_DATA_DIR="${POLYVOX_DATA_DIR:-$here/data}"
 
-if ! command -v uv >/dev/null 2>&1; then
-  echo "uv is not installed. Install it, then run this again:" >&2
+# uv installs Python and the dependencies; offer to install it when it's missing.
+no_uv() {
+  echo "Install uv, then run this again:" >&2
   echo "  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
   exit 1
+}
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is not installed. It installs Python and everything else the studio needs" >&2
+  echo "(https://docs.astral.sh/uv/, a single program)." >&2
+  printf "Install uv now? [Y/n] " >&2
+  # No answer to read (not run from a terminal): don't install.
+  read -r answer || answer=n
+  case "$answer" in [nN]*) no_uv ;; esac
+  if command -v curl >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh || no_uv
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- https://astral.sh/uv/install.sh | sh || no_uv
+  else
+    echo "Neither curl nor wget is installed." >&2
+    no_uv
+  fi
+  # The installer puts uv on PATH for new shells; this one needs it too.
+  export PATH="${UV_INSTALL_DIR:+$UV_INSTALL_DIR:}${XDG_BIN_HOME:+$XDG_BIN_HOME:}$HOME/.local/bin:$PATH"
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "uv was installed, but this shell can't find it yet: open a new one and run this again." >&2
+    exit 1
+  fi
 fi
 
 # Release archives include the built web UI; a git checkout builds it once (Node.js 20+).
