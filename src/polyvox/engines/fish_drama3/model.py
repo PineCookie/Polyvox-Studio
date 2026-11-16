@@ -170,9 +170,12 @@ class Experts(nn.Module):
                 start += c
         cached = [(e, self.held[e]) for e in groups if e in self.held]
         streamed = [e for e in groups if e not in self.held]
-        if cached:
-            index = torch.tensor([s for _, s in cached], device=self.device)
-            self._run({k: v.index_select(0, index) for k, v in self.gpu.items()}, [e for e, _ in cached],
+        # A chunk at a time: a long prompt uses nearly every held expert, and unpacked all at once
+        # they took ~1 GB (bf16) at the GPU's fullest moment.
+        for i in range(0, len(cached), STREAM_CHUNK):
+            chunk = cached[i : i + STREAM_CHUNK]
+            index = torch.tensor([s for _, s in chunk], device=self.device)
+            self._run({k: v.index_select(0, index) for k, v in self.gpu.items()}, [e for e, _ in chunk],
                       hidden, groups, out)  # fmt: skip
         # Many missing (a prompt needs nearly every expert): the layer's whole stack to the GPU at once.
         whole = _on_gpu(self.cpu, self.device) if len(streamed) > STREAM_CHUNK else None

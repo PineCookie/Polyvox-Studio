@@ -170,6 +170,16 @@ def ram_gb() -> float | None:
         return None
 
 
+def release_cache() -> None:
+    """The GPU blocks a request freed back to the driver: the expert slots fill the card, and
+    blocks PyTorch keeps cached between requests left new sizes no room ("allocation failed with
+    OOM", then a retry after emptying the cache, mid-request)."""
+    import torch
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def frame_cap(expected: int) -> int:
     return min(MAX_FRAMES, max(CAP_MIN, round(expected * CAP_FACTOR)))
 
@@ -368,6 +378,7 @@ class FishDrama3Engine(Engine):
                 return SynthesisResult(rt.codec.sample_rate, audio, seed)
             finally:
                 self._progress.phase = "idle"
+                release_cache()
 
     def edit(self, req: EditRequest) -> SynthesisResult:
         import torch
@@ -420,6 +431,7 @@ class FishDrama3Engine(Engine):
                 return SynthesisResult(rt.codec.sample_rate, audio, seed, span=seconds)
             finally:
                 self._progress.phase = "idle"
+                release_cache()
 
     def _count(self) -> None:
         self._progress.phase = "generating"
