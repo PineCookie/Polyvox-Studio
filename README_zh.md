@@ -90,9 +90,12 @@
 1. 下载[最新版本](../../releases/latest)（Windows 用 `.zip`，Linux 用 `.tar.gz`），解压后运行
    `run.bat` 或 `./run.sh`。首次启动会安装所有依赖，需要几分钟。安装依赖要用到
    [uv](https://docs.astral.sh/uv/)（它负责安装 Python 和其余依赖）：如果还没有安装 uv，
-   `run.bat` / `run.sh` 会询问是否帮你安装。
-2. 打开 http://127.0.0.1:8808 ，在「模型」页下载 **VoxCPM2**。在中国大陆可以在该页选择
-   hf-mirror.com 镜像（首次使用时自动下载的模型也会从镜像下载）。
+   `run.bat` / `run.sh` 会询问是否帮你安装。首次安装前还会询问是否使用中国大陆的镜像
+   （"Download from these mirrors?"），在中国大陆请回答 y：Python 包从清华大学镜像下载，
+   PyTorch 和 Python 从南京大学镜像下载，模型默认从 hf-mirror.com 下载。选择保存在程序文件夹的
+   `.mirror` 文件中（`cn` 或 `off`），修改或删除它即可重新选择。
+2. 打开 http://127.0.0.1:8808 ，在「模型」页下载 **VoxCPM2**。下载源也可以在该页更改
+   （首次使用时自动下载的模型同样使用该下载源）。
 3. 在「合成」页输入文字，点击「生成」。🎉
 
 **更新：** 有新版本时程序会提示。关闭程序后，运行其文件夹中的 `update.bat`（Linux 上为

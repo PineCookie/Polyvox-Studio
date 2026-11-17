@@ -323,6 +323,17 @@ machine (`POLYVOX_TORCH` overrides):
 | `rocm` | AMD GPUs on Linux (ROCm 7.2: recent Radeon and Instinct; untested) |
 | `cpu` | no GPU: datasets can be prepared, but synthesis is slow and training impractical |
 
+The first start downloads several GB (PyTorch alone is about 3 GB on Windows). Before
+it, `run.bat` / `run.sh` ask whether to use mirrors in mainland China, suggesting yes
+when the system is set to China's time zone or a zh-CN locale: Tsinghua University's
+PyPI mirror, Nanjing University's for PyTorch and for Python itself, and hf-mirror.com
+as the Models tab's default source (a source chosen there still wins). The answer is
+kept in `.mirror` in the studio folder (`cn` or `off`; updates keep it; change or
+delete it to choose again, or set `POLYVOX_MIRROR`). With the mirrors, the scripts
+point the download addresses in `uv.lock` at the same files on the mirrors and install
+with `--frozen`: the versions stay exactly those locked, and uv checks each file
+against its locked hash. Turning the mirrors off points the addresses back.
+
 The studio picks batch sizes and which models share the GPU from its memory:
 
 | GPU memory | Synthesis | Training | Preparing datasets |
@@ -391,6 +402,7 @@ Environment variables, all optional:
 |---|---|---|
 | `POLYVOX_MODELS_DIR` | `models` | downloaded models |
 | `POLYVOX_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` (until one is chosen in the Models tab) |
+| `POLYVOX_MIRROR` | (`.mirror`) | `run.bat` / `run.sh`: `cn` installs from mirrors in mainland China, `off` doesn't (see [Hardware](#hardware)) |
 | `POLYVOX_UPDATE_CHECK` | `1` | ask GitHub at startup and once a day whether a newer release is out (`0`: never) |
 | `POLYVOX_LORA_DIR` | `lora` | training runs, LoRAs and voices |
 | `POLYVOX_DATA_DIR` | `data` | datasets |

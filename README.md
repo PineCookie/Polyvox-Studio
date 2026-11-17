@@ -104,7 +104,8 @@ How each is done, and more numbers, in the [guide](docs/GUIDE.md#speed).
    `.tar.gz` for Linux), unpack it and run `run.bat` or `./run.sh`. The first
    start installs everything, which takes a few minutes. It needs
    [uv](https://docs.astral.sh/uv/), which installs Python and the rest: if uv
-   is missing, `run.bat` / `run.sh` offers to install it.
+   is missing, `run.bat` / `run.sh` offers to install it. In mainland China, answer
+   yes when it asks about mirrors.
 2. Open http://127.0.0.1:8808 and download **VoxCPM2** in the **Models** tab.
 3. Type something in **Synthesize** and press **Generate**. 🎉
 

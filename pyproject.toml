@@ -61,6 +61,11 @@ conflicts = [[{ group = "cu130" }, { group = "cu126" }, { group = "rocm" }, { gr
 # The marker never matches, so it is not installed.
 override-dependencies = ["torchcodec; sys_platform == 'never'"]
 
+[tool.uv.extra-build-variables]
+# voxcpm reads its version from git (setuptools-scm), which an archive lacks: the version
+# its git checkout of the pinned commit gets.
+voxcpm = { SETUPTOOLS_SCM_PRETEND_VERSION_FOR_VOXCPM = "2.0.3.post43+gcce58a5b5" }
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -97,8 +102,9 @@ extend-immutable-calls = ["fastapi.File", "fastapi.Form", "fastapi.Query"]
 
 [tool.uv.sources]
 # PyPI 2.0.3 predates generate(seed=...) and resolve_model_path; switch to
-# "voxcpm>=2.0.4" from PyPI once a release includes them.
-voxcpm = { git = "https://github.com/OpenBMB/VoxCPM", rev = "cce58a5b59303c9bd63d12f23afe6a49a4a80c59" }
+# "voxcpm>=2.0.4" from PyPI once a release includes them. An archive of the commit,
+# not a git source: installing then needs no Git (its version is set below).
+voxcpm = { url = "https://github.com/OpenBMB/VoxCPM/archive/cce58a5b59303c9bd63d12f23afe6a49a4a80c59.tar.gz" }
 torch = [
     { index = "pytorch-cu130", group = "cu130" },
     { index = "pytorch-cu126", group = "cu126" },

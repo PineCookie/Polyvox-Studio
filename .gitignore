@@ -9,6 +9,8 @@ __pycache__/
 /data/
 /exports/
 /output/
+# run.bat / run.sh: the answer to the mirror question
+/.mirror
 
 # Local agent notes (machine-specific)
 CLAUDE.md
