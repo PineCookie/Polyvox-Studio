@@ -1,43 +1,78 @@
+import { useState } from 'react'
 import type { Status } from '../api'
+import { engineName } from '../engines'
 import { useT } from '../i18n'
+import { Popover } from './Popover'
 
 interface Props {
   status: Status | null
   onUnload: () => void
 }
 
+/** Whether a model is loaded, as one pill; the machine's details and Unload in its pop-up. */
 export function StatusBar({ status, onUnload }: Props) {
   const t = useT()
-  if (!status) return <span className="status muted">{t.connecting}</span>
+  const [open, setOpen] = useState(false)
+  if (!status) return <span className="status-pill muted">{t.connecting}</span>
   // Any TTS engine (VoxCPM's own `loaded` predates engines).
   const ttsLoaded = (status.loaded_engines ?? []).length > 0 || status.loaded
+  const loaded = [
+    ...(status.loaded_engines ?? []).map((id) => engineName(id)),
+    status.asr_loaded && t.asrLoaded,
+    status.aligner_loaded && t.alignerLoaded,
+    status.separation_loaded && t.separationLoaded,
+    status.singing_loaded && t.singingLoaded,
+  ].filter(Boolean) as string[]
+  if (!loaded.length && ttsLoaded) loaded.push(t.modelLoaded)
 
   return (
-    <div className="status">
-      <span className={`dot ${ttsLoaded ? 'on' : ''}`} aria-hidden />
-      <span title={status.loaded_engines?.join(', ')}>{ttsLoaded ? t.modelLoaded : t.modelIdle}</span>
-      <span className="muted" title={`PyTorch ${status.torch}`}>
-        {status.device}
-      </span>
-      {status.gpu?.total_gb && (
-        <span className="muted" title={t.gpuTitle(status.gpu.name, status.gpu.exclusive, status.gpu.note)}>
-          {status.gpu.total_gb} GB
-        </span>
-      )}
-      <span className="muted">{status.optimize ? t.tritonOn : t.tritonOff}</span>
-      {status.asr_loaded && <span className="muted">{t.asrLoaded}</span>}
-      {status.aligner_loaded && <span className="muted">{t.alignerLoaded}</span>}
-      {status.separation_loaded && <span className="muted">{t.separationLoaded}</span>}
-      {status.singing_loaded && <span className="muted">{t.singingLoaded}</span>}
-      {(ttsLoaded ||
-        status.asr_loaded ||
-        status.aligner_loaded ||
-        status.separation_loaded ||
-        status.singing_loaded) && (
-        <button type="button" className="ghost small" onClick={onUnload} title={t.unloadTitle}>
-          {t.unload}
+    <Popover
+      open={open}
+      onClose={() => setOpen(false)}
+      align="end"
+      className="status-popover"
+      anchor={
+        <button
+          type="button"
+          className="status-pill"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          title={t.statusTitle}
+        >
+          <span className={`dot ${ttsLoaded ? 'on' : ''}`} aria-hidden />
+          {ttsLoaded ? t.modelLoaded : t.modelIdle}
         </button>
+      }
+    >
+      <dl className="status-details">
+        <dt>{t.statusDevice}</dt>
+        <dd title={`PyTorch ${status.torch}`}>
+          {status.device}
+          {status.gpu?.total_gb ? ` · ${status.gpu.total_gb} GB` : ''}
+        </dd>
+        <dt>{t.statusCompile}</dt>
+        <dd>{status.optimize ? t.tritonOn : t.tritonOff}</dd>
+        <dt>{t.statusLoaded}</dt>
+        <dd>{loaded.length ? loaded.join(', ') : t.statusNothing}</dd>
+      </dl>
+      {status.gpu && (
+        <p className="muted hint status-note">{t.gpuTitle(status.gpu.name, status.gpu.exclusive, status.gpu.note)}</p>
       )}
-    </div>
+      {loaded.length > 0 && (
+        <div className="actions">
+          <button
+            type="button"
+            className="ghost small"
+            onClick={() => {
+              setOpen(false)
+              onUnload()
+            }}
+            title={t.unloadTitle}
+          >
+            {t.unload}
+          </button>
+        </div>
+      )}
+    </Popover>
   )
 }

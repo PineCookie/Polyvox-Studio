@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useT } from '../i18n'
 import { AudioPlayer } from './AudioPlayer'
+import { DownloadIcon, MoreIcon } from './icons'
+import { Popover } from './Popover'
 import { SynthesisProgress } from './SynthesisPanel'
 
 export interface Clip {
@@ -32,38 +34,33 @@ function fileName(clip: Clip): string {
   return `${slug || 'speech'}_${clip.seed ?? clip.id}.wav`
 }
 
+/** The takes of this session, newest first, under the editor. */
 export function History({ clips, ...props }: Props) {
   const t = useT()
-  if (clips.length === 0) {
-    return (
-      <section className="panel">
-        <header className="panel-head">
-          <h2>{t.history}</h2>
-        </header>
-        <p className="muted empty">{t.historyEmpty}</p>
-      </section>
-    )
-  }
-
   return (
-    <section className="panel">
-      <header className="panel-head">
+    <section className="takes" aria-label={t.history}>
+      <header className="takes-head">
         <h2>{t.history}</h2>
-        <span className="muted">{clips.length}</span>
+        {clips.length > 0 && <span className="muted">{clips.length}</span>}
       </header>
-      <ol className="history">
-        {clips.map((clip) => (
-          <HistoryClip key={clip.id} clip={clip} {...props} />
-        ))}
-      </ol>
+      {clips.length === 0 ? (
+        <p className="takes-empty muted">{t.historyEmpty}</p>
+      ) : (
+        <ol className="take-list">
+          {clips.map((clip) => (
+            <Take key={clip.id} clip={clip} {...props} />
+          ))}
+        </ol>
+      )}
     </section>
   )
 }
 
-function HistoryClip({ clip, onUseSeed, onRemove, editor, busy, onEdit }: { clip: Clip } & Omit<Props, 'clips'>) {
+function Take({ clip, onUseSeed, onRemove, editor, busy, onEdit }: { clip: Clip } & Omit<Props, 'clips'>) {
   const t = useT()
   const [draft, setDraft] = useState<string | null>(null) // the new text while editing
   const [editing, setEditing] = useState(false)
+  const [menu, setMenu] = useState(false)
   const changed = draft !== null && draft.trim() !== '' && draft.trim() !== clip.text
 
   async function apply() {
@@ -75,35 +72,66 @@ function HistoryClip({ clip, onUseSeed, onRemove, editor, busy, onEdit }: { clip
     }
   }
 
+  const act = (action: () => void) => () => {
+    setMenu(false)
+    action()
+  }
+
   return (
-    <li className="clip">
-      <p className="clip-text">{clip.text}</p>
-      <AudioPlayer url={clip.url} />
-      <div className="clip-meta">
-        <span className="tag">{clip.voice}</span>
-        {clip.edited && (
-          <span className="muted">{t.editedSpan(clip.edited[0].toFixed(2), clip.edited[1].toFixed(2))}</span>
-        )}
-        {!clip.edited && clip.seed !== null && <span className="muted">{t.seedValue(clip.seed)}</span>}
-        <span className="muted">{t.seconds((clip.elapsedMs / 1000).toFixed(1))}</span>
-        <span className="spacer" />
-        {editor && draft === null && (
-          <button type="button" className="ghost small" onClick={() => setDraft(clip.text)}>
-            {t.editWords}
-          </button>
-        )}
-        {!clip.edited && clip.seed !== null && (
-          <button type="button" className="ghost small" onClick={() => onUseSeed(clip.seed!)}>
-            {t.useSeed}
-          </button>
-        )}
-        <a className="button ghost small" href={clip.url} download={fileName(clip)}>
-          {t.download}
-        </a>
-        <button type="button" className="ghost small" onClick={() => onRemove(clip.id)} aria-label={t.removeClip}>
-          {t.remove}
-        </button>
+    <li className="take">
+      <div className="take-top">
+        <p className="take-text">{clip.text}</p>
+        <div className="take-actions">
+          {editor && draft === null && (
+            <button type="button" className="ghost small" onClick={() => setDraft(clip.text)}>
+              {t.editWords}
+            </button>
+          )}
+          <a
+            className="icon-button"
+            href={clip.url}
+            download={fileName(clip)}
+            title={t.download}
+            aria-label={t.download}
+          >
+            <DownloadIcon />
+          </a>
+          <Popover
+            open={menu}
+            onClose={() => setMenu(false)}
+            align="end"
+            className="menu"
+            anchor={
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={t.moreActions}
+                aria-haspopup="menu"
+                aria-expanded={menu}
+                onClick={() => setMenu((m) => !m)}
+              >
+                <MoreIcon />
+              </button>
+            }
+          >
+            {!clip.edited && clip.seed !== null && (
+              <button type="button" className="menu-item" onClick={act(() => onUseSeed(clip.seed!))}>
+                {t.useSeedLong(clip.seed)}
+              </button>
+            )}
+            <button type="button" className="menu-item danger-item" onClick={act(() => onRemove(clip.id))}>
+              {t.removeClip}
+            </button>
+          </Popover>
+        </div>
       </div>
+      <AudioPlayer url={clip.url} />
+      <p className="take-meta">
+        <span className="take-voice">{clip.voice}</span>
+        {clip.edited && <span>{t.editedSpan(clip.edited[0].toFixed(2), clip.edited[1].toFixed(2))}</span>}
+        {!clip.edited && clip.seed !== null && <span>{t.seedValue(clip.seed)}</span>}
+        <span>{t.madeIn((clip.elapsedMs / 1000).toFixed(1))}</span>
+      </p>
       {draft !== null && editor && (
         <div className="take-edit">
           <textarea
@@ -112,15 +140,16 @@ function HistoryClip({ clip, onUseSeed, onRemove, editor, busy, onEdit }: { clip
             onChange={(e) => setDraft(e.target.value)}
             aria-label={t.editWords}
             disabled={editing}
+            autoFocus
           />
           <span className="muted hint">{t.editHint(editor)}</span>
           {editing && <SynthesisProgress />}
           <div className="actions">
-            <button type="button" className="small" disabled={!changed || busy} onClick={apply}>
-              {editing ? t.editingWords : t.applyEdit}
-            </button>
             <button type="button" className="ghost small" disabled={editing} onClick={() => setDraft(null)}>
               {t.cancel}
+            </button>
+            <button type="button" className="primary small" disabled={!changed || busy} onClick={apply}>
+              {editing ? t.editingWords : t.applyEdit}
             </button>
           </div>
         </div>

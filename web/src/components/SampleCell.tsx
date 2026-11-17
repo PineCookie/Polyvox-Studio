@@ -1,5 +1,6 @@
 import { useT } from '../i18n'
 import { usePeaks } from '../peaks'
+import { PauseIcon, PlayIcon } from './icons'
 import { Waveform } from './Waveform'
 
 /** Play button and waveform of one short clip (click the waveform to play from there); the
@@ -23,11 +24,11 @@ export function SampleCell({
     <div className="sample-cell">
       <button
         type="button"
-        className="ghost small"
+        className={`play-button small${playing ? ' playing' : ''}`}
         onClick={() => onPlay()}
         aria-label={playing ? t.pause : t.playLabel}
       >
-        {playing ? '❚❚' : '▶'}
+        {playing ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
       </button>
       {shape ? (
         <Waveform peaks={shape.peaks} seconds={shape.seconds} speech={null} audio={audio} onSeek={onPlay} />

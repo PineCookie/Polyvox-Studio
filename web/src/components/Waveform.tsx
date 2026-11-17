@@ -25,6 +25,8 @@ interface Props {
   // With handles: what trimming keeps; the rest is greyed.
   keep?: KeepRange
   large?: boolean
+  // The time ruler under it (off in compact players, which show the time beside it).
+  ruler?: boolean
 }
 
 const MAX_GAIN = 8 // quiet clips are scaled up for visibility, near-silence stays flat
@@ -48,7 +50,18 @@ function rulerTicks(seconds: number, labels: number, fine: boolean): [number, bo
 const tickLabel = (t: number) => (Number.isInteger(Math.round(t * 1000) / 1000) ? String(Math.round(t)) : t.toFixed(1))
 
 /** A clip's waveform outline with a time ruler; click to play from a point. */
-export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], trim, keep, large = false }: Props) {
+export function Waveform({
+  peaks,
+  seconds,
+  speech,
+  audio,
+  onSeek,
+  marks = [],
+  trim,
+  keep,
+  large = false,
+  ruler = true,
+}: Props) {
   const t = useT()
   const playhead = useRef<SVGLineElement>(null)
   const wrap = useRef<HTMLDivElement>(null)
@@ -156,17 +169,19 @@ export function Waveform({ peaks, seconds, speech, audio, onSeek, marks = [], tr
   return (
     <div className="waveform-wrap" ref={wrap}>
       {svg}
-      <div className={large ? 'waveform-ruler large' : 'waveform-ruler'} aria-hidden="true">
-        {rulerTicks(seconds, large ? 14 : 5, large).map(([t, labelled]) => (
-          <span
-            key={t}
-            className={labelled ? 'tick major' : 'tick'}
-            style={{ left: `${(t / seconds) * 100}%` }}
-            data-label={labelled && t > 0 && t < seconds - (large ? 0.04 : 0.15) * seconds ? tickLabel(t) : undefined}
-          />
-        ))}
-        {large && <span className="ruler-unit">s</span>}
-      </div>
+      {ruler && (
+        <div className={large ? 'waveform-ruler large' : 'waveform-ruler'} aria-hidden="true">
+          {rulerTicks(seconds, large ? 14 : 5, large).map(([t, labelled]) => (
+            <span
+              key={t}
+              className={labelled ? 'tick major' : 'tick'}
+              style={{ left: `${(t / seconds) * 100}%` }}
+              data-label={labelled && t > 0 && t < seconds - (large ? 0.04 : 0.15) * seconds ? tickLabel(t) : undefined}
+            />
+          ))}
+          {large && <span className="ruler-unit">s</span>}
+        </div>
+      )}
       {keep &&
         ([0, 1] as const).map((handle) => (
           <div

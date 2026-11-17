@@ -7,6 +7,7 @@ import { clipCount, emptyInput } from '../referenceInputs'
 import type { InputSource, InputState } from '../referenceInputs'
 import { AudioPlayer } from './AudioPlayer'
 import { FilePicker } from './FilePicker'
+import { Info } from './Info'
 import { ReferenceClips } from './ReferenceClips'
 
 interface Props {
@@ -20,7 +21,8 @@ interface Props {
   onTranscribed: () => void
 }
 
-/** One of an engine's reference inputs, under the engine's own name for it. */
+/** One of an engine's reference inputs, under the engine's own name for it: where its audio comes
+ * from (segmented buttons), then that audio. */
 export function ReferenceInputField({ engineId, input, value, onChange, other, onError, onTranscribed }: Props) {
   const t = useT()
   const [transcribing, setTranscribing] = useState(false)
@@ -64,18 +66,24 @@ export function ReferenceInputField({ engineId, input, value, onChange, other, o
 
   return (
     <div className="reference-input">
-      <div className="reference-input-head">
-        <strong>{label(input)}</strong>
-        <div className="segmented" role="radiogroup" aria-label={label(input)}>
-          {sources.map(([source, name]) => (
-            <label key={source}>
-              <input type="radio" checked={value.source === source} onChange={() => onChange({ ...value, source })} />{' '}
-              {name}
-            </label>
-          ))}
-        </div>
+      <span className="label-text reference-input-label">
+        {label(input)}
+        {hint && <Info text={hint} />}
+      </span>
+      <div className="seg" role="radiogroup" aria-label={label(input)}>
+        {sources.map(([source, name]) => (
+          <button
+            key={source}
+            type="button"
+            role="radio"
+            aria-checked={value.source === source}
+            className={value.source === source ? 'active' : ''}
+            onClick={() => onChange({ ...value, source })}
+          >
+            {name}
+          </button>
+        ))}
       </div>
-      {hint && <p className="muted hint">{hint}</p>}
       {value.source === 'file' && (
         <FilePicker
           file={file}

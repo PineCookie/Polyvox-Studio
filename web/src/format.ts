@@ -37,6 +37,12 @@ export function formatDuration(seconds: number): string {
   return t.hoursMinutes(Math.floor(m / 60), m % 60)
 }
 
+// A player's time: 2.4 -> "0:02", 75 -> "1:15".
+export function formatClock(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
 // { "32000": 650, "44100": 6 } -> "32 kHz, 44.1 kHz"
 export function formatRates(rates: Record<string, number>): string {
   return Object.keys(rates)

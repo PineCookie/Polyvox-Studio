@@ -36,7 +36,8 @@ export const zh: Messages = {
   language: '语言',
 
   // 主题
-  themeLabel: { auto: '◐ 自动', light: '☀ 浅色', dark: '☾ 深色' },
+  moreInfo: '说明',
+  moreActions: '更多操作',
   themeTitle: (theme, next) => `主题：${themeName[theme]}。点击切换为${themeName[next]}。`,
 
   // 状态栏
@@ -53,11 +54,23 @@ export const zh: Messages = {
   singingLoaded: '歌声检测已加载',
   unload: '卸载',
   unloadTitle: '释放显存（TTS、语音识别、对齐、人声分离）',
+  statusTitle: '内存中的模型和本机信息',
+  statusDevice: '设备',
+  statusCompile: '编译',
+  statusLoaded: '已加载',
+  statusNothing: '无',
 
   // 合成
-  synthesize: '合成',
-  text: '文本',
   textPlaceholder: '想让这个声音说什么？',
+  textPlaceholders: {
+    voxcpm: '想让这个声音说什么？例如：这也太好笑了吧[laughing]我停不下来。',
+    fish_s2: '想让这个声音说什么？用标签指导语气，例如：[excited]你猜怎么着！[whisper]别告诉别人。',
+    fish_drama3: '想让这个声音说什么？用标签指导语气，例如：[sighs]又来了……<whisper>别告诉别人</whisper>',
+  },
+  showTags: '显示标签',
+  hideTags: '隐藏标签',
+  characters: (n) => `${n.toLocaleString()} 字`,
+  settingsTitle: '设置',
   tagGroup: '插入行内标签',
   tags: '标签',
   tagGroups: {
@@ -115,7 +128,7 @@ export const zh: Messages = {
     slow: '放慢',
   },
   insertTag: (tag) => `在光标处插入 ${tag}`,
-  customTag: '自定义…',
+  customTag: '自己写…',
   customTagPlaceholder: '任意描述，例如 speaking slowly, almost hesitant',
   insert: '插入',
   tagHints: {
@@ -134,10 +147,10 @@ export const zh: Messages = {
     fish_drama3: '怎么说：作为指示放在文字前（长文本的每一段都会加上）。',
   },
   referenceAudio: '参考音频',
-  referenceOptional: '可选 · 声音克隆',
-  referenceRequired: '必填 · 此模型总是克隆一段参考音频（3–10 秒）',
-  referenceVoiceDefault: '可选 · 会替代音色自带的参考音频',
-  usesVoiceReference: (text) => `不在此添加时，使用音色自带的参考音频：“${text}”`,
+  referenceInfoOptional: '要克隆的声音的一段音频。不提供时，训练过的音色用它自己的声音，基础模型则自己选一个声音。',
+  referenceInfoRequired: '此模型总是克隆一段音频（3–10 秒）：请在此添加，或选择自带参考音频的音色。',
+  referenceInfoVoice: '在此添加的音频会在本次生成中替代音色自带的参考音频。',
+  usesVoiceReference: '不在此添加时，使用音色自带的参考音频（见上方）。',
   needsReference: (name) => `${name} 需要参考音频：请添加一段，或选择自带参考音频的音色`,
   chooseAudio: '选择音频…',
   orDropFile: '或将文件拖到这里',
@@ -224,6 +237,8 @@ export const zh: Messages = {
     duration: '语音应持续的秒数，仅用于一次能说完的文本（约 150 字以内）。0：按它自己的语速。',
   },
   seed: '随机种子',
+  seedHint: '相同的种子、文本和设置会生成相同的结果。留空：每次随机生成。',
+  randomSeed: '改回随机种子',
   random: '随机',
   ctrlEnter: 'Ctrl + Enter',
   engineUnavailable: (name, reason) => `${name} 无法在此运行：${reason}`,
@@ -236,10 +251,11 @@ export const zh: Messages = {
   progressPreparing: '准备中',
 
   // 历史
-  history: '历史记录',
+  history: '生成结果',
   historyEmpty: '本次会话生成的音频会显示在这里。',
   seedValue: (seed) => `种子 ${seed}`,
-  useSeed: '使用此种子',
+  useSeedLong: (seed) => `再次使用种子 ${seed}`,
+  madeIn: (s) => `用时 ${s} 秒`,
   download: '下载',
   remove: '移除',
   removeClip: '移除此条',
@@ -253,6 +269,11 @@ export const zh: Messages = {
 
   // 音色面板
   voice: '音色',
+  chooseVoice: '选择音色',
+  importPackage: '音色包…',
+  unavailableShort: '无法在此运行',
+  voiceKind: (savedReference) => (savedReference ? '保存的音色' : '训练的音色'),
+  zeroShotInfo: '未针对某个声音训练：它用参考音频的声音说话，或使用自己的声音',
   import: '导入',
   importing: '导入中…',
   importLoraTitle: '添加从 Polyvox Studio 导出的 LoRA 或音色包（.zip）',
@@ -297,7 +318,6 @@ export const zh: Messages = {
   baseOf: (base) => `基础模型 ${base}`,
   notRecorded: '未记录',
   baseModel: '基础模型',
-  noLora: '不使用 LoRA',
   noLoraShort: '无 LoRA',
   filterVoices: (n) => `筛选 ${n} 个音色`,
   filterVoicesLabel: '筛选音色',

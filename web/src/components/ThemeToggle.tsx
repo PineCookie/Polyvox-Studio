@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useT } from '../i18n'
+import { AutoThemeIcon, MoonIcon, SunIcon } from './icons'
 
 type Theme = 'auto' | 'light' | 'dark'
 
@@ -35,8 +36,14 @@ export function ThemeToggle() {
   }
 
   return (
-    <button type="button" className="ghost small" onClick={cycle} title={t.themeTitle(theme, NEXT[theme])}>
-      {t.themeLabel[theme]}
+    <button
+      type="button"
+      className="icon-button"
+      onClick={cycle}
+      title={t.themeTitle(theme, NEXT[theme])}
+      aria-label={t.themeTitle(theme, NEXT[theme])}
+    >
+      {theme === 'light' ? <SunIcon /> : theme === 'dark' ? <MoonIcon /> : <AutoThemeIcon />}
     </button>
   )
 }

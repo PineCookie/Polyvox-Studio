@@ -104,7 +104,7 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px 14px;
   flex-wrap: wrap;
   margin-bottom: 20px;
 }
@@ -286,6 +286,7 @@ select:focus,
 textarea:focus {
   border-color: var(--accent);
   background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 input[type='range'] {
@@ -332,15 +333,8 @@ input[type='file']::file-selector-button {
 }
 
 .reference-input + .reference-input {
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--muted) 25%, transparent);
-}
-
-.reference-input-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
 .reference-input .hint {
@@ -540,13 +534,6 @@ input[type='file']::file-selector-button {
   color: var(--text);
 }
 
-.advanced-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 14px 18px;
-  align-items: start; /* a long hint under one field doesn't stretch the others */
-}
-
 .toggles {
   display: grid;
   gap: 6px;
@@ -721,45 +708,7 @@ button:focus-visible,
   font-size: 0.78rem;
 }
 
-/* History */
-
-.history {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.clip {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-}
-
-.clip-text {
-  margin: 0;
-  font-size: 0.9rem;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.clip audio {
-  width: 100%;
-  height: 36px;
-}
-
-.clip-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 0.8rem;
-}
+/* A take's word edit (under the take). */
 
 .take-edit {
   display: grid;
@@ -904,11 +853,67 @@ select {
   flex-shrink: 0;
 }
 
-.segmented {
-  display: flex;
+/* A choice of a few: segmented buttons. `.segmented` holds labelled radio inputs (the circles
+   hidden, the label is the button); `.seg` holds buttons with role="radio". */
+.segmented,
+.seg {
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 6px 18px;
-  font-size: 0.9rem;
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.84rem;
+}
+
+.segmented label,
+.seg button {
+  position: relative;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.segmented label:hover,
+.seg button:hover {
+  color: var(--text);
+}
+
+.segmented label:has(input:checked),
+.seg button.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+  box-shadow:
+    0 1px 2px rgb(20 20 40 / 0.08),
+    0 0 0 1px var(--border);
+}
+
+.segmented label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.segmented label:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.segmented input[type='radio'] {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
 }
 
 .field-error {
@@ -1691,15 +1696,6 @@ button.ghost.danger-text {
   vector-effect: non-scaling-stroke;
 }
 
-.audio-player {
-  display: grid;
-  gap: 6px;
-}
-
-.audio-player audio {
-  width: 100%;
-}
-
 .waveform.large {
   height: clamp(76px, 12vh, 140px);
 }
@@ -2341,4 +2337,921 @@ fieldset.params:disabled input[type='checkbox'] {
   font-size: 0.82rem;
   background: transparent;
   border: 1px solid var(--border);
+}
+
+/* ------------------------------------------------------------------------------------------
+   Shared controls: icon buttons, the status pill, pop-ups, ⓘ explanations, the audio player.
+   ------------------------------------------------------------------------------------------ */
+
+.icon {
+  flex-shrink: 0;
+  display: block;
+}
+
+button .icon,
+.button .icon {
+  display: inline-block;
+  vertical-align: -0.18em;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+}
+
+.icon-button:not(:disabled):hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.topbar .lang-select {
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.topbar .lang-select:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+.status-pill:hover {
+  background: var(--surface-2);
+}
+
+.status-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.status-details dt {
+  color: var(--muted);
+}
+
+.status-details dd {
+  margin: 0;
+}
+
+.status-note {
+  margin: 0;
+}
+
+.status-popover {
+  width: 320px;
+  display: grid;
+  gap: 12px;
+}
+
+/* Pop-ups: hang under their anchor, over the page. */
+.pop-anchor {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 30;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow:
+    0 12px 32px rgb(15 15 30 / 0.16),
+    0 2px 6px rgb(15 15 30 / 0.08);
+  animation: pop-in 0.12s ease-out;
+}
+
+.popover.start {
+  left: 0;
+}
+
+.popover.end {
+  right: 0;
+}
+
+.popover.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.menu {
+  padding: 4px;
+  min-width: 200px;
+  display: grid;
+}
+
+.menu-item {
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.menu-item:hover {
+  background: var(--surface-2);
+}
+
+.menu-item.danger-item {
+  color: var(--danger);
+}
+
+.menu-item.danger-item:hover {
+  background: var(--danger-soft);
+}
+
+/* ⓘ: an explanation beside a label, shown on hover, focus or a tap. */
+.label-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.info {
+  position: relative;
+  display: inline-flex;
+}
+
+.info-button {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent);
+  background: transparent;
+  color: var(--muted);
+  font:
+    italic 600 10px/1 Georgia,
+    'Times New Roman',
+    serif;
+  cursor: help;
+}
+
+.info-button:hover,
+.info-button[aria-expanded='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.info-bubble {
+  position: fixed;
+  z-index: 40;
+  width: max-content;
+  max-width: min(280px, 80vw);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: light-dark(#26263a, #ececf4);
+  color: light-dark(#f4f4f8, #1c1c24);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  box-shadow: 0 6px 20px rgb(15 15 30 / 0.2);
+}
+
+/* Audio player: play / pause, waveform, time. */
+.audio-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.audio-player .waveform-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.audio-player .waveform {
+  height: 34px;
+}
+
+.waveform-placeholder {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+
+.audio-time {
+  flex-shrink: 0;
+  min-width: 2.6em;
+  text-align: right;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.play-button {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.play-button:hover,
+.play-button.playing {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.play-button.small {
+  width: 28px;
+  height: 28px;
+}
+
+.play-button .icon {
+  margin-left: 1px;
+}
+
+.play-button.playing .icon {
+  margin-left: 0;
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+kbd.shortcut {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------------------------------
+   Synthesize: the editor and its takes on the left, the settings on the right.
+   ------------------------------------------------------------------------------------------ */
+
+.synth {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 400px);
+  gap: 20px;
+  align-items: start;
+}
+
+.synth-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+.synth-side {
+  position: sticky;
+  top: 20px;
+}
+
+/* One column: the editor, then the settings, then the takes. */
+@media (max-width: 960px) {
+  .synth {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .synth-main {
+    display: contents;
+  }
+  .synth-side {
+    position: static;
+    order: 1;
+  }
+  .synth-main > :not(.composer) {
+    order: 2;
+  }
+  .settings {
+    max-height: none;
+  }
+}
+
+/* The editor: the voice, the text, then its tools and Generate. */
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow:
+    var(--shadow),
+    0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.composer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.composer .tagged-text,
+.composer .tagged-text:focus-within {
+  background: transparent;
+}
+
+.composer .tagged-backdrop,
+.composer .tagged-text textarea {
+  padding: 14px 20px 10px;
+  font-size: 1.08rem;
+  line-height: 1.65;
+}
+
+.composer .tagged-text textarea {
+  min-height: 200px;
+  resize: none;
+  border: 0;
+}
+
+.composer .tagged-text textarea:focus {
+  box-shadow: none;
+}
+
+.composer-warning {
+  margin: 0 20px 8px;
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.char-count {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-blocker {
+  max-width: 46ch;
+  text-align: right;
+}
+
+.primary.generate {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 20px;
+  border-radius: 10px;
+}
+
+.composer-progress {
+  padding: 0 14px 12px;
+}
+
+.tag-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.tag-button:hover,
+.tag-button.active {
+  color: var(--text);
+}
+
+/* The tag strip between the text and the footer: groups as tabs, tags as chips drawn like the
+   tags marked in the text. */
+.tag-strip {
+  display: grid;
+  gap: 8px;
+  padding: 10px 20px 12px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 3%, var(--surface));
+}
+
+.tag-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 14px;
+}
+
+.tag-tabs > button {
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.tag-tabs > button:hover {
+  color: var(--text);
+}
+
+.tag-tabs > button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip {
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tag-chip:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.tag-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag-custom input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+}
+
+.tag-custom button {
+  white-space: nowrap;
+}
+
+/* The voice button and its list. */
+.voice-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.voice-picker:hover,
+.voice-picker[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+}
+
+.voice-picker > .icon {
+  color: var(--muted);
+}
+
+.voice-picker-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.voice-picker-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-picker-sub {
+  font-size: 0.76rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: light-dark(hsl(var(--hue) 55% 32%), hsl(var(--hue) 55% 82%));
+  background: light-dark(hsl(var(--hue) 70% 90%), hsl(var(--hue) 40% 26%));
+}
+
+.voice-avatar.base {
+  background:
+    radial-gradient(circle at 50% 50%, transparent 36%, currentColor 37% 44%, transparent 45%), var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--muted);
+}
+
+.voice-popover {
+  width: min(400px, calc(100vw - 48px));
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(560px, 70vh);
+}
+
+.voice-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  margin-bottom: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.voice-search input[type='search'] {
+  background: transparent;
+  border: 0;
+  padding: 8px 0;
+  box-shadow: none;
+}
+
+.voice-popover .voice-list {
+  gap: 1px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.voice-popover .voice-row {
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.voice-popover .voice-row .voice-avatar {
+  width: 26px;
+  height: 26px;
+  font-size: 0.75rem;
+}
+
+.voice-popover .voice-row-name {
+  flex: 1;
+}
+
+.voice-popover .voice-row.active {
+  font-weight: 600;
+}
+
+.voice-popover .voice-group-head {
+  padding: 10px 6px 4px;
+}
+
+.voice-popover .voice-group + .voice-group {
+  border-top: 0;
+  margin-top: 2px;
+}
+
+.voice-popover-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.voice-popover-foot .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.voice-popover-foot .ghost:hover {
+  color: var(--text);
+}
+
+/* The settings column. */
+.settings {
+  display: grid;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+.settings-section {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.settings-section + .settings-section {
+  border-top: 1px solid var(--border);
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-head h3 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-note {
+  font-size: 0.78rem;
+}
+
+.settings .field > span {
+  align-items: center;
+}
+
+.uses-voice-reference {
+  margin: -4px 0 0;
+}
+
+.settings .seg {
+  display: flex;
+  width: 100%;
+}
+
+.settings .seg button {
+  flex: 1 1 auto;
+}
+
+.reference-input-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.slider-field output {
+  min-width: 3ch;
+  text-align: right;
+}
+
+/* Sliders: a thin track filled up to the thumb would need JS; a plain accent track reads well. */
+input[type='range'] {
+  height: 18px;
+  margin: 0;
+}
+
+.seed-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings .toggles {
+  gap: 10px;
+}
+
+/* A checkbox drawn as a switch, its label first. */
+.switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.switch input[type='checkbox'] {
+  appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.switch input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  transition: transform 0.15s;
+}
+
+.switch input[type='checkbox']:checked {
+  background: var(--accent);
+}
+
+.switch input[type='checkbox']:checked::after {
+  transform: translateX(14px);
+}
+
+.switch input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.voice-details .field select {
+  padding: 7px 10px;
+}
+
+.voice-details .voice-current-head .muted {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.voice-details .voice-reference {
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* Takes under the editor. */
+.takes {
+  display: grid;
+  gap: 10px;
+}
+
+.takes-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.takes-head h2 {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.takes-empty {
+  margin: 0;
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 0.9rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.take-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.take {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.take:first-child {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+.take-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.take-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding-top: 5px;
+  font-size: 0.95rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.take-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.take-actions .ghost {
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.take-actions .ghost:hover {
+  color: var(--text);
+}
+
+.take-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding-left: 44px; /* under the waveform, past the play button */
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.take-voice {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.take-edit .actions {
+  justify-content: flex-end;
 }

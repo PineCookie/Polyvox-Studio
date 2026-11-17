@@ -11,6 +11,7 @@ import {
 } from './api'
 import type { Engine, Lora, Status, SynthesisParams } from './api'
 import { BASE_VOICE, engineName } from './engines'
+import { formatStep } from './format'
 import type { VoiceChoice } from './engines'
 import { forgetPeaks } from './peaks'
 import { History } from './components/History'
@@ -23,7 +24,8 @@ import { LanguageToggle } from './components/LanguageToggle'
 import { useT } from './i18n'
 import { SynthesisPanel } from './components/SynthesisPanel'
 import { TrainingView } from './components/TrainingView'
-import { VoicePanel } from './components/VoicePanel'
+import { VoiceDetails } from './components/VoiceDetails'
+import { VoicePicker } from './components/VoicePicker'
 
 // Workflow order: raw audio -> dataset -> LoRA -> speech.
 const TABS = ['synthesize', 'prepare', 'train', 'models'] as const
@@ -97,6 +99,13 @@ export default function App() {
     }
   }
 
+  // How a take names the voice it was spoken with: its name (and checkpoint), or the base model.
+  function voiceLabel(): string {
+    const lora = loras.find((l) => l.id === voice.lora)
+    if (!lora) return `${t.baseModel} · ${engineName(voice.engine, engines)}`
+    return lora.step !== null ? `${lora.voice} · ${t.stepLabel(formatStep(lora.step))}` : lora.voice
+  }
+
   async function generate(params: Omit<SynthesisParams, 'loraId' | 'engine'>) {
     setBusy(true)
     setError(null)
@@ -107,7 +116,7 @@ export default function App() {
         id: nextClipId.current++,
         url: URL.createObjectURL(out.audio),
         text: params.text.trim(),
-        voice: voice.lora ?? `${t.baseModel} · ${engineName(voice.engine, engines)}`,
+        voice: voiceLabel(),
         seed: out.seed,
         elapsedMs: performance.now() - started,
         createdAt: new Date(),
@@ -193,6 +202,12 @@ export default function App() {
     }
   }
 
+  // A voice made here (GPT-SoVITS weights imported, a reference saved): list it and speak with it.
+  function voiceMade(id: string, engine: string) {
+    refreshLoras()
+    setVoice({ engine, lora: id })
+  }
+
   function tryCheckpoint(loraId: string) {
     setVoice({ engine: loras.find((l) => l.id === loraId)?.engine ?? DEFAULT_ENGINE, lora: loraId })
     switchTab('synthesize')
@@ -261,20 +276,45 @@ export default function App() {
       )}
 
       {/* Both views stay mounted so form input and clips survive tab switches. */}
-      <main className="layout" hidden={tab !== 'synthesize'}>
-        <div className="main-col">
-          <SynthesisPanel
-            engine={engines.find((e) => e.id === voice.engine) ?? null}
-            busy={busy}
-            seed={seed}
-            onSeedChange={setSeed}
-            onGenerate={generate}
-            onError={showError}
-            onTranscribed={refreshStatus}
-            voiceReference={loras.find((l) => l.id === voice.lora)?.reference_text ?? null}
-            isBase={!voice.lora}
-            voiceVersion={loras.find((l) => l.id === voice.lora)?.version ?? null}
-          />
+      <main hidden={tab !== 'synthesize'}>
+        <SynthesisPanel
+          engine={engines.find((e) => e.id === voice.engine) ?? null}
+          busy={busy}
+          seed={seed}
+          onSeedChange={setSeed}
+          onGenerate={generate}
+          onError={showError}
+          onTranscribed={refreshStatus}
+          voiceReference={loras.find((l) => l.id === voice.lora)?.reference_text ?? null}
+          isBase={!voice.lora}
+          voiceVersion={loras.find((l) => l.id === voice.lora)?.version ?? null}
+          voicePicker={
+            <VoicePicker
+              engines={engines}
+              loras={loras}
+              selected={voice}
+              modelId={status?.model_id ?? null}
+              onSelect={setVoice}
+              onRefresh={refreshLoras}
+              onImport={importPackage}
+              onImported={voiceMade}
+              onError={showError}
+              loading={lorasLoading}
+            />
+          }
+          voiceDetails={
+            <VoiceDetails
+              engines={engines}
+              loras={loras}
+              selected={voice}
+              modelId={status?.model_id ?? null}
+              onSelect={setVoice}
+              onRefresh={refreshLoras}
+              onImported={voiceMade}
+              onError={showError}
+            />
+          }
+        >
           <History
             clips={clips}
             onUseSeed={setSeed}
@@ -283,24 +323,7 @@ export default function App() {
             busy={busy}
             onEdit={editClip}
           />
-        </div>
-        <aside className="side-col">
-          <VoicePanel
-            engines={engines}
-            loras={loras}
-            selected={voice}
-            modelId={status?.model_id ?? null}
-            onSelect={setVoice}
-            onRefresh={refreshLoras}
-            onImport={importPackage}
-            onImported={(id, engine) => {
-              refreshLoras()
-              setVoice({ engine, lora: id })
-            }}
-            onError={showError}
-            loading={lorasLoading}
-          />
-        </aside>
+        </SynthesisPanel>
       </main>
       {tab === 'prepare' && <PrepareView onError={showError} onTrain={trainOn} />}
       {tab === 'models' && <ModelsView onError={showError} onChanged={refreshStatus} />}

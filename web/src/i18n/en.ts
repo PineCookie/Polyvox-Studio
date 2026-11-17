@@ -34,8 +34,10 @@ export const en = {
   openModels: 'Open Models',
   language: 'Language',
 
+  moreInfo: 'More about this',
+  moreActions: 'More actions',
+
   // Theme toggle
-  themeLabel: { auto: '◐ Auto', light: '☀ Light', dark: '☾ Dark' },
   themeTitle: (theme: 'auto' | 'light' | 'dark', next: 'auto' | 'light' | 'dark') =>
     `Theme: ${theme === 'auto' ? 'follows the system' : theme}. Click for ${next}.`,
 
@@ -55,11 +57,25 @@ export const en = {
   singingLoaded: 'Singing detector loaded',
   unload: 'Unload',
   unloadTitle: 'Free GPU memory (TTS, ASR, aligner, separation)',
+  statusTitle: 'Models in memory and this machine',
+  statusDevice: 'Device',
+  statusCompile: 'Compiling',
+  statusLoaded: 'In memory',
+  statusNothing: 'nothing',
 
   // Synthesize
-  synthesize: 'Synthesize',
-  text: 'Text',
   textPlaceholder: 'What should the voice say?',
+  // By engine id: an example that shows its tags in use.
+  textPlaceholders: {
+    voxcpm: 'What should the voice say? e.g. That is so funny [laughing] I can not stop.',
+    fish_s2: "What should the voice say? Tags direct it, e.g. [excited] Guess what! [whisper] Don't tell anyone.",
+    fish_drama3:
+      "What should the voice say? Tags direct it, e.g. [sighs] Not again… <whisper>don't tell anyone</whisper>",
+  } as Record<string, string>,
+  showTags: 'Show the tags',
+  hideTags: 'Hide the tags',
+  characters: (n: number) => `${n.toLocaleString()} ${n === 1 ? 'character' : 'characters'}`,
+  settingsTitle: 'Settings',
   tagGroup: 'Insert an inline tag',
   tags: 'Tags',
   tagGroups: {
@@ -73,7 +89,7 @@ export const en = {
   // Chip labels by tag (without brackets); others show as written.
   tagNames: {} as Record<string, string>,
   insertTag: (tag: string) => `Insert ${tag} at the cursor`,
-  customTag: 'Custom…',
+  customTag: 'Your own…',
   customTagPlaceholder: 'Any description, e.g. speaking slowly, almost hesitant',
   insert: 'Insert',
   // How an engine's tags act, by engine id.
@@ -97,10 +113,11 @@ export const en = {
     fish_drama3: 'How to say it: put before the text (each part of a long text) as a direction.',
   } as Record<string, string>,
   referenceAudio: 'Reference audio',
-  referenceOptional: 'optional · voice cloning',
-  referenceRequired: 'required · this model always clones a clip (3–10 s)',
-  referenceVoiceDefault: "optional · replaces the voice's own reference",
-  usesVoiceReference: (text: string) => `Without a clip here, the voice's own reference is used: “${text}”`,
+  referenceInfoOptional:
+    'A clip of the voice to clone. Without one, a trained voice speaks as itself and a base model picks a voice of its own.',
+  referenceInfoRequired: 'This model always clones a clip (3–10 s): add one here, or choose a voice that has its own.',
+  referenceInfoVoice: "A clip here replaces the voice's own reference for this take.",
+  usesVoiceReference: "Without a clip here, the voice's own reference clip (above) is used.",
   needsReference: (name: string) => `${name} needs a reference clip: add one, or choose a voice that has one`,
   chooseAudio: 'Choose audio…',
   orDropFile: 'or drop a file here',
@@ -200,6 +217,8 @@ export const en = {
       'Seconds the speech should take, for a text short enough for one take (about 150 characters). 0: its own pace.',
   } as Record<string, string>,
   seed: 'Seed',
+  seedHint: 'The same seed, text and settings give the same take again. Empty: a new random take each time.',
+  randomSeed: 'Back to a random seed',
   random: 'Random',
   ctrlEnter: 'Ctrl + Enter',
   engineUnavailable: (name: string, reason: string) => `${name} can't run here: ${reason}`,
@@ -213,10 +232,11 @@ export const en = {
   progressPreparing: 'Preparing',
 
   // History
-  history: 'History',
-  historyEmpty: 'Generated clips from this session appear here.',
+  history: 'Takes',
+  historyEmpty: 'Takes you generate in this session appear here.',
   seedValue: (seed: number) => `seed ${seed}`,
-  useSeed: 'Use seed',
+  useSeedLong: (seed: number) => `Use seed ${seed} again`,
+  madeIn: (s: string) => `made in ${s} s`,
   download: 'Download',
   remove: 'Remove',
   removeClip: 'Remove clip',
@@ -230,6 +250,11 @@ export const en = {
 
   // Voice panel
   voice: 'Voice',
+  chooseVoice: 'Choose the voice',
+  importPackage: 'Voice package…',
+  unavailableShort: "can't run here",
+  voiceKind: (savedReference: boolean): string => (savedReference ? 'Saved voice' : 'Trained voice'),
+  zeroShotInfo: 'not trained on one voice: it speaks with the voice of a reference clip, or one of its own',
   import: 'Import',
   importing: 'Importing…',
   importLoraTitle: 'Add a LoRA or voice package (.zip) exported from Polyvox Studio',
@@ -274,7 +299,6 @@ export const en = {
   baseOf: (base: string) => `Base ${base}`,
   notRecorded: 'not recorded',
   baseModel: 'Base model',
-  noLora: 'No LoRA',
   noLoraShort: 'no LoRA',
   filterVoices: (n: number) => `Filter ${n} voices`,
   filterVoicesLabel: 'Filter voices',

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent } from 'react'
+import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import { getTtsProgress } from '../api'
 import type { Engine, EngineOptions, EngineParam, ReferenceInput, SynthesisParams, TtsProgress } from '../api'
 import { defaultOptions } from '../engines'
@@ -8,12 +8,23 @@ import { useT } from '../i18n'
 import { emptyInput, inputAudio, lacksTranscript } from '../referenceInputs'
 import type { InputState } from '../referenceInputs'
 import { scoped, unknownTags } from '../tags'
+import { CloseIcon, SparkIcon, TagIcon } from './icons'
+import { Info } from './Info'
 import { ReferenceInputField } from './ReferenceInputField'
 import { ProgressBar } from './RunList'
 import { TagBar } from './TagBar'
 import { TaggedText } from './TaggedText'
 
 const POLL_MS = 400
+const TAGS_KEY = 'polyvox.showTags' // "0" once the tag strip was hidden; shown otherwise
+
+function tagsShown(): boolean {
+  try {
+    return localStorage.getItem(TAGS_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
 
 /** Phase and an estimated share of the generation (or of a model it needs, downloading first),
  * polled while it runs; also shown while History edits a clip. */
@@ -67,15 +78,20 @@ export function SynthesisProgress() {
   )
 }
 
-/** One numeric synthesis setting of an engine, as a slider. */
+/** One numeric synthesis setting of an engine, as a slider; its explanation behind ⓘ. */
 function ParamSlider({ param, value, onChange }: { param: EngineParam; value: number; onChange: (v: number) => void }) {
   const t = useT()
   const step = param.step ?? (param.kind === 'int' ? 1 : 0.1)
   const decimals = param.kind === 'int' ? 0 : Math.max(0, -Math.floor(Math.log10(step)))
+  const hint = t.paramHints[param.name]
   return (
-    <label className="field">
+    <label className="field slider-field">
       <span>
-        {t.paramLabels[param.name] ?? param.name} <output>{value.toFixed(decimals)}</output>
+        <span className="label-text">
+          {t.paramLabels[param.name] ?? param.name}
+          {hint && <Info text={hint} />}
+        </span>
+        <output>{value.toFixed(decimals)}</output>
       </span>
       <input
         type="range"
@@ -85,7 +101,6 @@ function ParamSlider({ param, value, onChange }: { param: EngineParam; value: nu
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
       />
-      {t.paramHints[param.name] && <span className="muted hint">{t.paramHints[param.name]}</span>}
     </label>
   )
 }
@@ -106,6 +121,11 @@ interface Props {
   isBase: boolean
   // The chosen voice's model version (null: unknown, or the base model, whose version is an option).
   voiceVersion: string | null
+  // The voice button at the top of the editor, and what the voice is at the top of the settings.
+  voicePicker: ReactNode
+  voiceDetails: ReactNode
+  // Under the editor: the takes.
+  children: ReactNode
 }
 
 export function SynthesisPanel({
@@ -119,10 +139,22 @@ export function SynthesisPanel({
   voiceReference,
   isBase,
   voiceVersion,
+  voicePicker,
+  voiceDetails,
+  children,
 }: Props) {
   const t = useT()
   const [text, setText] = useState('')
   const [control, setControl] = useState('')
+  const [showTags, setShowTags] = useState(tagsShown)
+  function toggleTags(show: boolean) {
+    setShowTags(show)
+    try {
+      localStorage.setItem(TAGS_KEY, show ? '1' : '0')
+    } catch {
+      // Not remembered (storage blocked); the choice still applies now.
+    }
+  }
   // Each engine's reference inputs as set here, by '<engine>.<input>' (kept while switching voices).
   const [inputStates, setInputStates] = useState<Record<string, InputState>>({})
   // Settings changed by hand, per engine (each keeps its own while switching voices).
@@ -174,7 +206,10 @@ export function SynthesisPanel({
   const unknown = unknownTags(text, engine)
 
   function onKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit()
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      submit()
+    }
   }
 
   /** Put a tag at the cursor (or over the selection), then keep typing after it. A scoped tag
@@ -201,80 +236,139 @@ export function SynthesisPanel({
     })
   }
 
+  // Why Generate can't run (shown beside it).
+  const blocker = engine?.unavailable
+    ? t.engineUnavailable(engine.name, engine.unavailable)
+    : needsReference
+      ? t.needsReference(engine!.name)
+      : untranscribed
+        ? t.needsTranscript(inputLabel(untranscribed))
+        : null
+  const choices = shown.filter((p) => p.kind === 'choice')
+  const sliders = shown.filter((p) => p.kind === 'float' || p.kind === 'int')
+  const toggles = shown.filter((p) => p.kind === 'bool')
+  const ownReference = !!caps?.voice_reference && voiceReference !== null
+  const referenceHint = ownReference
+    ? t.referenceInfoVoice
+    : caps?.reference_required
+      ? t.referenceInfoRequired
+      : t.referenceInfoOptional
+
   return (
-    <form className="panel" onSubmit={submit} onKeyDown={onKeyDown}>
-      <header className="panel-head">
-        <h2>{t.synthesize}</h2>
-      </header>
-
-      <label className="field">
-        <span>{t.text}</span>
-        <TaggedText
-          ref={textArea}
-          value={text}
-          onChange={setText}
-          placeholder={t.textPlaceholder}
-          unknown={unknown}
-          autoFocus
-        />
-      </label>
-      {unknown.length > 0 && (
-        <p className="field-error hint">{t.unknownTags(engine!.name, unknown.join(' '), unknown.length)}</p>
-      )}
-      {caps?.tags && engine && <TagBar key={engine.id} engine={engine} onInsert={insertTag} />}
-
-      {caps?.style && (
-        <label className="field">
-          <span>
-            {t.style} <span className="muted">{t.optional}</span>
-          </span>
-          <input
-            value={control}
-            onChange={(e) => setControl(e.target.value)}
-            placeholder={(engine && t.stylePlaceholders[engine.id]) ?? t.stylePlaceholder}
+    <div className="synth">
+      <div className="synth-main">
+        <form className="composer" onSubmit={submit} onKeyDown={onKeyDown}>
+          <div className="composer-head">{voicePicker}</div>
+          <TaggedText
+            ref={textArea}
+            value={text}
+            onChange={setText}
+            placeholder={(engine && t.textPlaceholders[engine.id]) ?? t.textPlaceholder}
+            unknown={unknown}
+            rows={7}
+            autoFocus
           />
-          {engine && t.styleHints[engine.id] && <span className="muted hint">{t.styleHints[engine.id]}</span>}
-        </label>
-      )}
-
-      {inputs.length > 0 && (
-        <fieldset className="field reference">
-          <legend>
-            {t.referenceAudio}{' '}
-            <span className="muted">
-              {caps?.voice_reference && voiceReference !== null
-                ? t.referenceVoiceDefault
-                : caps?.reference_required
-                  ? t.referenceRequired
-                  : t.referenceOptional}
-            </span>
-          </legend>
-          {caps?.voice_reference && !references.prompt && voiceReference !== null && (
-            <p className="muted hint">{t.usesVoiceReference(voiceReference)}</p>
+          {unknown.length > 0 && (
+            <p className="composer-warning">{t.unknownTags(engine!.name, unknown.join(' '), unknown.length)}</p>
           )}
-          {inputs.map((i) => (
-            <ReferenceInputField
-              key={`${engine?.id}.${i.name}`}
-              engineId={engine?.id ?? ''}
-              input={i}
-              value={stateOf(i)}
-              onChange={(state) => setStateOf(i, state)}
-              other={otherOf(i)}
-              onError={onError}
-              onTranscribed={onTranscribed}
-            />
-          ))}
-        </fieldset>
-      )}
+          {caps?.tags && engine && showTags && <TagBar key={engine.id} engine={engine} onInsert={insertTag} />}
+          <div className="composer-foot">
+            {caps?.tags && engine && (
+              <button
+                type="button"
+                className={`ghost small tag-button${showTags ? ' active' : ''}`}
+                aria-pressed={showTags}
+                onClick={() => toggleTags(!showTags)}
+                title={showTags ? t.hideTags : t.showTags}
+              >
+                <TagIcon /> {t.tags}
+              </button>
+            )}
+            <span className="char-count">{t.characters(text.length)}</span>
+            <span className="spacer" />
+            {blocker ? (
+              <span className="field-error composer-blocker">{blocker}</span>
+            ) : (
+              !busy && <kbd className="shortcut">{t.ctrlEnter}</kbd>
+            )}
+            <button type="submit" className="primary generate" disabled={!canSubmit}>
+              {busy ? <span className="spinner" aria-hidden /> : <SparkIcon />}
+              {busy ? t.generating : t.generate}
+            </button>
+          </div>
+          {busy && (
+            <div className="composer-progress">
+              <SynthesisProgress />
+            </div>
+          )}
+        </form>
+        {children}
+      </div>
 
-      <details className="advanced">
-        <summary>{t.advanced}</summary>
-        <div className="advanced-grid">
-          {shown
-            .filter((p) => p.kind === 'choice')
-            .map((p) => (
+      <aside className="synth-side" onKeyDown={onKeyDown}>
+        <div className="settings">
+          {voiceDetails}
+
+          {caps?.style && (
+            <section className="settings-section">
+              <label className="field">
+                <span>
+                  <span className="label-text">
+                    {t.style}
+                    {engine && t.styleHints[engine.id] && <Info text={t.styleHints[engine.id]} />}
+                  </span>
+                  <span className="muted">{t.optional}</span>
+                </span>
+                <input
+                  value={control}
+                  onChange={(e) => setControl(e.target.value)}
+                  placeholder={(engine && t.stylePlaceholders[engine.id]) ?? t.stylePlaceholder}
+                />
+              </label>
+            </section>
+          )}
+
+          {inputs.length > 0 && (
+            <section className="settings-section">
+              <div className="settings-head">
+                <h3>
+                  {t.referenceAudio}
+                  <Info text={referenceHint} />
+                </h3>
+                <span className="muted settings-note">
+                  {caps?.reference_required && !ownReference ? t.required : t.optional}
+                </span>
+              </div>
+              {ownReference && !references.prompt && (
+                <p className="muted hint uses-voice-reference">{t.usesVoiceReference}</p>
+              )}
+              {inputs.map((i) => (
+                <ReferenceInputField
+                  key={`${engine?.id}.${i.name}`}
+                  engineId={engine?.id ?? ''}
+                  input={i}
+                  value={stateOf(i)}
+                  onChange={(state) => setStateOf(i, state)}
+                  other={otherOf(i)}
+                  onError={onError}
+                  onTranscribed={onTranscribed}
+                />
+              ))}
+            </section>
+          )}
+
+          <section className="settings-section">
+            <div className="settings-head">
+              <h3>{t.settingsTitle}</h3>
+            </div>
+            {choices.map((p) => (
               <label key={`${engine?.id}.${p.name}`} className="field">
-                <span>{t.paramLabels[p.name] ?? p.name}</span>
+                <span>
+                  <span className="label-text">
+                    {t.paramLabels[p.name] ?? p.name}
+                    {t.paramHints[p.name] && <Info text={t.paramHints[p.name]} />}
+                  </span>
+                </span>
                 <select value={String(options[p.name])} onChange={(e) => setOption(p.name, e.target.value)}>
                   {(p.choices ?? []).map((c) => (
                     <option key={c} value={c}>
@@ -282,12 +376,9 @@ export function SynthesisPanel({
                     </option>
                   ))}
                 </select>
-                {t.paramHints[p.name] && <span className="muted hint">{t.paramHints[p.name]}</span>}
               </label>
             ))}
-          {shown
-            .filter((p) => p.kind === 'float' || p.kind === 'int')
-            .map((p) => (
+            {sliders.map((p) => (
               <ParamSlider
                 key={`${engine?.id}.${p.name}`}
                 param={p}
@@ -295,47 +386,54 @@ export function SynthesisPanel({
                 onChange={(v) => setOption(p.name, v)}
               />
             ))}
-          <label className="field">
-            <span>{t.seed}</span>
-            <input
-              type="number"
-              value={seed ?? ''}
-              placeholder={t.random}
-              onChange={(e) => onSeedChange(e.target.value === '' ? null : Number(e.target.value))}
-            />
-          </label>
-          <div className="toggles">
-            {shown
-              .filter((p) => p.kind === 'bool')
-              .map((p) => (
-                <label key={`${engine?.id}.${p.name}`}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(options[p.name])}
-                    onChange={(e) => setOption(p.name, e.target.checked)}
-                  />{' '}
-                  {t.paramLabels[p.name] ?? p.name}
-                </label>
-              ))}
-          </div>
+            <label className="field">
+              <span>
+                <span className="label-text">
+                  {t.seed}
+                  <Info text={t.seedHint} />
+                </span>
+              </span>
+              <span className="seed-row">
+                <input
+                  type="number"
+                  value={seed ?? ''}
+                  placeholder={t.random}
+                  onChange={(e) => onSeedChange(e.target.value === '' ? null : Number(e.target.value))}
+                />
+                {seed !== null && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => onSeedChange(null)}
+                    title={t.randomSeed}
+                    aria-label={t.randomSeed}
+                  >
+                    <CloseIcon />
+                  </button>
+                )}
+              </span>
+            </label>
+            {toggles.length > 0 && (
+              <div className="toggles">
+                {toggles.map((p) => (
+                  <label key={`${engine?.id}.${p.name}`} className="switch">
+                    <span className="label-text">
+                      {t.paramLabels[p.name] ?? p.name}
+                      {t.paramHints[p.name] && <Info text={t.paramHints[p.name]} />}
+                    </span>
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={Boolean(options[p.name])}
+                      onChange={(e) => setOption(p.name, e.target.checked)}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
-      </details>
-
-      {busy && <SynthesisProgress />}
-      <div className="actions">
-        {engine?.unavailable ? (
-          <span className="field-error">{t.engineUnavailable(engine.name, engine.unavailable)}</span>
-        ) : needsReference ? (
-          <span className="field-error">{t.needsReference(engine!.name)}</span>
-        ) : untranscribed ? (
-          <span className="field-error">{t.needsTranscript(inputLabel(untranscribed))}</span>
-        ) : (
-          <span className="muted hint">{t.ctrlEnter}</span>
-        )}
-        <button type="submit" className="primary" disabled={!canSubmit}>
-          {busy ? t.generating : t.generate}
-        </button>
-      </div>
-    </form>
+      </aside>
+    </div>
   )
 }
