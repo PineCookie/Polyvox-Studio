@@ -10,5 +10,8 @@ Changes from the wheel:
   minor version is gone (torchaudio's last release, 2.11, never matches torch 2.14);
 - utils/text.py: language detection from the script instead of lingua (~290 MB),
   language tags from a small table instead of langcodes, and text normalization
-  through wetext instead of WeTextProcessing (needs pynini: no Windows wheel).
+  through wetext instead of WeTextProcessing (needs pynini: no Windows wheel);
+- upstream's fix after 0.3.1 (commit 6b76307, "Preserve FP32 latents at the VAE decoder
+  boundary"): models/dots_tts/core.py ``denormalize`` in float32, model.py
+  ``_prepare_patch_encoder_input`` casts its result to the patch encoder's dtype.
 """
