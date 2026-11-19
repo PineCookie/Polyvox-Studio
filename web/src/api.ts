@@ -411,6 +411,10 @@ export interface TtsProgress {
   expected: number | null // an estimate: the text decides when generation stops
   attempt: number // VoxCPM retries a generation that runs far too long
   elapsed: number // seconds
+  // Loading / compiling: seconds in the phase, and how long it took last time on this computer
+  // (null: not measured here yet).
+  phase_elapsed?: number | null
+  last_time?: number | null
 }
 
 export async function getTtsProgress(): Promise<TtsProgress> {

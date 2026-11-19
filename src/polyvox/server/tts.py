@@ -19,6 +19,7 @@ from ..data import audio_io, manifests, references
 from ..prep.aligner import AlignService
 from ..prep.asr import load_audio
 from .context import Studio, checked, found, same_gpu, save_upload
+from .phase_times import ONE_OFF, PhaseTimes
 from .schemas import ReferenceClipsIn
 
 
@@ -30,6 +31,7 @@ def temporary_wav() -> Path:
 
 def router(s: Studio) -> APIRouter:
     api = APIRouter()
+    phase_times = PhaseTimes(s.settings.models_dir / ".phase-times.json")
 
     def dataset_clips(value: str) -> list[references.Clip]:
         try:
@@ -130,19 +132,19 @@ def router(s: Studio) -> APIRouter:
             spec = caps.reference_input("prompt")
             if prompt_wav and spec and spec.transcript == "required" and not (said or "").strip():
                 raise ValueError(f"{tts_engine.name}'s prompt needs its transcript.")
-            result = tts_engine.synthesize(
-                engines.SynthesisRequest(
-                    text=text,
-                    style=control,
-                    lora_id=lora_id or None,
-                    reference_wav=ref_path,
-                    extra_references=extra,
-                    prompt_wav=prompt_wav,
-                    prompt_text=said,
-                    seed=seed,
-                    options=values,
-                )
+            request = engines.SynthesisRequest(
+                text=text,
+                style=control,
+                lora_id=lora_id or None,
+                reference_wav=ref_path,
+                extra_references=extra,
+                prompt_wav=prompt_wav,
+                prompt_text=said,
+                seed=seed,
+                options=values,
             )
+            with phase_times.watching(tts_engine):
+                result = tts_engine.synthesize(request)
         except KeyError as e:
             raise HTTPException(404, str(e.args[0])) from e
         except ValueError as e:
@@ -203,7 +205,8 @@ def router(s: Studio) -> APIRouter:
 
         path = audio_io.to_wav(save_upload(audio))
         try:
-            result = tts_engine.edit(engines.EditRequest(path, text, new_text, align, seed))
+            with phase_times.watching(tts_engine):
+                result = tts_engine.edit(engines.EditRequest(path, text, new_text, align, seed))
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         except Exception as e:
@@ -225,14 +228,22 @@ def router(s: Studio) -> APIRouter:
         """The running synthesis: phase (idle | loading | preparing | compiling |
         generating), step and expected steps (an estimate; the text decides when
         it stops), attempt (VoxCPM retries a run-away generation) and elapsed seconds. While a
-        model it needs downloads first: phase downloading, model (its name), step / expected in MB."""
+        model it needs downloads first: phase downloading, model (its name), step / expected in MB.
+        In loading / compiling: phase_elapsed (seconds in it) and last_time (how long it took the
+        last time on this computer; None: not measured yet)."""
         if (fetching := models.active_download()) is not None:
             return {"phase": "downloading", "model": fetching["name"], "step": fetching["done"],
                     "expected": fetching["total"], "attempt": 1, "elapsed": 0.0}  # fmt: skip
-        for engine in s.registry.values():
-            if (progress := engine.progress())["phase"] != "idle":
-                return progress
-        return s.service.progress_public()
+        busy = next(((e, p) for e in s.registry.values() if (p := e.progress())["phase"] != "idle"), None)
+        engine_id, progress = (busy[0].id, busy[1]) if busy else (engines.DEFAULT, s.service.progress_public())
+        if progress["phase"] in ONE_OFF:
+            now = phase_times.current(engine_id)
+            progress = {
+                **progress,
+                "phase_elapsed": round(now[1], 1) if now and now[0] == progress["phase"] else None,
+                "last_time": phase_times.last(engine_id, progress["phase"]),
+            }
+        return progress
 
     @api.post("/api/asr")
     def transcribe(

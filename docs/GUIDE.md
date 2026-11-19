@@ -60,8 +60,11 @@ first: with a reference its codebook decoder already renders a voice as well as
 the real recordings, so a LoRA there would add little.)
 
 The first generation after a model loads takes longer while the model is
-compiled (about 30 s for VoxCPM2, a minute for dots.tts, a few seconds for
-S2-Pro; several minutes the very first time); later ones are fast.
+compiled for your GPU: from a few seconds to about half a minute, depending on
+the model and the computer, and several minutes the very first time (torch then
+keeps the compiled code on disk for later starts). Later generations are fast.
+The progress shows how long loading and compiling took the last time on your
+computer.
 
 **Fish Audio Drama 3** clones zero-shot only (no training yet), at about 0.6 s
 per second of audio on a 16 GB GPU. The model's state after a reference is

@@ -65,13 +65,24 @@ export function SynthesisProgress() {
         : phase === 'generating'
           ? t.progressGenerating + (attempt > 1 ? t.progressRetry(attempt) : '')
           : t.progressPreparing
+  // Loading and compiling: against how long they took last time on this computer.
+  const oneOff = phase === 'loading' || phase === 'compiling'
+  const inPhase = progress.phase_elapsed ?? null
+  const last = progress.last_time ?? null
   // The estimate can be short or long; never show done before it is.
-  const share = phase === 'generating' && expected ? Math.min(step / expected, 0.97) : 0
+  const share =
+    phase === 'generating' && expected
+      ? Math.min(step / expected, 0.97)
+      : oneOff && last && inPhase !== null
+        ? Math.min(inPhase / last, 0.97)
+        : 0
+  const time = oneOff && inPhase !== null ? inPhase : elapsed
   return (
     <div className="synthesis-progress">
       <span className="muted hint">
         {label}
-        {phase === 'generating' && ` · ${Math.round(share * 100)}%`} · {formatDuration(elapsed)}
+        {phase === 'generating' && ` · ${Math.round(share * 100)}%`} · {formatDuration(time)}
+        {oneOff && (last ? ` · ${t.progressLastTime(formatDuration(last))}` : ` · ${t.progressFirstTime}`)}
       </span>
       <ProgressBar value={share} max={1} />
     </div>

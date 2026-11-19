@@ -240,7 +240,9 @@ export const en = {
   generating: 'Generating…',
   // Synthesis progress
   progressLoading: 'Loading the model',
-  progressCompiling: 'Compiling (after loading: VoxCPM ~30 s, dots.tts ~1 min, minutes the very first time)',
+  progressCompiling: 'Compiling for this GPU',
+  progressLastTime: (time: string) => `last time ${time}`,
+  progressFirstTime: 'the first time on this computer can take a few minutes',
   progressGenerating: 'Generating',
   progressRetry: (attempt: number) => ` (attempt ${attempt}: the last ran far too long)`,
   progressPreparing: 'Preparing',
