@@ -1,4 +1,4 @@
-"""Training subprocess for RVC v2 voices (40 kHz, with pitch).
+"""Training subprocess for RVC v2 voices (32, 40 or 48 kHz, with pitch).
 
 ``python -m polyvox.engines.rvc.worker <train_config.yaml> --samples-dir <dir> --stop-file <path>
 [--parent-pid <pid>]``
@@ -9,10 +9,10 @@ samples/ with step_NNNNNNN_<i>.wav (held-out clips converted with the voice so f
 reference_<i>.wav (those clips); the stop file (or the server exiting) saves and ends the run.
 Steps count updates, 1..num_iters.
 
-As RVC's WebUI trains (train.py): each clip resampled to 40 kHz, high-passed, cut into 3.7 s
-pieces, each normalized; features per piece (ContentVec, RMVPE pitch) cached in the dataset
-folder for its runs; the GAN from the 40 kHz base models; the run's index (the pieces' content
-features) in the run folder, used by all its checkpoints.
+As RVC's WebUI trains (train.py): each clip resampled to the voice's rate (config sample_rate),
+high-passed, cut into 3.7 s pieces, each normalized; features per piece (ContentVec, RMVPE pitch)
+cached in the dataset folder for its runs at that rate; the GAN from that rate's base models; the
+run's index (the pieces' content features) in the run folder, used by all its checkpoints.
 """
 
 from __future__ import annotations
@@ -101,11 +101,14 @@ class Run:
         return torch.load(path, map_location="cpu", weights_only=True) if path.is_file() else None
 
 
-def features(run: Run, records: list[dict], contentvec, rmvpe, cache_file: Path) -> list[dict] | None:
-    """Every clip's pieces, from the dataset's cache where it has them (None: stopped)."""
+def features(
+    run: Run, records: list[dict], contentvec, rmvpe, cache_file: Path, rate: int = 40000
+) -> list[dict] | None:
+    """Every clip's pieces at ``rate``, from the dataset's cache where it has them (None: stopped)."""
     from ..common.cache import clip_key, load_cache, save_cache
     from .train import clip_features
 
+    # (the rate is in the cache file's name: rvc_v2_<k>k.pt)
     meta = {"version": CACHE_VERSION, "contentvec": "contentvec-768", "pitch": "rmvpe"}
     cache = load_cache(cache_file, meta)
     keys = [clip_key(r) for r in records]
@@ -121,7 +124,7 @@ def features(run: Run, records: list[dict], contentvec, rmvpe, cache_file: Path)
             # (the shared cache helpers read an entry's "audio" to prune clips that are gone)
             cache[keys[i]] = {
                 "audio": str(records[i]["audio"]),
-                "pieces": clip_features(records[i]["audio"], contentvec, rmvpe),
+                "pieces": clip_features(records[i]["audio"], contentvec, rmvpe, rate),
             }
         except Exception as e:  # an unreadable clip is left out, not cached
             log(f"Skipping {Path(records[i]['audio']).name}: {e}")
@@ -166,13 +169,13 @@ def samples(run: Run, trainer, converter, index, step: int, val_records: list[di
 
     trainer.g.eval()
     try:
-        voice = Voice(trainer.g, 40000, "v2", "")
+        voice = Voice(trainer.g, trainer.rate, "v2", "")
         for i, record in enumerate(val_records[:SAMPLES]):
             audio, rate = audio_io.read(record["audio"])
             if not (out / f"reference_{i}.wav").exists():
                 write(out / f"reference_{i}.wav", audio.T, rate)
             converted = converter.convert(voice, audio.mean(0), rate, index, Options())
-            write(out / f"step_{step:07d}_{i}.wav", converted, 40000)
+            write(out / f"step_{step:07d}_{i}.wav", converted, trainer.rate)
     except Exception as e:  # a failed sample never stops training
         log(f"Sample conversion failed: {e}")
     finally:
@@ -185,7 +188,7 @@ def checkpoint(run: Run, trainer, step: int, epoch: int) -> None:
     folder = run.save_dir / f"step_{step:07d}"
     folder.mkdir(parents=True, exist_ok=True)
     trainer.save_voice(folder / WEIGHTS, f"{epoch}epoch")
-    write_info(folder, 40000, "trained")
+    write_info(folder, trainer.rate, "trained")
 
 
 def main() -> None:
@@ -202,7 +205,7 @@ def main() -> None:
     from ...data import manifests
     from .convert import ContentVec, Converter, Index
     from .pitch import RMVPE
-    from .train import Trainer, collate, epochs_batches
+    from .train import FRAMES_PER_S, RATES, Trainer, collate, epochs_batches
 
     run = Run(args, config)
     t0 = time.time()
@@ -214,12 +217,14 @@ def main() -> None:
     records = [dict(e) for e in manifests.read_manifest(Path(config["train_manifest"]))[0]]
     val_path = Path(config["val_manifest"]) if config.get("val_manifest") else None
     val_records = [dict(e) for e in manifests.read_manifest(val_path)[0]] if val_path and val_path.is_file() else []
-    pieces = features(run, records, contentvec, rmvpe, Path(config["feature_cache"]))
+    rate = int(config.get("sample_rate") or 40000)
+    pieces = features(run, records, contentvec, rmvpe, Path(config["feature_cache"]), rate)
     if pieces is None:
         log("Stopped.")
         return
     if not pieces:
-        raise SystemExit("No clip of this dataset can be trained on (each needs at least 0.32 s of audio).")
+        least = RATES[rate].segment / FRAMES_PER_S
+        raise SystemExit(f"No clip of this dataset can be trained on (each needs at least {least:.2f} s of audio).")
     write_index(run, pieces)
 
     batch = int(config["batch_size"])
@@ -231,7 +236,7 @@ def main() -> None:
     save_every = int(config.get("save_every") or 25)
 
     trainer = Trainer(
-        Path(config["pretrained_g"]), Path(config["pretrained_d"]), "cuda", float(config["learning_rate"])
+        Path(config["pretrained_g"]), Path(config["pretrained_d"]), "cuda", float(config["learning_rate"]), rate=rate
     )
     state = run.load_state()
     step, epoch = (int(state["step"]), int(state["epoch"])) if state else (0, 0)

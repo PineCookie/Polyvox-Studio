@@ -111,6 +111,7 @@ export interface Status {
   singing_loaded: boolean
   // Import clean-up options whose model is configured.
   cleanup: CleanupOption[]
+  karaoke: boolean // the lead / backing vocals split's model is there (covers)
   // No engine's model is configured or downloaded yet (a first run).
   no_speech_model: boolean
   version: string // this studio's
@@ -212,7 +213,7 @@ export interface ModelInfo {
   ways: DownloadWay[] // how it can be downloaded when there's a choice ([] = one way)
 }
 
-export type ModelGroup = 'tts' | 'dataset' | 'cleanup'
+export type ModelGroup = 'tts' | 'conversion' | 'dataset' | 'cleanup'
 export type DownloadWayId = 'prebuilt' | 'convert' | 'convert_keep'
 
 export interface DownloadWay {
@@ -307,7 +308,9 @@ export async function rebuildRvcIndex(body: {
   return (await postJson('/api/rvc/index', body)).json()
 }
 
-export type ConvertFile = 'cover' | 'vocals_converted' | 'instrumental' | 'vocals'
+export type ConvertFile = 'cover' | 'vocals_converted' | 'instrumental' | 'vocals' | 'lead' | 'backing'
+// A split's backing vocals: kept as sung, or converted on their own.
+export type BackingMode = 'keep' | 'convert'
 
 export type ConvertJob = Job<{
   files: ConvertFile[]
@@ -323,6 +326,8 @@ export interface ConvertParams {
   options: EngineOptions // the engine's params (shift, index_rate, ...)
   separate: boolean // a song: vocals taken out, converted, remixed
   dereverb: boolean
+  split: boolean // lead and backing vocals apart: the lead converted, the backing as `backing` says
+  backing: BackingMode
   shiftInstrumental: boolean // a key change moves the instrumental too
   seed: number | null
 }
@@ -335,6 +340,8 @@ export async function convertRecording(p: ConvertParams): Promise<ConvertJob> {
   form.set('options', JSON.stringify(p.options))
   form.set('separate', String(p.separate))
   form.set('dereverb', String(p.dereverb))
+  form.set('split', String(p.split))
+  form.set('backing', p.backing)
   form.set('shift_instrumental', String(p.shiftInstrumental))
   if (p.seed !== null) form.set('seed', String(p.seed))
   return (await request('/api/convert', { method: 'POST', body: form })).json()
@@ -552,6 +559,7 @@ export interface TrainParams {
   s2_offload: boolean // fast-only: the slow transformer waits in CPU memory between samples
   rvc_epochs: number // RVC: epochs over the dataset's 3.7 s pieces (num_iters follows)
   rvc_save_every: number // RVC: a checkpoint (a voice) every this many epochs
+  rvc_sample_rate: number // RVC: 32000 / 40000 / 48000 (the base models trained from)
 }
 
 function postJson(url: string, body?: unknown): Promise<Response> {

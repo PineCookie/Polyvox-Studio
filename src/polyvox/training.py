@@ -110,10 +110,11 @@ class TrainParams(BaseModel):
     # (New run takes it from the GPU profile, vram.Profile.s2_offload).
     s2_cached_references: int = Field(2, ge=0, le=8)
     s2_offload: bool = False
-    # RVC (full training from its 40 kHz base models): epochs over the dataset's 3.7 s pieces
-    # (num_iters then follows), and every how many epochs a checkpoint (a voice) is saved.
+    # RVC (full training from its base models at that rate): epochs over the dataset's 3.7 s
+    # pieces (num_iters then follows), and every how many epochs a checkpoint (a voice) is saved.
     rvc_epochs: int = Field(100, ge=1, le=1000)
     rvc_save_every: int = Field(25, ge=1, le=1000)
+    rvc_sample_rate: Literal[32000, 40000, 48000] = 40000
 
 
 class RunSummary(BaseModel):

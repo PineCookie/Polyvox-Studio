@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { convertFileUrl, convertRecording } from '../api'
-import type { ConvertJob, Engine, EngineOptions, Lora, Status } from '../api'
+import { convertFileUrl, convertRecording, importLora } from '../api'
+import type { BackingMode, ConvertJob, Engine, EngineOptions, Lora, Status } from '../api'
 import { formatDuration, formatStep } from '../format'
 import { useT } from '../i18n'
 import { useJob } from '../useJob'
 import { AudioPlayer } from './AudioPlayer'
+import { ExportDialog } from './ExportDialog'
 import { FilePicker } from './FilePicker'
-import { DownloadIcon } from './icons'
+import { DownloadIcon, PlusIcon } from './icons'
 import { Info } from './Info'
 import { JobProgress } from './JobProgress'
 import { RvcImportDialog } from './RvcImportDialog'
@@ -16,6 +17,7 @@ interface Result {
   job: ConvertJob
   recording: string // the file's name
   voice: string // the voice's name
+  how: string // what was converted (lead only, lead and backing, all vocals)
 }
 
 interface Props {
@@ -44,9 +46,16 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
   const [file, setFile] = useState<File | null>(null)
   const [song, setSong] = useState(true)
   const [dereverb, setDereverb] = useState(true)
+  // Lead and backing vocals apart: on for songs (harmonies would blur into the one converted voice),
+  // off for a vocal or speech recording unless asked.
+  const [split, setSplit] = useState({ song: true, vocals: false })
+  const [backing, setBacking] = useState<BackingMode>('keep')
   const [shiftMusic, setShiftMusic] = useState(true)
   const [options, setOptions] = useState<EngineOptions>(() => defaults(engine))
   const [importing, setImporting] = useState(false)
+  const [unpacking, setUnpacking] = useState(false) // a package being imported
+  const [exporting, setExporting] = useState(false)
+  const packageInput = useRef<HTMLInputElement>(null)
   const [results, setResults] = useState<Result[]>([])
   const pending = useRef<Omit<Result, 'job'> | null>(null)
   const [job, setJob] = useJob<ConvertJob>((j) => {
@@ -64,7 +73,9 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
   }, [pick])
   const chosen = voices.find((v) => v.id === voice) ?? null
   const cleanup = status?.cleanup ?? []
-  const needsModels = song && (!cleanup.includes('separate') || (dereverb && !cleanup.includes('dereverb')))
+  const canSplit = !!status?.karaoke
+  const splitting = canSplit && split[song ? 'song' : 'vocals']
+  const needsModels = (song && !cleanup.includes('separate')) || (dereverb && !cleanup.includes('dereverb'))
   const blocker = engine?.unavailable
     ? t.engineUnavailable(engine.name, engine.unavailable)
     : needsModels
@@ -81,10 +92,26 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
     }
   }
 
+  async function importPackage(file: File | undefined) {
+    if (!file) return
+    setUnpacking(true)
+    try {
+      const { id } = await importLora(file)
+      onVoicesChanged()
+      choose(id)
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setUnpacking(false)
+      if (packageInput.current) packageInput.current.value = ''
+    }
+  }
+
   async function start() {
     if (!canConvert || !file || !chosen) return
     try {
-      pending.current = { recording: file.name, voice: chosen.voice }
+      const how = !splitting ? t.convertHowAll : backing === 'keep' ? t.convertHowLead : t.convertHowBoth
+      pending.current = { recording: file.name, voice: chosen.voice, how }
       setJob(
         await convertRecording({
           audio: file,
@@ -92,6 +119,8 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
           options,
           separate: song,
           dereverb,
+          split: splitting,
+          backing,
           shiftInstrumental: shiftMusic,
           seed: null,
         }),
@@ -174,6 +203,7 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
                   ))}
                   <p className="take-meta">
                     <span className="take-voice">{r.voice}</span>
+                    <span>{r.how}</span>
                     <span>
                       {t.convertMeta(formatDuration(r.job.result.seconds), formatDuration(r.job.result.took))}
                     </span>
@@ -190,6 +220,11 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
           <section className="settings-section">
             <div className="settings-head">
               <h3>{t.convertVoice}</h3>
+              {chosen && (
+                <button type="button" className="ghost small" onClick={() => setExporting(true)}>
+                  {t.export}
+                </button>
+              )}
             </div>
             {voices.length === 0 ? (
               <p className="muted hint">{t.convertNoVoices}</p>
@@ -203,14 +238,122 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
                 ))}
               </select>
             )}
-            <button type="button" className="ghost small" onClick={() => setImporting(true)} disabled={!engine}>
-              {t.rvcImportButton}
-            </button>
+            <div className="convert-imports">
+              <button type="button" className="ghost small" onClick={() => setImporting(true)} disabled={!engine}>
+                <PlusIcon /> {t.rvcImportButton}
+              </button>
+              <input
+                ref={packageInput}
+                type="file"
+                accept=".zip,application/zip"
+                hidden
+                onChange={(e) => importPackage(e.target.files?.[0])}
+              />
+              <button
+                type="button"
+                className="ghost small"
+                onClick={() => packageInput.current?.click()}
+                disabled={!engine || unpacking}
+                title={t.rvcPackageTitle}
+              >
+                <PlusIcon /> {unpacking ? t.importing : t.importPackage}
+              </button>
+            </div>
           </section>
 
           <section className="settings-section">
             <div className="settings-head">
-              <h3>{t.settingsTitle}</h3>
+              <h3>{t.convertStepsTitle}</h3>
+            </div>
+            <ol className="convert-steps">
+              {song && (
+                <li>
+                  <div className="switch">
+                    <span className="label-text">
+                      {t.convertStepSeparate}
+                      <Info text={t.convertStepSeparateHint} />
+                    </span>
+                    <span className="muted">{cleanup.includes('separate') ? t.convertAlways : t.notDownloaded}</span>
+                  </div>
+                </li>
+              )}
+              <li>
+                <label className="switch">
+                  <span className="label-text">
+                    {t.convertDereverb}
+                    <Info text={t.convertDereverbHint} />
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={dereverb}
+                    onChange={(e) => setDereverb(e.target.checked)}
+                  />
+                </label>
+              </li>
+              <li>
+                <label className="switch">
+                  <span className="label-text">
+                    {t.convertSplit}
+                    <Info text={t.convertSplitHint} />
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={splitting}
+                    disabled={!canSplit}
+                    onChange={(e) => setSplit((s) => ({ ...s, [song ? 'song' : 'vocals']: e.target.checked }))}
+                  />
+                </label>
+                {!canSplit && (
+                  <div className="convert-step-note">
+                    <span className="muted hint">{t.convertSplitMissing}</span>
+                    <button type="button" className="ghost small" onClick={onOpenModels}>
+                      {t.openModels}
+                    </button>
+                  </div>
+                )}
+                {splitting && (
+                  <div className="segmented" role="radiogroup" aria-label={t.convertBacking}>
+                    <label>
+                      <input type="radio" checked={backing === 'keep'} onChange={() => setBacking('keep')} />{' '}
+                      {t.convertBackingKeep}
+                    </label>
+                    <label>
+                      <input type="radio" checked={backing === 'convert'} onChange={() => setBacking('convert')} />{' '}
+                      {t.convertBackingConvert}
+                    </label>
+                  </div>
+                )}
+              </li>
+              <li>
+                <div className="switch">
+                  <span className="label-text">{splitting ? t.convertStepLead : t.convertStepVocals}</span>
+                  <span className="muted">{t.convertStepSettingsBelow}</span>
+                </div>
+              </li>
+              {song && (
+                <li>
+                  <label className="switch">
+                    <span className="label-text">
+                      {t.convertShiftMusic}
+                      <Info text={t.convertShiftMusicHint} />
+                    </span>
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={shiftMusic}
+                      onChange={(e) => setShiftMusic(e.target.checked)}
+                    />
+                  </label>
+                </li>
+              )}
+            </ol>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-head">
+              <h3>{t.convertVoiceSettings}</h3>
             </div>
             {sliders.map((p) => (
               <ParamSlider
@@ -235,34 +378,6 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
                   />
                 </label>
               ))}
-              {song && (
-                <>
-                  <label className="switch">
-                    <span className="label-text">
-                      {t.convertDereverb}
-                      <Info text={t.convertDereverbHint} />
-                    </span>
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      checked={dereverb}
-                      onChange={(e) => setDereverb(e.target.checked)}
-                    />
-                  </label>
-                  <label className="switch">
-                    <span className="label-text">
-                      {t.convertShiftMusic}
-                      <Info text={t.convertShiftMusicHint} />
-                    </span>
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      checked={shiftMusic}
-                      onChange={(e) => setShiftMusic(e.target.checked)}
-                    />
-                  </label>
-                </>
-              )}
             </div>
           </section>
         </div>
@@ -276,6 +391,16 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
           }}
           onError={onError}
           onClose={() => setImporting(false)}
+        />
+      )}
+      {exporting && chosen && (
+        <ExportDialog
+          lora={chosen}
+          engine={engine}
+          // A run's last checkpoint is named after the run alone.
+          final={!voices.some((v) => v.voice_path === chosen.voice_path && (v.step ?? -1) > (chosen.step ?? -1))}
+          onError={onError}
+          onClose={() => setExporting(false)}
         />
       )}
     </main>

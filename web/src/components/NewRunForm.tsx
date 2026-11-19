@@ -46,13 +46,16 @@ const SCHEDULE_KEYS: (keyof Schedule)[] = [
 const MODEL_TAGS: Record<string, string> = { voxcpm: 'voxcpm2', dots_tts: 'dots', fish_s2: 's2', rvc: 'rvc' }
 const GSV_TAGS: Record<string, string> = { v2ProPlus: 'v2pp', v2Pro: 'v2pro', v4: 'v4' }
 
-/** dataset-model[-rank], e.g. voice-voxcpm2-r32, voice-dots-r32, voice-v2pp, voice-v4-r32;
- * a repeat adds the month and day (voice-dots-r32-1012), then a counter (-1012-2). */
+/** dataset-model[-rank], e.g. voice-voxcpm2-r32, voice-dots-r32, voice-v2pp, voice-v4-r32, voice-rvc
+ * (voice-rvc48k off RVC's usual 40 kHz); a repeat adds the month and day (voice-dots-r32-1012),
+ * then a counter (-1012-2). */
 function suggestName(dataset: string, params: Params, taken: string[], now = new Date()): string {
   const model =
     params.engine === 'gpt_sovits'
       ? (GSV_TAGS[params.gsv_version] ?? params.gsv_version.toLowerCase())
-      : (MODEL_TAGS[params.engine] ?? params.engine.split('_')[0])
+      : params.engine === 'rvc' && params.rvc_sample_rate !== 40000
+        ? `rvc${params.rvc_sample_rate / 1000}k`
+        : (MODEL_TAGS[params.engine] ?? params.engine.split('_')[0])
   // Full fine-tuning has no rank, except GPT-SoVITS v4 (a LoRA on its DiT).
   const lora = params.engine !== 'rvc' && (params.engine !== 'gpt_sovits' || params.gsv_version === 'v4')
   const parts = [datasetName(dataset).split('/').at(-1), model, ...(lora ? [`r${params.lora_rank}`] : [])]
@@ -212,7 +215,9 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             value={Number.isFinite(params.val_holdout) ? params.val_holdout : ''}
             onChange={(e) => set('val_holdout', e.target.valueAsNumber)}
           />
-          <span className="muted hint">{t.holdoutHint(params.valid_interval)}</span>
+          <span className="muted hint">
+            {rvc ? t.rvcHoldoutHint(params.rvc_save_every) : t.holdoutHint(params.valid_interval)}
+          </span>
         </div>
       )}
     </fieldset>

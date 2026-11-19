@@ -1,13 +1,15 @@
-"""Training an RVC v2 voice (40 kHz, with pitch) from a dataset's clips: features per clip
-(40 kHz waveform, linear spectrogram, ContentVec features, RMVPE pitch), then the VITS-style GAN
-from RVC's base models (f0G40k / f0D40k): mel L1 x 45 + KL + feature matching + adversarial
-(least squares), AdamW 1e-4 (0.8, 0.99), learning rate x 0.999875 per epoch, random 32-frame
-windows of each clip, bf16 autocast. Saved voices use RVC's file format (fp16 weights,
-weight_g / weight_v), so RVC's WebUI and Applio load them too.
+"""Training an RVC v2 voice (32, 40 or 48 kHz, with pitch) from a dataset's clips: features per
+clip (waveform at the voice's rate, linear spectrogram, ContentVec features, RMVPE pitch), then the
+VITS-style GAN from RVC's base models (f0G40k / f0D40k, ...): mel L1 x 45 + KL + feature matching +
+adversarial (least squares), AdamW 1e-4 (0.8, 0.99), learning rate x 0.999875 per epoch, a random
+window of each clip (RATES' segment), bf16 autocast. Saved voices use RVC's file format (fp16
+weights, weight_g / weight_v), so RVC's WebUI and Applio load them too.
 """
 
+import functools
 import math
 import random
+from dataclasses import dataclass
 from pathlib import Path
 
 import librosa
@@ -21,11 +23,47 @@ from torch.nn.utils.parametrizations import weight_norm
 
 from .model import Config, Synthesizer
 
-N_FFT, HOP_40K, N_MELS = 2048, 400, 125
-SEGMENT = 32  # frames (12800 samples) per training window
+
+@dataclass(frozen=True)
+class Rate:
+    """What RVC's v2 configs change per sample rate (every rate runs at 100 frames per second)."""
+
+    n_fft: int  # spectrogram window and FFT size
+    n_mels: int
+    segment: int  # frames per training window
+    upsample_rates: tuple
+    upsample_kernel_sizes: tuple
+
+
+RATES = {
+    32000: Rate(1024, 80, 40, (10, 8, 2, 2), (20, 16, 4, 4)),
+    40000: Rate(2048, 125, 32, (10, 10, 2, 2), (16, 16, 4, 4)),
+    48000: Rate(2048, 128, 36, (12, 10, 2, 2), (24, 20, 4, 4)),
+}
+FRAMES_PER_S = 100
 MAX_FRAMES = 900  # RVC keeps at most 9 s of a clip
 C_MEL, C_KL = 45.0, 1.0
-HIGHPASS_40K = signal.butter(N=5, Wn=48, btype="high", fs=40000)
+
+
+def hop(rate: int) -> int:
+    return rate // FRAMES_PER_S
+
+
+def model_config(rate: int) -> Config:
+    """The synthesizer of RVC's v2 voices at ``rate`` (its base models' shapes)."""
+    r = RATES[rate]
+    return Config(
+        spec_channels=r.n_fft // 2 + 1,
+        segment_size=r.segment,
+        upsample_rates=r.upsample_rates,
+        upsample_kernel_sizes=r.upsample_kernel_sizes,
+        sample_rate=rate,
+    )
+
+
+@functools.cache
+def highpass(rate: int):
+    return signal.butter(N=5, Wn=48, btype="high", fs=rate)  # RVC's preprocessing filter
 
 
 # ---------------------------------------------------------------- weight norm
@@ -137,14 +175,16 @@ class MultiPeriodDiscriminator(nn.Module):
 
 class Spectrograms:
     def __init__(self, sample_rate: int, device):
-        self.window = torch.hann_window(N_FFT, device=device)
-        mel = librosa.filters.mel(sr=sample_rate, n_fft=N_FFT, n_mels=N_MELS, fmin=0, fmax=None)
+        r = RATES[sample_rate]
+        self.n_fft, self.hop = r.n_fft, hop(sample_rate)
+        self.window = torch.hann_window(self.n_fft, device=device)
+        mel = librosa.filters.mel(sr=sample_rate, n_fft=self.n_fft, n_mels=r.n_mels, fmin=0, fmax=None)
         self.mel_basis = torch.from_numpy(mel).float().to(device)
 
-    def linear(self, y: torch.Tensor) -> torch.Tensor:  # [b, samples] -> [b, 1025, frames]
-        pad = (N_FFT - HOP_40K) // 2
+    def linear(self, y: torch.Tensor) -> torch.Tensor:  # [b, samples] -> [b, n_fft / 2 + 1, frames]
+        pad = (self.n_fft - self.hop) // 2
         y = F.pad(y.unsqueeze(1), (pad, pad), mode="reflect").squeeze(1)
-        spec = torch.stft(y, N_FFT, HOP_40K, N_FFT, window=self.window, center=False, return_complex=True)
+        spec = torch.stft(y, self.n_fft, self.hop, self.n_fft, window=self.window, center=False, return_complex=True)
         return torch.sqrt(spec.real.pow(2) + spec.imag.pow(2) + 1e-6)
 
     def mel(self, y: torch.Tensor) -> torch.Tensor:
@@ -211,36 +251,37 @@ def piece_count(seconds: float, rate: int = 40000) -> int:
     return 1 + max(0, -(-(length - tail) // step))
 
 
-def clip_features(path: str, contentvec, rmvpe) -> list[dict]:
-    """One clip -> its pieces (piece_features), as RVC's preprocessing makes them: 40 kHz, a 48 Hz
-    high-pass, cut, each piece's level normalized."""
+def clip_features(path: str, contentvec, rmvpe, rate: int = 40000) -> list[dict]:
+    """One clip -> its pieces (piece_features), as RVC's preprocessing makes them: at the voice's
+    rate, a 48 Hz high-pass, cut, each piece's level normalized."""
     y, sr = sf.read(path, dtype="float32", always_2d=True)
     y = y.mean(1)
-    y40 = librosa.resample(y, orig_sr=sr, target_sr=40000, res_type="soxr_vhq") if sr != 40000 else y
-    y40 = signal.lfilter(*HIGHPASS_40K, y40).astype(np.float32)
-    return [f for piece in pieces(y40, 40000) if (f := piece_features(normalize(piece), contentvec, rmvpe))]
+    y = librosa.resample(y, orig_sr=sr, target_sr=rate, res_type="soxr_vhq") if sr != rate else y
+    y = signal.lfilter(*highpass(rate), y).astype(np.float32)
+    return [f for piece in pieces(y, rate) if (f := piece_features(normalize(piece), contentvec, rmvpe, rate))]
 
 
-def piece_features(y40: np.ndarray | None, contentvec, rmvpe) -> dict | None:
+def piece_features(y: np.ndarray | None, contentvec, rmvpe, rate: int = 40000) -> dict | None:
     """A piece's training inputs, kept compact (on the CPU): ContentVec features at 50 per second
-    (float16), coarse and fine pitch and the 40 kHz waveform (float16) for ``frames`` frames at 100
-    per second (at most 900); the spectrogram is computed per batch (collate). None: too short."""
+    (float16), coarse and fine pitch and the waveform at ``rate`` (float16) for ``frames`` frames
+    at 100 per second (at most 900); the spectrogram is computed per batch (collate). None: too
+    short for a training window."""
     from .convert import coarse_pitch
 
-    if y40 is None:
+    if y is None:
         return None
-    y16 = librosa.resample(y40, orig_sr=40000, target_sr=16000, res_type="soxr_vhq").astype(np.float32)
+    y16 = librosa.resample(y, orig_sr=rate, target_sr=16000, res_type="soxr_vhq").astype(np.float32)
     feats = contentvec(y16)[0]  # [frames / 2, 768]
     f0 = rmvpe.f0(y16)
-    n = min(2 * feats.shape[0], len(f0), len(y40) // HOP_40K, MAX_FRAMES)
-    if n < SEGMENT:
+    n = min(2 * feats.shape[0], len(f0), len(y) // hop(rate), MAX_FRAMES)
+    if n < RATES[rate].segment:
         return None
     return {
         "frames": n,
         "feats": feats[: -(-n // 2)].half().cpu(),
         "pitch": torch.from_numpy(coarse_pitch(f0[:n].copy()).astype(np.uint8)),
         "f0": torch.from_numpy(f0[:n]).float(),
-        "wave": torch.from_numpy(y40[: n * HOP_40K].astype(np.float16)),
+        "wave": torch.from_numpy(y[: n * hop(rate)].astype(np.float16)),
     }
 
 
@@ -256,7 +297,7 @@ def collate(items: list[dict], device, spectro: Spectrograms) -> dict:
         return F.pad(t, [0, 0] * (t.dim() - 1) + [0, length - t.shape[0]])
 
     feats = [x["feats"].repeat_interleave(2, dim=0)[: x["frames"]] for x in items]
-    wave = torch.stack([pad(x["wave"], n * HOP_40K) for x in items]).to(device).float()
+    wave = torch.stack([pad(x["wave"], n * spectro.hop) for x in items]).to(device).float()
     return {
         "feats": torch.stack([pad(f, n) for f in feats]).to(device).float(),
         "pitch": torch.stack([pad(x["pitch"], n) for x in items]).to(device).long(),
@@ -275,11 +316,19 @@ LOSSES = ("disc", "gen", "fm", "mel", "kl")
 
 class Trainer:
     def __init__(
-        self, base_g: Path, base_d: Path, device="cuda", lr: float = 1e-4, dtype=torch.bfloat16, compile: bool = False
+        self,
+        base_g: Path,
+        base_d: Path,
+        device="cuda",
+        lr: float = 1e-4,
+        dtype=torch.bfloat16,
+        compile: bool = False,
+        rate: int = 40000,
     ):
-        cfg = Config()
+        cfg = model_config(rate)
         self.device, self.dtype = device, dtype
-        torch.backends.cudnn.benchmark = True  # the decoder and discriminator always see 12800-sample windows
+        self.rate, self.segment, self.hop = rate, RATES[rate].segment, hop(rate)
+        torch.backends.cudnn.benchmark = True  # the decoder and discriminator always see same-size windows
         self.g = Synthesizer(cfg)
         with_weight_norm(self.g, norm_layers(self.g))
         state = torch.load(base_g, map_location="cpu", weights_only=True)["model"]
@@ -289,7 +338,7 @@ class Trainer:
         self.d.load_state_dict({k: v.float() for k, v in state.items()})
         self.g.to(device).train()
         self.d.to(device).train()
-        if compile:  # fixed shapes (12800-sample windows): the decoder and each discriminator
+        if compile:  # fixed shapes (one window size): the decoder and each discriminator
             self.g.dec.compile()
             for d in self.d.discriminators:
                 d.compile()
@@ -304,13 +353,13 @@ class Trainer:
         m_p, logs_p, x_mask = self.g.enc_p(b["feats"], b["pitch"], b["lengths"])
         z, m_q, logs_q, y_mask = self.g.enc_q(b["spec"], b["lengths"], g)
         z_p = self.g.flow(z, y_mask, g)
-        # a random 32-frame window of each clip
-        starts = (torch.rand(len(b["lengths"]), device=self.device) * (b["lengths"] - SEGMENT + 1)).long()
-        idx = starts[:, None] + torch.arange(SEGMENT, device=self.device)[None]
+        # a random window of each clip
+        starts = (torch.rand(len(b["lengths"]), device=self.device) * (b["lengths"] - self.segment + 1)).long()
+        idx = starts[:, None] + torch.arange(self.segment, device=self.device)[None]
         z_slice = torch.gather(z, 2, idx[:, None].expand(-1, z.shape[1], -1))
         f0_slice = torch.gather(b["f0"], 1, idx)
         y_hat = self.g.dec(z_slice, f0_slice, g)
-        wave_idx = (starts * HOP_40K)[:, None] + torch.arange(SEGMENT * HOP_40K, device=self.device)[None]
+        wave_idx = (starts * self.hop)[:, None] + torch.arange(self.segment * self.hop, device=self.device)[None]
         wave = torch.gather(b["wave"], 1, wave_idx).unsqueeze(1)
         return y_hat, wave, (z_p, m_p, logs_p, logs_q, y_mask)
 
@@ -367,7 +416,8 @@ class Trainer:
         weights = {k: v.half().cpu() for k, v in plain_state(self.g).items() if not k.startswith("enc_q")}
         config = [getattr(cfg, f) for f in cfg.__dataclass_fields__]
         config = [[list(x) if isinstance(x, tuple) else x for x in v] if isinstance(v, tuple) else v for v in config]
-        torch.save({"weight": weights, "config": config, "info": info, "sr": "40k", "f0": 1, "version": "v2"}, path)
+        sr = f"{self.rate // 1000}k"
+        torch.save({"weight": weights, "config": config, "info": info, "sr": sr, "f0": 1, "version": "v2"}, path)
 
 
 def epochs_batches(clips: list, batch: int, seed: int):

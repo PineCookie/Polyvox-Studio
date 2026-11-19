@@ -28,7 +28,7 @@ function takeOldSource(): string | null {
   }
 }
 
-const GROUPS: ModelGroup[] = ['tts', 'dataset', 'cleanup'] // the server's models.GROUPS
+const GROUPS: ModelGroup[] = ['tts', 'conversion', 'dataset', 'cleanup'] // the server's models.GROUPS
 
 /** What downloading ``m`` the chosen way fetches, in MB. */
 function downloadSize(m: ModelInfo, way: DownloadWayId | undefined): number {

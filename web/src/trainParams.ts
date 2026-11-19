@@ -47,6 +47,7 @@ export const DEFAULT_PARAMS: Params = {
   s2_offload: false, // forGpu: on where the whole model and training don't fit (vram.Profile.s2_offload)
   rvc_epochs: 100, // matched the user's RVC WebUI voices at 50-100
   rvc_save_every: 25,
+  rvc_sample_rate: 40000, // RVC's usual
 }
 
 // Prodigy finds its own step size: learning_rate is a multiplier, 1 by its authors' advice.
@@ -163,6 +164,7 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     s2_offload: flag(config.offload, true), // runs from before the setting offloaded
     rvc_epochs: num(config.epochs, d.rvc_epochs),
     rvc_save_every: num(config.save_every, d.rvc_save_every),
+    rvc_sample_rate: num(config.sample_rate, d.rvc_sample_rate),
   }
 }
 

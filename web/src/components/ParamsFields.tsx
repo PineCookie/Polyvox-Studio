@@ -7,6 +7,9 @@ type NumericKey = { [K in keyof Params]: Params[K] extends number ? K : never }[
 type FlagKey = 'enable_lm' | 'enable_dit' | 'enable_proj'
 // GPT-SoVITS base models a run can start from (TrainParams.gsv_version), the default first.
 const GSV_VERSIONS = ['v2ProPlus', 'v2Pro', 'v4']
+// RVC's base models (TrainParams.rvc_sample_rate).
+const RVC_RATES = [32000, 40000, 48000]
+const DEFAULT_RVC_RATE = 40000
 
 interface Props {
   params: Params
@@ -104,6 +107,20 @@ export function ParamsFields({
           <>
             {numberField('rvc_epochs', { min: 1, max: 1000 })}
             {numberField('rvc_save_every', { min: 1, max: 1000 })}
+            <label className="field">
+              <span>{t.params.rvc_sample_rate}</span>
+              <select
+                value={params.rvc_sample_rate}
+                onChange={(e) => onChange?.('rvc_sample_rate', Number(e.target.value))}
+                title={t.rvcRateHint}
+              >
+                {RVC_RATES.map((r) => (
+                  <option key={r} value={r}>
+                    {t.rvcRate(r / 1000, r === DEFAULT_RVC_RATE)}
+                  </option>
+                ))}
+              </select>
+            </label>
           </>
         ) : !lora ? (
           <>

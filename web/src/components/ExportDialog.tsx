@@ -80,7 +80,7 @@ export function ExportDialog({ lora, engine, final, onError, onClose }: Props) {
         </header>
 
         <p className="muted hint">
-          {voice ? t.exportVoiceIntro : t.exportIntro}
+          {voice ? (t.exportVoiceIntros[lora.engine] ?? t.exportVoiceIntro) : t.exportIntro}
           {!voice && engine?.capabilities.voice_reference && ` ${t.exportReferenceNote}`}
         </p>
 

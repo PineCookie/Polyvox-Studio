@@ -20,7 +20,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 HF_ENDPOINT = "https://huggingface.co"
-GROUPS = ("tts", "dataset", "cleanup")  # speech models (and their helpers), dataset tools, audio clean-up
+# Speech models (and their helpers), voice conversion, dataset tools, audio clean-up.
+GROUPS = ("tts", "conversion", "dataset", "cleanup")
 WAYS = ("prebuilt", "convert", "convert_keep")  # ModelSpec.ways' ids
 # Drama 3 in 4 bits as fish_drama3/convert.py makes it from the official weights (78e5ab7).
 DRAMA3_BUILD_REPO = "PineCookie/drama-3-int4-higgs"
@@ -242,12 +243,13 @@ MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         "rvc_model",
         "RVC v2",
-        "Voice conversion (covers): RMVPE pitch extraction and the 40 kHz base models for training voices",
+        "Voice conversion (covers): RMVPE pitch extraction",
         "lj1995/VoiceConversionWebUI",
         "lj1995__VoiceConversionWebUI",
-        ("rmvpe.pt", "pretrained_v2/f0G40k.pth", "pretrained_v2/f0D40k.pth"),
-        397,
+        ("rmvpe.pt",),
+        181,
         license="MIT",
+        group="conversion",
     ),
     ModelSpec(
         "contentvec_model",
@@ -259,6 +261,19 @@ MODELS: tuple[ModelSpec, ...] = (
         378,
         entry="Resources/embedders/contentvec",
         license="MIT",
+        group="conversion",
+    ),
+    ModelSpec(
+        "rvc_train_model",
+        "RVC v2 base models",
+        "Training RVC voices: the 32, 40 and 48 kHz base models (generator and discriminator)",
+        "lj1995/VoiceConversionWebUI",
+        "lj1995__VoiceConversionWebUI",
+        tuple(f"pretrained_v2/f0{part}{rate}k.pth" for rate in (32, 40, 48) for part in "GD"),
+        651,
+        entry="pretrained_v2",
+        license="MIT",
+        group="conversion",
     ),
     ModelSpec(
         "gsv_g2pw_model",
@@ -378,6 +393,19 @@ MODELS: tuple[ModelSpec, ...] = (
         ("denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt", "model_mel_band_roformer_denoise.yaml"),
         910,
         entry="denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt",
+        group="cleanup",
+    ),
+    ModelSpec(
+        "karaoke_model",
+        "UVR MDX-Net Karaoke 2",
+        "Covers: split the vocals into the lead and the backing vocals (harmonies)",
+        "Acapellas/uvr5-models",  # UVR's release file (same bytes) with its licence
+        "Acapellas__uvr5-models",
+        ("UVR_MDXNET_KARA_2.onnx", "UVR_MDXNET_KARA_2.LICENSE"),
+        53,
+        entry="UVR_MDXNET_KARA_2.onnx",
+        license="MIT (Ultimate Vocal Remover)",
+        revision="be57392c6b82821fe8a8b6f411ff1c38717d1b47",
         group="cleanup",
     ),
 )

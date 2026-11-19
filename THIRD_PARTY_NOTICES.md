@@ -25,7 +25,10 @@ Release archives also contain the built web UI, which bundles
 Python packages and models are not part of this repository: they are downloaded
 when the studio is installed or used, under their own licenses. The Models tab
 shows each model's license; some differ from the code's (the de-reverb model's
-weights, for example, are GPL-3.0).
+weights, for example, are GPL-3.0). The lead / backing vocals split
+(`src/polyvox/prep/karaoke.py`, this project's own code around the network) runs
+UVR MDX-Net Karaoke 2 by [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui)
+(Anjok07, aufr33), MIT; its license text comes with the downloaded model.
 
 Fish Audio S2-Pro (`src/polyvox/engines/fish_s2/`) is this project's own
 implementation of the published model architecture; it contains no Fish Audio

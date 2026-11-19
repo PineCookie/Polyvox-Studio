@@ -50,6 +50,8 @@ class Settings:
     # feature model (folder); "" = not downloaded.
     rvc_model: str = ""
     contentvec_model: str = ""
+    rvc_train_model: str = ""  # RVC's pretrained_v2 folder (training base models)
+    karaoke_model: str = ""  # lead / backing vocals split (prep/karaoke.py): the .onnx file
     lora_dir: Path = Path("lora")
     # Where JSONL training manifests are found.
     data_dir: Path = Path("data")
@@ -117,6 +119,8 @@ class Settings:
             drama3_model=_env("DRAMA3_MODEL", cls.drama3_model),
             rvc_model=_env("RVC_MODEL", cls.rvc_model),
             contentvec_model=_env("CONTENTVEC_MODEL", cls.contentvec_model),
+            rvc_train_model=_env("RVC_TRAIN_MODEL", cls.rvc_train_model),
+            karaoke_model=_env("KARAOKE_MODEL", cls.karaoke_model),
             lora_dir=Path(_env("LORA_DIR", str(cls.lora_dir))),
             data_dir=Path(_env("DATA_DIR", str(cls.data_dir))),
             device=_env("DEVICE", cls.device),

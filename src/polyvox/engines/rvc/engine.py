@@ -53,7 +53,7 @@ class RvcEngine(Engine):
     id = voices.ENGINE
     name = "RVC"
     capabilities = Capabilities(
-        sample_rate=40_000,
+        sample_rate=40_000,  # each voice's own (32, 40 or 48 kHz); 40 kHz is RVC's usual
         training_rate=40_000,
         languages=(),  # any: it converts sound, not text
         reference_audio=False,
@@ -64,6 +64,7 @@ class RvcEngine(Engine):
         training=True,
         full_finetune=True,  # from RVC's base models: no LoRA or optimizer choice
         conversion=True,
+        package="voice",  # the voice file + index (sharing.py)
     )
     params = (
         Param("shift", "int", 0, -24, 24, 1),  # semitones
@@ -242,12 +243,14 @@ class RvcEngine(Engine):
 
         if not torch.cuda.is_available():
             return "it needs a CUDA GPU."
+        if not self.settings.model_path("rvc_train_model"):
+            return "download its base models first (Models: RVC v2 base models)."
         return self.unavailable()
 
     def training_config(self, params, run_dir: Path, train_manifest: Path, val_manifest: Path | None) -> dict:
-        """RVC's training (worker.py) from its 40 kHz base models: rvc_epochs over the dataset's
-        3.7 s pieces at batch_size; num_iters estimated from the clips' lengths here, exact once
-        the worker has cut them; a voice saved every rvc_save_every epochs."""
+        """RVC's training (worker.py) from its base models at rvc_sample_rate: rvc_epochs over the
+        dataset's 3.7 s pieces at batch_size; num_iters estimated from the clips' lengths here,
+        exact once the worker has cut them; a voice saved every rvc_save_every epochs."""
         if reason := self.training_unavailable():
             raise ValueError(f"RVC can't train here: {reason}")
         from ...data import audio_io, manifests
@@ -257,14 +260,15 @@ class RvcEngine(Engine):
         records = manifests.read_manifest(train_manifest)[0]
         pieces = sum(piece_count(audio_io.info(r["audio"])[0]) for r in records)
         _, num_iters = plan(pieces, params.batch_size, params.rvc_epochs)
-        base = Path(self.settings.model_path("rvc_model"))
+        rate, k = params.rvc_sample_rate, params.rvc_sample_rate // 1000
+        bases = Path(self.settings.model_path("rvc_train_model"))
         dataset = manifests.resolve(self.settings.data_dir, params.dataset)
         return {
             "version": "v2",
-            "sample_rate": 40000,
-            "pretrained_g": str(base / "pretrained_v2" / "f0G40k.pth"),
-            "pretrained_d": str(base / "pretrained_v2" / "f0D40k.pth"),
-            "rmvpe": str(base / "rmvpe.pt"),
+            "sample_rate": rate,
+            "pretrained_g": str(bases / f"f0G{k}k.pth"),
+            "pretrained_d": str(bases / f"f0D{k}k.pth"),
+            "rmvpe": str(Path(self.settings.model_path("rvc_model")) / "rmvpe.pt"),
             "contentvec": self.settings.model_path("contentvec_model"),
             "train_manifest": str(train_manifest),
             "val_manifest": str(val_manifest) if val_manifest else "",
@@ -275,6 +279,6 @@ class RvcEngine(Engine):
             "batch_size": params.batch_size,
             "learning_rate": params.learning_rate,
             "log_interval": params.log_interval,
-            # Pieces' features, shared by the dataset's runs (hidden folders aren't datasets).
-            "feature_cache": str(dataset.parent / ".cache" / "rvc_v2_40k.pt"),
+            # Pieces' features, shared by the dataset's runs at this rate (hidden folders aren't datasets).
+            "feature_cache": str(dataset.parent / ".cache" / f"rvc_v2_{k}k.pt"),
         }

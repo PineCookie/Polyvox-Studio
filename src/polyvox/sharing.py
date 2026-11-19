@@ -16,6 +16,13 @@ For a GPT-SoVITS voice (whole models; engines/gpt_sovits/voices.package_files)::
     <name>/lora_config.json           {"engine": "gpt_sovits", "version": ..., "base_model": ...}
     <name>/README.md
 
+For an RVC voice (engines/rvc/voices.package_files)::
+
+    <name>/rvc_voice.pth              the voice file, as RVC's WebUI saves it
+    <name>/rvc_index.npy              the index features (float16 [rows, 768]; absent: none)
+    <name>/voice.json                 {"engine": "rvc", "version": "v2", "sample_rate": ..., "base_model": ...}
+    <name>/README.md
+
 Nothing else from a run goes in: no optimizer state, local paths (the
 weights' saved training configs are cleaned of them), logs, manifests
 (transcripts) or dataset audio besides the one reference clip.
@@ -34,6 +41,7 @@ from .engines import DEFAULT as DEFAULT_ENGINE
 from .engines.common.reference import REFERENCE_JSON, REFERENCE_WAV, read_reference
 from .engines.fish_s2 import lora as s2_lora
 from .engines.gpt_sovits import voices as gsv_voices
+from .engines.rvc import voices as rvc_voices
 from .lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint, default_lora_config
 from .lora_library import engine_dir as engine_folder
 
@@ -41,7 +49,7 @@ README_FILE = "README.md"
 GSV_GPT_FILE = "gpt_weights.ckpt"
 # A GPT-SoVITS voice package's files besides the README (lora_config.json is rewritten on import).
 GSV_PACKAGE_FILES = ("sovits_weights.pth", GSV_GPT_FILE, REFERENCE_WAV, REFERENCE_JSON)
-PACKAGE_FILES = (WEIGHTS_FILE, CONFIG_FILE, README_FILE, *GSV_PACKAGE_FILES)
+PACKAGE_FILES = (WEIGHTS_FILE, CONFIG_FILE, README_FILE, *GSV_PACKAGE_FILES, *rvc_voices.PACKAGE_FILES)
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)  # zip's earliest date: entries carry no export time
 PACKAGE_NAME = r"^[^\W_][\w.-]{0,79}$"  # Unicode letters allowed, like run names
 HUB_ID = re.compile(r"[A-Za-z0-9][\w.-]*/[\w.-]+")
@@ -256,6 +264,61 @@ transcript as the reference audio and text.
 """
 
 
+def _rvc_readme(name: str, sample_rate: int, index_rows: int | None, info: str, step: int | None) -> str:
+    training = re.fullmatch(r"(\d+)epoch", info)
+    trained = f"{training.group(1)} epochs" if training else "unknown"
+    if step is not None:
+        trained += f" ({step} steps)"
+    index = (
+        f"`rvc_index.npy`: {index_rows:,} rows of content features (ContentVec, 768 numbers per 20 ms)\n"
+        "of the voice's training audio. Conversion pulls the sung or spoken features toward them\n"
+        '("index strength"), which brings the result closer to the voice. The index holds no audio,\n'
+        "but it is made from the training recordings."
+        if index_rows
+        else "It comes without an index: conversion works, a little less like the voice."
+    )
+    faiss = (
+        f"""
+
+The WebUI and Applio read faiss `.index` files: build one from the features and choose it as
+the index file (`pip install faiss-cpu numpy`):
+
+```python
+import faiss
+import numpy as np
+
+features = np.load("rvc_index.npy").astype("float32")
+index = faiss.IndexFlatL2(features.shape[1])
+index.add(features)
+faiss.write_index(index, "added_{name}.index")
+```"""
+        if index_rows
+        else ""
+    )
+    return f"""# {name}
+
+An [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) v2 voice: it sings or
+speaks recordings again in this voice (voice conversion; it doesn't read text). Trained from RVC's
+pretrained v2 base models ([{rvc_voices.BASE_REPO}](https://huggingface.co/{rvc_voices.BASE_REPO})).
+
+| | |
+|---|---|
+| Version | v2, {sample_rate // 1000} kHz, with pitch |
+| Voice file | `rvc_voice.pth` (the WebUI's format) |
+| Training | {trained} |
+
+{index}
+
+## Use
+
+**Polyvox Studio:** Convert tab -> Voice package…, then choose this zip.
+
+**RVC WebUI / Applio:** load `rvc_voice.pth` as the voice model (WebUI: copy it into
+`assets/weights/`). Content features come from ContentVec (the WebUI's `hubert_base.pt`),
+pitch from RMVPE.{faiss}
+"""
+
+
 def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool = True) -> Path:
     """Write a package for ``ckpt`` to a temporary zip file and return its path."""
     import torch
@@ -267,6 +330,14 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
         files = gsv_voices.package_files(ckpt.path, name)
         files[README_FILE] = _gsv_readme(name, json.loads(files[CONFIG_FILE])["version"], GSV_GPT_FILE in files,
                                          REFERENCE_WAV in files, checkpoint_step(ckpt)).encode()  # fmt: skip
+        return _write_zip(name, files)
+    if ckpt.engine == rvc_voices.ENGINE:  # the voice file as is; base_model and half don't apply
+        files = rvc_voices.package_files(ckpt.path)
+        header = rvc_voices.check_voice_file(ckpt.path / rvc_voices.WEIGHTS)
+        index = files.get(rvc_voices.PACKAGE_INDEX)
+        rows = rvc_voices.package_index(index).shape[0] if index else None
+        files[README_FILE] = _rvc_readme(name, header["sample_rate"], rows, header["info"],
+                                         checkpoint_step(ckpt)).encode()  # fmt: skip
         return _write_zip(name, files)
     cls = lora_package_engines().get(ckpt.engine)
     if cls is None:
@@ -305,7 +376,8 @@ def export_package(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool 
     return _write_zip(name, files)
 
 
-STORED = {WEIGHTS_FILE, gsv_voices.SOVITS_FILE, gsv_voices.GPT_FILE}  # weights don't compress
+# Weights (and features) don't compress.
+STORED = {WEIGHTS_FILE, gsv_voices.SOVITS_FILE, gsv_voices.GPT_FILE, rvc_voices.WEIGHTS, rvc_voices.PACKAGE_INDEX}
 
 
 def _write_zip(name: str, files: dict[str, bytes]) -> Path:
@@ -401,7 +473,8 @@ def import_package(lora_dir: Path, package: Path, filename: str) -> tuple[str, s
                 files[parts[-1]] = info
                 folders.add(parts[0] if len(parts) == 2 else PurePosixPath(filename.replace("\\", "/")).stem)
         voice = gsv_voices.SOVITS_FILE in files  # a GPT-SoVITS voice
-        if not voice and (WEIGHTS_FILE not in files or CONFIG_FILE not in files):
+        rvc = rvc_voices.WEIGHTS in files  # an RVC voice
+        if not voice and not rvc and (WEIGHTS_FILE not in files or CONFIG_FILE not in files):
             raise ValueError(f"A package needs {WEIGHTS_FILE} and {CONFIG_FILE}.")
         if len(folders) != 1:
             raise ValueError("A package holds exactly one LoRA.")
@@ -417,6 +490,10 @@ def import_package(lora_dir: Path, package: Path, filename: str) -> tuple[str, s
         voice_files = {f: d for f, d in contents.items() if f in GSV_PACKAGE_FILES}
         engine_dir = engine_folder(lora_dir, gsv_voices.ENGINE)
         return f"{gsv_voices.ENGINE}/{gsv_voices.import_package(engine_dir, name, voice_files)}", gsv_voices.ENGINE
+    if rvc:
+        voice_files = {f: d for f, d in contents.items() if f in rvc_voices.PACKAGE_FILES}
+        engine_dir = engine_folder(lora_dir, rvc_voices.ENGINE)
+        return f"{rvc_voices.ENGINE}/{rvc_voices.import_package(engine_dir, name, voice_files)}", rvc_voices.ENGINE
     _check_weights(contents[WEIGHTS_FILE])
     engine = _check_config(contents[CONFIG_FILE])
     target = engine_folder(lora_dir, engine) / name
@@ -425,5 +502,6 @@ def import_package(lora_dir: Path, package: Path, filename: str) -> tuple[str, s
 
     target.mkdir(parents=True)
     for file, data in contents.items():
-        (target / file).write_bytes(data)
+        if file not in rvc_voices.PACKAGE_FILES:  # voice.json would make the folder another kind of voice
+            (target / file).write_bytes(data)
     return f"{engine}/{name}", engine

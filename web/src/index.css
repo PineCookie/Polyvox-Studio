@@ -3292,6 +3292,52 @@ input[type='range'] {
   padding-left: 0;
 }
 
+.convert-imports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+/* The Convert tab's steps: numbered rows, each a switch or a fixed step */
+.convert-steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.convert-steps > li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 1.4rem minmax(0, 1fr);
+  gap: 6px 4px;
+  align-items: start;
+}
+
+.convert-steps > li::before {
+  content: counter(step) '.';
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+}
+
+.convert-steps > li > * {
+  grid-column: 2;
+}
+
+.convert-steps .segmented {
+  justify-self: start;
+}
+
+.convert-step-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
 @media (max-width: 640px) {
   .convert-file {
     grid-template-columns: minmax(0, 1fr) auto;

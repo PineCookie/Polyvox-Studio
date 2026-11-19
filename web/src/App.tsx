@@ -204,7 +204,7 @@ export default function App() {
     try {
       const { id, engine } = await importLora(file)
       refreshLoras()
-      setVoice({ engine, lora: id })
+      tryCheckpoint(id, engine) // the list isn't refreshed yet: give the engine
     } catch (e) {
       setError((e as Error).message)
     }
@@ -216,8 +216,8 @@ export default function App() {
     setVoice({ engine, lora: id })
   }
 
-  function tryCheckpoint(loraId: string) {
-    const engine = loras.find((l) => l.id === loraId)?.engine ?? DEFAULT_ENGINE
+  function tryCheckpoint(loraId: string, known?: string) {
+    const engine = known ?? loras.find((l) => l.id === loraId)?.engine ?? DEFAULT_ENGINE
     if (engines.some((e) => e.id === engine && e.capabilities.conversion)) {
       setConvertPick({ id: loraId, key: Date.now() })
       switchTab('convert')

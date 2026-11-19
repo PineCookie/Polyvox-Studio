@@ -330,6 +330,9 @@ export const en = {
   exportReferenceNote: "The voice's reference clip and its transcript go in too.",
   exportVoiceIntro:
     'A zip with both models in the GPT-SoVITS webui’s format (usable there too), the reference clip with its transcript, and a README. Local paths in the weights’ saved training settings, optimizer state, logs, other transcripts and dataset audio are left out.',
+  exportVoiceIntros: {
+    rvc: 'A zip with the voice file in the RVC WebUI’s format (usable there and in Applio too), its index and a README. The index holds content features made from the training audio, no audio itself; training state, logs and the dataset are left out.',
+  } as Record<string, string>,
   name: 'Name',
   nameRule: 'letters, digits, . _ -',
   hubIdRule: 'a Hugging Face id',
@@ -443,7 +446,9 @@ export const en = {
     trimming: 'Trimming clip edges',
     reading: 'Reading the recording',
     dereverb: 'Removing reverb',
+    splitting: 'Splitting lead and backing vocals',
     converting: 'Converting the voice',
+    converting_backing: 'Converting the backing vocals',
     mixing: 'Mixing',
   } as Record<string, string>,
   starting: 'Starting',
@@ -462,16 +467,35 @@ export const en = {
   convertKind: 'What it is',
   convertSong: 'Song (vocals + music)',
   convertVocals: 'Vocals or speech only',
-  convertDereverb: 'Remove reverb first',
+  convertStepsTitle: 'Steps',
+  convertStepSeparate: 'Take the vocals out of the music',
+  convertStepSeparateHint:
+    'The vocals are separated from the instrumental (vocal separation model); after converting, they go back over it.',
+  convertAlways: 'Always',
+  convertDereverb: 'Remove reverb',
   convertDereverbHint: 'Reverb tails turn into noise in the converted voice; most studio vocals have some.',
-  convertShiftMusic: 'Move the music too',
+  convertSplit: 'Split lead and backing vocals',
+  convertSplitHint:
+    'Harmonies sung over the lead would blur into the one converted voice (RVC follows one pitch at a time). Split, the lead is converted on its own; the backing vocals are kept as sung or converted separately.',
+  convertSplitMissing: 'Needs the karaoke model (UVR MDX-Net Karaoke 2).',
+  convertBacking: 'Backing vocals',
+  convertBackingKeep: 'Keep as sung',
+  convertBackingConvert: 'Convert too',
+  convertStepLead: 'Convert the lead into the voice',
+  convertStepVocals: 'Convert the vocals into the voice',
+  convertStepSettingsBelow: 'Settings below',
+  convertVoiceSettings: 'Voice settings',
+  convertShiftMusic: 'Mix back: move the music with a key change',
   convertShiftMusicHint:
     'With a key change, the instrumental moves by the same semitones, so the song stays in tune (a little less clean).',
+  convertHowAll: 'all vocals converted',
+  convertHowLead: 'lead converted, backing as sung',
+  convertHowBoth: 'lead and backing converted',
   convertButton: 'Convert',
   converting: 'Converting…',
   convertVoice: 'Voice',
   convertChooseVoice: 'Choose a voice…',
-  convertNoVoices: 'No RVC voices yet: import one trained in the RVC WebUI.',
+  convertNoVoices: 'No RVC voices yet: train one (Train tab), import one from the RVC WebUI, or add a voice package.',
   convertResults: 'Results',
   convertResultsEmpty: 'Converted recordings appear here.',
   convertFiles: {
@@ -479,14 +503,18 @@ export const en = {
     vocals_converted: 'Converted vocals',
     instrumental: 'Instrumental',
     vocals: 'Vocals used',
+    lead: 'Lead vocals (split)',
+    backing: 'Backing vocals (split)',
   } as Record<string, string>,
   convertMeta: (seconds: string, took: string) => `${seconds} of audio · made in ${took}`,
   convertWhat: 'The conversion',
-  convertNeedsSeparation: 'A song needs the vocal separation model (and de-reverb, when on): download them in Models.',
-  rvcImportButton: 'Import RVC voice…',
+  convertNeedsSeparation:
+    'Download the vocal separation model (for songs) and the de-reverb model (when on) in Models first.',
+  rvcImportButton: 'From the RVC WebUI…',
+  rvcPackageTitle: 'Add an RVC voice package (.zip) exported from Polyvox Studio',
   rvcImportTitle: 'Import an RVC voice',
   rvcImportIntro:
-    "A voice the RVC WebUI trained (v2, 40 kHz, with pitch), as a path on this computer. The file is copied; its index is built here (the WebUI's .index file isn't read).",
+    "A voice the RVC WebUI trained (v2 with pitch; 32, 40 or 48 kHz), as a path on this computer. The file is copied; its index is built here (the WebUI's .index file isn't read).",
   rvcVoiceFile: 'Voice file (.pth)',
   rvcVoiceExample: 'X:\\rvc\\assets\\weights\\speaker_a_e100.pth',
   rvcIndex: 'Index',
@@ -864,6 +892,8 @@ export const en = {
   chooseDatasetOption: 'Choose a dataset…',
   holdoutHint: (every: number) =>
     `clips set aside for validation loss and audio samples every ${every} steps (0 = none)`,
+  rvcHoldoutHint: (every: number) =>
+    `clips set aside and converted into the voice each time one is saved, every ${every} epochs (0 = none)`,
   newPill: 'New',
   starting2: 'Starting…',
   startTraining: 'Start training',
@@ -896,7 +926,10 @@ export const en = {
   stepsFollow: 'Steps follow from the epochs once a dataset is chosen.',
   rvcSteps: (steps: string, pieces: string) => `~${steps} steps over ~${pieces} pieces`,
   rvcScheduleHint: (epochs: number, pieces: string, batch: number, gpu: string, steps: string, every: number) =>
-    `${epochs} epochs over ~${pieces} pieces of up to 3.7 s (the training clips cut as RVC's WebUI cuts them) at batch ${batch}${gpu ? ` (fits this ${gpu} GB GPU)` : ''} = ~${steps} steps; a voice is saved every ${every} epochs. Exact counts once the clips are cut. RVC trains its whole model from its 40 kHz base models, as the WebUI does; singing clips help it sing.`,
+    `${epochs} epochs over ~${pieces} pieces of up to 3.7 s (the training clips cut as RVC's WebUI cuts them) at batch ${batch}${gpu ? ` (fits this ${gpu} GB GPU)` : ''} = ~${steps} steps; a voice is saved every ${every} epochs. Exact counts once the clips are cut. RVC trains its whole model from its base models, as the WebUI does; singing clips help it sing.`,
+  rvcRate: (khz: number, usual: boolean) => `${khz} kHz${usual ? " (RVC's usual)" : ''}`,
+  rvcRateHint:
+    'The rate the voice is trained at and sings at. 48 kHz only adds treble when the clips themselves go above 20 kHz (recorded at 44.1 / 48 kHz); 32 kHz cuts at 16 kHz.',
 
   // Parameters
   params: {
@@ -929,6 +962,7 @@ export const en = {
     gsv_version: 'Model version',
     rvc_epochs: 'Epochs',
     rvc_save_every: 'Save a voice every (epochs)',
+    rvc_sample_rate: 'Sample rate',
     s2_slow: 'Also train the slow transformer (experimental)',
     s2_fast_lr: 'Learning rate · fast transformer',
     s2_slow_lr: 'Learning rate · slow transformer',
@@ -962,7 +996,12 @@ export const en = {
   downloadModel: (name: string) => `Download ${name}`,
   // Model purposes by setting; a model missing here shows the server's English text.
   modelPurpose: {} as Record<string, string>,
-  modelGroups: { tts: 'Text to speech', dataset: 'Dataset tools', cleanup: 'Audio clean-up' } as Record<string, string>,
+  modelGroups: {
+    tts: 'Text to speech',
+    conversion: 'Voice conversion',
+    dataset: 'Dataset tools',
+    cleanup: 'Audio clean-up',
+  } as Record<string, string>,
   downloadWays: {
     prebuilt: (size: string) => `4-bit build (${size})`,
     convert: (size: string) => `Official weights, converted here (${size} download)`,

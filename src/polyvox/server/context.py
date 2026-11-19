@@ -100,6 +100,8 @@ class Studio:
             "singing_loaded": self.singing.loaded,
             # Import clean-up options whose model is configured.
             "cleanup": [k for k, v in self.cleanup_models().items() if v],
+            # Covers can split lead and backing vocals (its model is there).
+            "karaoke": bool(settings.model_path("karaoke_model")),
             # The GPU's memory and the settings picked for it (vram.Profile).
             "gpu": {"total_gb": round(self.gpu_gb, 1) if self.gpu_gb else None, **self.profile.public()},
             # No engine's model is configured or in the models folder (a first run: the UI points to
