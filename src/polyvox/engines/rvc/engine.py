@@ -61,7 +61,8 @@ class RvcEngine(Engine):
         style=False,
         tags=False,
         lora_hot_swap=True,
-        training=False,
+        training=True,
+        full_finetune=True,  # from RVC's base models: no LoRA or optimizer choice
         conversion=True,
     )
     params = (
@@ -236,5 +237,44 @@ class RvcEngine(Engine):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
+    def training_unavailable(self) -> str | None:
+        import torch
+
+        if not torch.cuda.is_available():
+            return "it needs a CUDA GPU."
+        return self.unavailable()
+
     def training_config(self, params, run_dir: Path, train_manifest: Path, val_manifest: Path | None) -> dict:
-        raise ValueError("Training RVC voices isn't available yet.")
+        """RVC's training (worker.py) from its 40 kHz base models: rvc_epochs over the dataset's
+        3.7 s pieces at batch_size; num_iters estimated from the clips' lengths here, exact once
+        the worker has cut them; a voice saved every rvc_save_every epochs."""
+        if reason := self.training_unavailable():
+            raise ValueError(f"RVC can't train here: {reason}")
+        from ...data import audio_io, manifests
+        from .train import piece_count
+        from .worker import plan
+
+        records = manifests.read_manifest(train_manifest)[0]
+        pieces = sum(piece_count(audio_io.info(r["audio"])[0]) for r in records)
+        _, num_iters = plan(pieces, params.batch_size, params.rvc_epochs)
+        base = Path(self.settings.model_path("rvc_model"))
+        dataset = manifests.resolve(self.settings.data_dir, params.dataset)
+        return {
+            "version": "v2",
+            "sample_rate": 40000,
+            "pretrained_g": str(base / "pretrained_v2" / "f0G40k.pth"),
+            "pretrained_d": str(base / "pretrained_v2" / "f0D40k.pth"),
+            "rmvpe": str(base / "rmvpe.pt"),
+            "contentvec": self.settings.model_path("contentvec_model"),
+            "train_manifest": str(train_manifest),
+            "val_manifest": str(val_manifest) if val_manifest else "",
+            "save_path": str(run_dir / "checkpoints"),
+            "num_iters": num_iters,
+            "epochs": params.rvc_epochs,
+            "save_every": params.rvc_save_every,
+            "batch_size": params.batch_size,
+            "learning_rate": params.learning_rate,
+            "log_interval": params.log_interval,
+            # Pieces' features, shared by the dataset's runs (hidden folders aren't datasets).
+            "feature_cache": str(dataset.parent / ".cache" / "rvc_v2_40k.pt"),
+        }

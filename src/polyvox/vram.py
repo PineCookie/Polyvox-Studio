@@ -51,6 +51,9 @@ class Profile:
     # validation): only where the whole model and training don't fit (always below 16 GB).
     s2_train_batch: int = 4
     s2_offload: bool = True
+    # RVC training batch (a GAN: no accumulation); batch 16 peaks near 6.4 GB plus ~1 GB of
+    # feature / pitch models the worker keeps for samples.
+    rvc_train_batch: int = 4
 
     def public(self) -> dict:
         train_batches = {
@@ -58,6 +61,7 @@ class Profile:
             "dots_tts": self.dots_train_batch,
             "gpt_sovits": self.gsv_train_batch,
             "fish_s2": self.s2_train_batch,
+            "rvc": self.rvc_train_batch,
         }
         return {**asdict(self), "train_batches": train_batches}
 
@@ -79,6 +83,7 @@ PROFILES = (  # (at least this many GB, profile), largest first
             gsv_train_batch=8,
             gsv_v4_plain_batch=4,
             s2_offload=False,
+            rvc_train_batch=16,
         ),
     ),
     (
@@ -96,9 +101,13 @@ PROFILES = (  # (at least this many GB, profile), largest first
             dots_plain_batch=2,
             gsv_train_batch=8,
             gsv_v4_plain_batch=2,
+            rvc_train_batch=16,
         ),
     ),
-    (7.0, Profile("8 GB", 60, 80, 1, True, True, True, 1, True, dots_train_batch=4, gsv_train_batch=4)),
+    (
+        7.0,
+        Profile("8 GB", 60, 80, 1, True, True, True, 1, True, dots_train_batch=4, gsv_train_batch=4, rvc_train_batch=8),
+    ),
     (
         0.0,
         Profile(

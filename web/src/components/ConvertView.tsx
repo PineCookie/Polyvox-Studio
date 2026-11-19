@@ -26,6 +26,8 @@ interface Props {
   onError: (message: string) => void
   onOpenModels: () => void
   hidden: boolean
+  // A voice to select (a run's checkpoint from the Train tab); key: a new request each time.
+  pick?: { id: string; key: number } | null
 }
 
 const VOICE_KEY = 'polyvox.convertVoice' // the voice chosen last
@@ -35,7 +37,7 @@ function defaults(engine: Engine | null): EngineOptions {
 }
 
 /** Convert tab: a song or vocal recording sung / spoken again in an RVC voice. */
-export function ConvertView({ engine, loras, status, onVoicesChanged, onError, onOpenModels, hidden }: Props) {
+export function ConvertView({ engine, loras, status, onVoicesChanged, onError, onOpenModels, hidden, pick }: Props) {
   const t = useT()
   const voices = useMemo(() => loras.filter((l) => l.engine === engine?.id), [loras, engine])
   const [voice, setVoice] = useState<string>(() => localStorage.getItem(VOICE_KEY) ?? '')
@@ -57,6 +59,9 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
   const preview = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
   useEffect(() => () => void (preview && URL.revokeObjectURL(preview)), [preview])
 
+  useEffect(() => {
+    if (pick) choose(pick.id)
+  }, [pick])
   const chosen = voices.find((v) => v.id === voice) ?? null
   const cleanup = status?.cleanup ?? []
   const needsModels = song && (!cleanup.includes('separate') || (dereverb && !cleanup.includes('dereverb')))

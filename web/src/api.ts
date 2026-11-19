@@ -550,6 +550,8 @@ export interface TrainParams {
   s2_slow_lr: number // its own AdamW learning rate (learning_rate is then the fast transformer's)
   s2_cached_references: number // fast-only: references cached per clip (0 = train without references)
   s2_offload: boolean // fast-only: the slow transformer waits in CPU memory between samples
+  rvc_epochs: number // RVC: epochs over the dataset's 3.7 s pieces (num_iters follows)
+  rvc_save_every: number // RVC: a checkpoint (a voice) every this many epochs
 }
 
 function postJson(url: string, body?: unknown): Promise<Response> {

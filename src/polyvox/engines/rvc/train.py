@@ -204,58 +204,66 @@ def pieces(audio: np.ndarray, rate: int) -> list[np.ndarray]:
     return out
 
 
-def clip_features(path: str, contentvec, rmvpe, spectro: Spectrograms, device) -> list[dict]:
-    """One clip -> its pieces, each: 40 kHz waveform, linear spectrogram, ContentVec features
-    (repeated x2 to 100 per second), coarse + fine pitch, all cut to the same number of frames."""
-    y, sr = sf.read(path, dtype="float32")
-    y = y.mean(1) if y.ndim == 2 else y
+def piece_count(seconds: float, rate: int = 40000) -> int:
+    """How many pieces ``pieces`` cuts a clip of ``seconds`` into (for planning steps)."""
+    length = int(round(seconds * rate))
+    step, tail = int(rate * (PIECE_S - OVERLAP_S)), int(rate * (PIECE_S + OVERLAP_S))
+    return 1 + max(0, -(-(length - tail) // step))
+
+
+def clip_features(path: str, contentvec, rmvpe) -> list[dict]:
+    """One clip -> its pieces (piece_features), as RVC's preprocessing makes them: 40 kHz, a 48 Hz
+    high-pass, cut, each piece's level normalized."""
+    y, sr = sf.read(path, dtype="float32", always_2d=True)
+    y = y.mean(1)
     y40 = librosa.resample(y, orig_sr=sr, target_sr=40000, res_type="soxr_vhq") if sr != 40000 else y
     y40 = signal.lfilter(*HIGHPASS_40K, y40).astype(np.float32)
-    out = []
-    for piece in pieces(y40, 40000):
-        if (features := piece_features(normalize(piece), contentvec, rmvpe, spectro, device)) is not None:
-            out.append(features)
-    return out
+    return [f for piece in pieces(y40, 40000) if (f := piece_features(normalize(piece), contentvec, rmvpe))]
 
 
-def piece_features(y40: np.ndarray | None, contentvec, rmvpe, spectro: Spectrograms, device) -> dict | None:
+def piece_features(y40: np.ndarray | None, contentvec, rmvpe) -> dict | None:
+    """A piece's training inputs, kept compact (on the CPU): ContentVec features at 50 per second
+    (float16), coarse and fine pitch and the 40 kHz waveform (float16) for ``frames`` frames at 100
+    per second (at most 900); the spectrogram is computed per batch (collate). None: too short."""
     from .convert import coarse_pitch
 
     if y40 is None:
         return None
     y16 = librosa.resample(y40, orig_sr=40000, target_sr=16000, res_type="soxr_vhq").astype(np.float32)
-    feats = contentvec(y16)[0].repeat_interleave(2, dim=0)  # [frames, 768]
+    feats = contentvec(y16)[0]  # [frames / 2, 768]
     f0 = rmvpe.f0(y16)
-    wave = torch.from_numpy(y40.astype(np.float32)).to(device)
-    spec = spectro.linear(wave[None])[0]
-    n = min(feats.shape[0], len(f0), spec.shape[1], MAX_FRAMES)
+    n = min(2 * feats.shape[0], len(f0), len(y40) // HOP_40K, MAX_FRAMES)
     if n < SEGMENT:
         return None
     return {
-        "feats": feats[:n].half().cpu(),
-        "pitch": torch.from_numpy(coarse_pitch(f0[:n].copy())),
+        "frames": n,
+        "feats": feats[: -(-n // 2)].half().cpu(),
+        "pitch": torch.from_numpy(coarse_pitch(f0[:n].copy()).astype(np.uint8)),
         "f0": torch.from_numpy(f0[:n]).float(),
-        "spec": spec[:, :n].half().cpu(),
-        "wave": wave[: n * HOP_40K].half().cpu(),
+        "wave": torch.from_numpy(y40[: n * HOP_40K].astype(np.float16)),
     }
 
 
 PAD_TO = 50  # frames: batch lengths rounded up, so cuDNN tunes a few shapes, not one per batch
 
 
-def collate(items: list[dict], device) -> dict:
-    n = -(-max(x["feats"].shape[0] for x in items) // PAD_TO) * PAD_TO
+def collate(items: list[dict], device, spectro: Spectrograms) -> dict:
+    """A batch on ``device``: features repeated to 100 per second, everything padded to a whole
+    number of PAD_TO frames, and the linear spectrograms of the waveforms."""
+    n = -(-max(x["frames"] for x in items) // PAD_TO) * PAD_TO
 
-    def pad(t, length, dim):
-        return F.pad(t, [0, 0] * (t.dim() - 1 - dim) + [0, length - t.shape[dim]])
+    def pad(t, length):
+        return F.pad(t, [0, 0] * (t.dim() - 1) + [0, length - t.shape[0]])
 
+    feats = [x["feats"].repeat_interleave(2, dim=0)[: x["frames"]] for x in items]
+    wave = torch.stack([pad(x["wave"], n * HOP_40K) for x in items]).to(device).float()
     return {
-        "feats": torch.stack([pad(x["feats"], n, 0) for x in items]).float().to(device),
-        "pitch": torch.stack([pad(x["pitch"], n, 0) for x in items]).to(device),
-        "f0": torch.stack([pad(x["f0"], n, 0) for x in items]).to(device),
-        "spec": torch.stack([pad(x["spec"], n, 1) for x in items]).float().to(device),
-        "wave": torch.stack([pad(x["wave"], n * HOP_40K, 0) for x in items]).float().to(device),
-        "lengths": torch.tensor([x["feats"].shape[0] for x in items], device=device),
+        "feats": torch.stack([pad(f, n) for f in feats]).to(device).float(),
+        "pitch": torch.stack([pad(x["pitch"], n) for x in items]).to(device).long(),
+        "f0": torch.stack([pad(x["f0"], n) for x in items]).to(device),
+        "wave": wave,
+        "spec": spectro.linear(wave),
+        "lengths": torch.tensor([x["frames"] for x in items], device=device),
     }
 
 
@@ -334,6 +342,25 @@ class Trainer:
         self.sched_g.step()
         self.sched_d.step()
 
+    def state(self) -> dict:
+        """Everything a resumed run continues from."""
+        return {
+            "g": self.g.state_dict(),
+            "d": self.d.state_dict(),
+            "opt_g": self.opt_g.state_dict(),
+            "opt_d": self.opt_d.state_dict(),
+            "sched_g": self.sched_g.state_dict(),
+            "sched_d": self.sched_d.state_dict(),
+        }
+
+    def load(self, state: dict) -> None:
+        self.g.load_state_dict(state["g"])
+        self.d.load_state_dict(state["d"])
+        self.opt_g.load_state_dict(state["opt_g"])
+        self.opt_d.load_state_dict(state["opt_d"])
+        self.sched_g.load_state_dict(state["sched_g"])
+        self.sched_d.load_state_dict(state["sched_d"])
+
     def save_voice(self, path: Path, info: str):
         """RVC's voice file: fp16 synthesis weights (no enc_q), config, sr, f0, version."""
         cfg = self.g.cfg
@@ -346,7 +373,7 @@ class Trainer:
 def epochs_batches(clips: list, batch: int, seed: int):
     """Clips in batches of similar length (fewer padded frames), shuffled per epoch."""
     rng = random.Random(seed)
-    order = sorted(range(len(clips)), key=lambda i: clips[i]["feats"].shape[0])
+    order = sorted(range(len(clips)), key=lambda i: clips[i]["frames"])
     groups = [order[i : i + batch] for i in range(0, len(order), batch)]
     rng.shuffle(groups)
     return groups

@@ -4,7 +4,17 @@ import type { DatasetReport, Engine, GpuProfile, TrainParams } from '../api'
 import { datasetName, formatStep } from '../format'
 import { useT } from '../i18n'
 import { DatasetReview } from './DatasetReview'
-import { DEFAULT_EPOCHS, DEFAULT_PARAMS, epochsOf, forEngine, forGpu, fullSteps, scheduleFor } from '../trainParams'
+import {
+  DEFAULT_EPOCHS,
+  DEFAULT_PARAMS,
+  epochsOf,
+  forEngine,
+  forGpu,
+  fullSteps,
+  rvcPieces,
+  rvcSteps,
+  scheduleFor,
+} from '../trainParams'
 import type { Params, Schedule } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { SubTabs } from './SubTabs'
@@ -33,7 +43,7 @@ const SCHEDULE_KEYS: (keyof Schedule)[] = [
 ]
 
 // The model part of a run name; GPT-SoVITS names its version (as imported webui voices do).
-const MODEL_TAGS: Record<string, string> = { voxcpm: 'voxcpm2', dots_tts: 'dots', fish_s2: 's2' }
+const MODEL_TAGS: Record<string, string> = { voxcpm: 'voxcpm2', dots_tts: 'dots', fish_s2: 's2', rvc: 'rvc' }
 const GSV_TAGS: Record<string, string> = { v2ProPlus: 'v2pp', v2Pro: 'v2pro', v4: 'v4' }
 
 /** dataset-model[-rank], e.g. voice-voxcpm2-r32, voice-dots-r32, voice-v2pp, voice-v4-r32;
@@ -44,7 +54,7 @@ function suggestName(dataset: string, params: Params, taken: string[], now = new
       ? (GSV_TAGS[params.gsv_version] ?? params.gsv_version.toLowerCase())
       : (MODEL_TAGS[params.engine] ?? params.engine.split('_')[0])
   // Full fine-tuning has no rank, except GPT-SoVITS v4 (a LoRA on its DiT).
-  const lora = params.engine !== 'gpt_sovits' || params.gsv_version === 'v4'
+  const lora = params.engine !== 'rvc' && (params.engine !== 'gpt_sovits' || params.gsv_version === 'v4')
   const parts = [datasetName(dataset).split('/').at(-1), model, ...(lora ? [`r${params.lora_rank}`] : [])]
   const base = parts.join('-').replace(/[^\p{L}\p{N}_.-]/gu, '_')
   if (!taken.includes(base)) return base
@@ -90,10 +100,17 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
   const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(base.val_holdout, report.valid - 1)) : 0
   const isFull = (id: string) => !!engines.find((e) => e.id === id)?.capabilities.full_finetune
   const full = isFull(base.engine)
-  // Full fine-tuning (GPT-SoVITS): steps follow from each stage's epochs.
-  const stages = full && trainClips > 0 ? fullSteps(trainClips, base) : null
+  // Full fine-tuning: GPT-SoVITS's steps follow from each stage's epochs, RVC's from its pieces.
+  const rvc = base.engine === 'rvc'
+  const pieces =
+    rvc && report && trainClips > 0 ? rvcPieces(trainClips, (report.total_seconds * trainClips) / report.valid) : 0
+  const stages = full && !rvc && trainClips > 0 ? fullSteps(trainClips, base) : null
   const params: Params = full
-    ? { ...base, ...(stages ? { num_iters: stages.sovits + stages.gpt } : {}), ...overrides }
+    ? {
+        ...base,
+        ...(stages ? { num_iters: stages.sovits + stages.gpt } : pieces ? { num_iters: rvcSteps(pieces, base) } : {}),
+        ...overrides,
+      }
     : {
         ...base,
         ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base) : {}),
@@ -224,7 +241,9 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
               <span className="muted">
                 {stages
                   ? t.stageSteps(formatStep(stages.sovits), formatStep(stages.gpt))
-                  : t.stepsTimesClips(formatStep(params.num_iters), perStep)}
+                  : pieces
+                    ? t.rvcSteps(formatStep(params.num_iters), pieces.toLocaleString())
+                    : t.stepsTimesClips(formatStep(params.num_iters), perStep)}
               </span>
               <span className="muted">
                 {engines.length > 1 && `${engineName} · `}
@@ -315,6 +334,17 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
                     Math.max(1, Math.min(params.gpt_batch_size, Math.floor(trainClips / 4))),
                     gpu?.total_gb ? String(gpu.total_gb) : '',
                     trainClips.toLocaleString(),
+                  )}
+                </p>
+              ) : pieces ? (
+                <p className="muted hint">
+                  {t.rvcScheduleHint(
+                    params.rvc_epochs,
+                    pieces.toLocaleString(),
+                    params.batch_size,
+                    gpu?.total_gb ? String(gpu.total_gb) : '',
+                    formatStep(params.num_iters),
+                    params.rvc_save_every,
                   )}
                 </p>
               ) : trainClips > 0 ? (

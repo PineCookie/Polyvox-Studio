@@ -47,6 +47,7 @@ export function ParamsFields({
   // Which networks get LoRA, and data loader workers: VoxCPM's and dots.tts's (S2-Pro trains its fast transformer).
   const layerChoice = voxcpm || params.engine === 'dots_tts'
   const lora = !fullFinetune
+  const rvc = params.engine === 'rvc' // full training too, in epochs of its own
   const slow = params.engine === 'fish_s2' && params.s2_slow
   // S2-Pro training only its fast transformer: from cached slow transformer states.
   const cachedS2 = lora && params.engine === 'fish_s2' && !params.s2_slow
@@ -99,7 +100,12 @@ export function ParamsFields({
             </select>
           </label>
         )}
-        {!lora ? (
+        {rvc ? (
+          <>
+            {numberField('rvc_epochs', { min: 1, max: 1000 })}
+            {numberField('rvc_save_every', { min: 1, max: 1000 })}
+          </>
+        ) : !lora ? (
           <>
             {numberField('sovits_epochs', { min: 0, max: 100 })}
             {numberField('gpt_epochs', { min: 0, max: 100 })}
@@ -147,8 +153,8 @@ export function ParamsFields({
         )}
         {slow && numberField('s2_slow_lr', { min: 0, step: 'any' })}
         {!lora && numberField('batch_size', { min: 1 })}
-        {!lora && numberField('gpt_batch_size', { min: 1, max: 64 })}
-        {!lora && (
+        {!lora && !rvc && numberField('gpt_batch_size', { min: 1, max: 64 })}
+        {!lora && !rvc && (
           <label className="field">
             <span>{t.params.gsv_version}</span>
             <select value={params.gsv_version} onChange={(e) => onChange?.('gsv_version', e.target.value)}>

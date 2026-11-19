@@ -45,6 +45,8 @@ export const DEFAULT_PARAMS: Params = {
   s2_slow_lr: 2e-5, // the slow transformer's tested AdamW rate (the fast one's: 5e-4)
   s2_cached_references: 2,
   s2_offload: false, // forGpu: on where the whole model and training don't fit (vram.Profile.s2_offload)
+  rvc_epochs: 100, // matched the user's RVC WebUI voices at 50-100
+  rvc_save_every: 25,
 }
 
 // Prodigy finds its own step size: learning_rate is a multiplier, 1 by its authors' advice.
@@ -159,5 +161,18 @@ export function paramsFromConfig(config: Record<string, unknown>): Params {
     s2_slow_lr: num(config.slow_learning_rate, d.s2_slow_lr),
     s2_cached_references: num(config.cached_references, d.s2_cached_references),
     s2_offload: flag(config.offload, true), // runs from before the setting offloaded
+    rvc_epochs: num(config.epochs, d.rvc_epochs),
+    rvc_save_every: num(config.save_every, d.rvc_save_every),
   }
+}
+
+/** RVC cuts its training clips into pieces of up to 3.7 s, one every 3.4 s (engines/rvc/train.pieces):
+ * about this many pieces from `clips` clips of `seconds` in all (the worker counts them exactly). */
+export function rvcPieces(clips: number, seconds: number): number {
+  return Math.max(clips, Math.round(seconds / 3.4 + clips * 0.37)) // the remainders: ~0.37 a clip on a real dataset
+}
+
+/** Steps of an RVC run: whole batches of pieces per epoch. */
+export function rvcSteps(pieces: number, params: Params): number {
+  return Math.ceil(pieces / Math.max(1, params.batch_size)) * params.rvc_epochs
 }

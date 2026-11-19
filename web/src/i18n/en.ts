@@ -894,6 +894,9 @@ export const en = {
   fullScheduleHint: (sovits: string, batch: number, gpt: string, gptBatch: number, gpu: string, clips: string) =>
     `= ${sovits} SoVITS steps of ${batch} clips${gpu ? ` (the batch that fits this ${gpu} GB GPU)` : ''}, then ${gpt} GPT steps of 4 × ${gptBatch} clips, over ${clips} training clips (exact counts once the clips are read). GPT-SoVITS trains whole models, as its webui does, with its defaults (8 and 15 epochs): SoVITS learns the voice's timbre, the GPT how they speak. Samples after every epoch; checkpoints every 4 SoVITS and 5 GPT epochs, and at the end of each stage (SoVITS checkpoints speak with the base GPT).`,
   stepsFollow: 'Steps follow from the epochs once a dataset is chosen.',
+  rvcSteps: (steps: string, pieces: string) => `~${steps} steps over ~${pieces} pieces`,
+  rvcScheduleHint: (epochs: number, pieces: string, batch: number, gpu: string, steps: string, every: number) =>
+    `${epochs} epochs over ~${pieces} pieces of up to 3.7 s (the training clips cut as RVC's WebUI cuts them) at batch ${batch}${gpu ? ` (fits this ${gpu} GB GPU)` : ''} = ~${steps} steps; a voice is saved every ${every} epochs. Exact counts once the clips are cut. RVC trains its whole model from its 40 kHz base models, as the WebUI does; singing clips help it sing.`,
 
   // Parameters
   params: {
@@ -924,6 +927,8 @@ export const en = {
     gpt_epochs: 'GPT epochs',
     gpt_batch_size: 'GPT batch size',
     gsv_version: 'Model version',
+    rvc_epochs: 'Epochs',
+    rvc_save_every: 'Save a voice every (epochs)',
     s2_slow: 'Also train the slow transformer (experimental)',
     s2_fast_lr: 'Learning rate · fast transformer',
     s2_slow_lr: 'Learning rate · slow transformer',

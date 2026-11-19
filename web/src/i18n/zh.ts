@@ -863,6 +863,9 @@ export const zh: Messages = {
   fullScheduleHint: (sovits, batch, gpt, gptBatch, gpu, clips) =>
     `= SoVITS ${sovits} 步，每步 ${batch} 条${gpu ? `（按这块 ${gpu} GB 显卡选择的批大小）` : ''}，然后 GPT ${gpt} 步，每步 4 × ${gptBatch} 条，共 ${clips} 条训练片段（读取片段后得到确切步数）。GPT-SoVITS 与其 webui 一样训练完整模型，默认值也相同（8 轮和 15 轮）：SoVITS 学习声音的音色，GPT 学习说话方式。每轮结束后生成样本；SoVITS 每 4 轮、GPT 每 5 轮以及每个阶段结束时保存检查点（SoVITS 阶段的检查点使用基础 GPT 说话）。`,
   stepsFollow: '选择数据集后，步数会根据轮数自动计算。',
+  rvcSteps: (steps, pieces) => `约 ${steps} 步 · 约 ${pieces} 个片段`,
+  rvcScheduleHint: (epochs, pieces, batch, gpu, steps, every) =>
+    `${epochs} 轮，约 ${pieces} 个最长 3.7 秒的片段（按 RVC WebUI 的方式切分训练片段），批大小 ${batch}${gpu ? `（适合这块 ${gpu} GB 显卡）` : ''} = 约 ${steps} 步；每 ${every} 轮保存一个声音。切分后得到准确步数。RVC 与 WebUI 一样，从 40 kHz 基础模型训练整个模型；含唱歌的片段能让它唱得更好。`,
 
   // 参数
   params: {
@@ -893,6 +896,8 @@ export const zh: Messages = {
     gpt_epochs: 'GPT 轮数',
     gpt_batch_size: 'GPT 批大小',
     gsv_version: '模型版本',
+    rvc_epochs: '轮数',
+    rvc_save_every: '每隔多少轮保存一个声音',
     s2_slow: '同时训练慢速 Transformer（实验性）',
     s2_fast_lr: '学习率 · 快速 Transformer',
     s2_slow_lr: '学习率 · 慢速 Transformer',

@@ -4,6 +4,7 @@ API, with a tiny model (same code, small sizes) and fake feature / pitch models.
 import dataclasses
 import io
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -154,7 +155,7 @@ def test_voices_import_and_recordings_convert_through_the_api(rvc_app, tmp_path)
     (listed,) = [v for v in rvc_app.get("/api/loras").json() if v["engine"] == "rvc"]
     assert listed["id"] == "rvc/speaker_a"
     caps = {e["id"]: e["capabilities"] for e in rvc_app.get("/api/engines").json()}
-    assert caps["rvc"]["conversion"] and not caps["rvc"]["training"] and not caps["voxcpm"]["conversion"]
+    assert caps["rvc"]["conversion"] and caps["rvc"]["full_finetune"] and not caps["voxcpm"]["conversion"]
 
     buf = io.BytesIO()
     sf.write(buf, np.sin(np.arange(44100 * 2) / 44100 * 2 * np.pi * 220) * 0.3, 44100, format="WAV")
@@ -188,3 +189,38 @@ def test_an_index_comes_from_a_webui_feature_file(rvc_app, tmp_path):
     saved = torch.load(tmp_path / "lora" / "rvc" / "speaker_b" / voices.INDEX, weights_only=True)
     assert saved.dtype == torch.float16 and saved.shape == (300, 768)
     assert rvc_app.post("/api/rvc/index", json={"id": "rvc/speaker_b"}).status_code == 422
+
+
+def test_piece_counts_match_the_cut():
+    for seconds in (0.5, 3.7, 4.0, 4.01, 7.4, 7.41, 12.3, 30.0):
+        assert train.piece_count(seconds, 1000) == len(train.pieces(np.zeros(int(round(seconds * 1000))), 1000)), (
+            seconds
+        )
+    from polyvox.engines.rvc.worker import plan
+
+    assert plan(1151, 16, 100) == (72, 7200)
+    assert plan(5, 16, 3) == (1, 3)
+
+
+def test_a_training_run_is_planned_from_the_dataset(settings, monkeypatch, tmp_path):
+    from polyvox.training import TrainParams
+
+    from conftest import make_dataset
+
+    settings = dataclasses.replace(settings, rvc_model=str(tmp_path / "rvc"), contentvec_model=str(tmp_path / "cv"))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    make_dataset(settings.data_dir, "speaker_a")
+    # As TrainingManager hands it over: the run's copy of the manifest, with absolute paths.
+    wavs = sorted((settings.data_dir / "speaker_a" / "wavs").glob("*.wav"))
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text("".join(f'{{"audio": "{w.as_posix()}", "text": "clip"}}\n' for w in wavs), encoding="utf-8")
+    engine = RvcEngine(settings, fake_runtime)
+    params = TrainParams(name="run_a", engine="rvc", dataset="speaker_a/train.jsonl", batch_size=2, rvc_epochs=3)
+    config = engine.training_config(params, tmp_path / "run", manifest, None)
+    assert config["pretrained_g"].endswith("f0G40k.pth") and config["rmvpe"].endswith("rmvpe.pt")
+    assert config["epochs"] == 3 and config["save_every"] == 25 and config["save_path"].endswith("checkpoints")
+    assert config["num_iters"] % 3 == 0 and config["num_iters"] >= 3
+    assert config["feature_cache"].endswith(str(Path(".cache") / "rvc_v2_40k.pt"))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(ValueError, match="CUDA"):
+        engine.training_config(params, tmp_path / "run", manifest, None)

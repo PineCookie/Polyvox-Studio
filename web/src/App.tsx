@@ -45,6 +45,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(tabFromHash)
   // Set by the Data tab's "Train on this"; opens New run with that dataset.
   const [trainDataset, setTrainDataset] = useState<{ id: string; key: number } | null>(null)
+  // Set by the Train tab's "Try" on a conversion engine's checkpoint (RVC): the Convert tab selects it.
+  const [convertPick, setConvertPick] = useState<{ id: string; key: number } | null>(null)
   const [status, setStatus] = useState<Status | null>(null)
   const [loras, setLoras] = useState<Lora[]>([])
   const [lorasLoading, setLorasLoading] = useState(true)
@@ -215,7 +217,13 @@ export default function App() {
   }
 
   function tryCheckpoint(loraId: string) {
-    setVoice({ engine: loras.find((l) => l.id === loraId)?.engine ?? DEFAULT_ENGINE, lora: loraId })
+    const engine = loras.find((l) => l.id === loraId)?.engine ?? DEFAULT_ENGINE
+    if (engines.some((e) => e.id === engine && e.capabilities.conversion)) {
+      setConvertPick({ id: loraId, key: Date.now() })
+      switchTab('convert')
+      return
+    }
+    setVoice({ engine, lora: loraId })
     switchTab('synthesize')
   }
 
@@ -333,6 +341,7 @@ export default function App() {
       </main>
       <ConvertView
         hidden={tab !== 'convert'}
+        pick={convertPick}
         engine={converter}
         loras={loras}
         status={status}
