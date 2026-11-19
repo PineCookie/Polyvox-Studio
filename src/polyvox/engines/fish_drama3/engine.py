@@ -19,6 +19,7 @@ import random
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -186,23 +187,33 @@ class Runtime:
     """The loaded model and codec."""
 
     def __init__(self, model_dir: Path, device: str, graphs: bool = True):
-        import torch
-
         from ..common import fish_codec as codec
         from . import model
 
         t0 = time.time()
         self.device = device
-        self.codec = codec.load(model_dir / "codec.pth", device)
+        # The experts (most of the bytes) and the codec load in the background of the rest.
+        experts = model.read_experts(model_dir, device)
+        with ThreadPoolExecutor(1, thread_name_prefix="drama3-codec") as pool:
+            codec_job = pool.submit(codec.load, model_dir / "codec.pth", device)
 
-        def budget(per_expert: int) -> int:
-            limit = ((vram.total_gb(device) or 0) - vram.CONTEXT_GB) * 2**30 - torch.cuda.memory_reserved(device)
-            free = min(torch.cuda.mem_get_info(device)[0], limit)
-            return int((free - RESERVE_GB * 2**30) // per_expert)
+            def budget(per_expert: int) -> int:
+                codec_job.result()  # (on the GPU before its free memory is shared out)
+                return self._expert_slots(per_expert)
 
-        self.model = model.load(model_dir, device, budget, graphs)
+            self.model = model.load(model_dir, device, budget, graphs, experts=experts)
+            self.codec = codec_job.result()
         self._codes: dict[str, object] = {}  # recent reference clips' codes, by content
         logger.info("Drama 3 ready in %.1f s", time.time() - t0)
+
+    def _expert_slots(self, per_expert: int) -> int:
+        """GPU slots per layer for the experts: what the card has left, less the reserve."""
+        import torch
+
+        device = self.device
+        limit = ((vram.total_gb(device) or 0) - vram.CONTEXT_GB) * 2**30 - torch.cuda.memory_reserved(device)
+        free = min(torch.cuda.mem_get_info(device)[0], limit)
+        return int((free - RESERVE_GB * 2**30) // per_expert)
 
     def encode(self, wav: Path):
         """The clip's codes; the same audio again (each request's upload is a new file) is not

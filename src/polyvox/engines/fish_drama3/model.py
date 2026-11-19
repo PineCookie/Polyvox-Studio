@@ -33,6 +33,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from .convert import dequant
+from .reader import Stacks
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 FISH_ONLY = ("model_type", "mlp_layer_types", "rotary_interleaved", "use_qk_norm",
              "layernorm_zero_centered_gamma", "shared_expert_gate", "attn_output_gate")  # fmt: skip
 DENSE = ("q_proj", "k_proj", "v_proj", "o_proj", "in_proj_qkv", "in_proj_z", "out_proj")
+BACKBONE = "model.language_model."
 PARTS = (("gate_proj", "gate"), ("up_proj", "up"), ("down_proj", "down"))
 STREAM_CHUNK = 48  # experts copied at a time when the cache can't hold a call's
 RECENT = 16  # frames a repeated semantic token is looked for in
@@ -559,17 +561,56 @@ def expert_format(experts: dict, weight_map: dict, get: Callable, device):
     return torch.tensor(experts["grid"], dtype=torch.float32), Rotation(signs, device)
 
 
+def _config(root: Path, weight_map: dict[str, str] | None = None) -> tuple[dict, dict[str, str]]:
+    """The build's config and its tensors' shards (``weight_map`` when already read: 7 MB of JSON)."""
+    cfg = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    if (cfg.get("quantization_config") or {}).get("quant_method") != "drama3-int4":
+        raise ValueError(f"{root} is not Drama 3's 4-bit build.")
+    if weight_map is None:
+        weight_map = json.loads((root / "model.safetensors.index.json").read_text(encoding="utf-8"))["weight_map"]
+    return cfg, weight_map
+
+
+def read_experts(root: Path, device: str = "cuda") -> Stacks:
+    """Every layer's expert stacks ({gate,up,down}_{q,s}, pinned for a CUDA device), being read in
+    the background: most of the model's bytes, so start it before loading anything else."""
+    cfg, weight_map = _config(root)
+    text = cfg["text_config"]
+    groups = [
+        {
+            f"{short}_{kind}": [
+                f"{BACKBONE}layers.{i}.mlp.experts.{e}.{proj}.{suffix}" for e in range(text["num_experts"])
+            ]
+            for proj, short in PARTS
+            for kind, suffix in (("q", "qweight"), ("s", "scales"))
+        }
+        for i in range(text["num_hidden_layers"])
+    ]
+    return Stacks(root, weight_map, groups, pin=str(device).startswith("cuda"))
+
+
 def load(
     root: Path,
     device: str = "cuda",
     expert_budget: Callable[[int], int] | None = None,
     graphs: bool = True,
     tower_bits: int = 8,
+    experts: Stacks | None = None,
 ) -> Drama3:
     """The 4-bit model in ``root``. ``expert_budget(bytes of one expert in every layer)`` -> GPU
     slots per layer for the experts, asked once everything else is on the GPU (None: no slots).
     ``tower_bits`` 8: the tower's matrices in 8 bits (on CUDA; they're bf16 in the checkpoint):
-    teacher-forced on real clips its codes' cross-entropy rose 0.02%, and frames got ~8% faster."""
+    teacher-forced on real clips its codes' cross-entropy rose 0.02%, and frames got ~8% faster.
+    ``experts``: ``read_experts`` of the same folder, when the caller started it earlier."""
+    experts = experts or read_experts(root, device)
+    try:
+        return _load(root, device, expert_budget, graphs, tower_bits, experts)
+    except BaseException:
+        experts.cancel()
+        raise
+
+
+def _load(root: Path, device: str, expert_budget, graphs: bool, tower_bits: int, experts: Stacks) -> Drama3:
     from safetensors import safe_open
     from tokenizers import Tokenizer
     from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeTextConfig
@@ -580,15 +621,10 @@ def load(
     t0 = time.time()
     m = Drama3()
     m.device = device
-    cfg = json.loads((root / "config.json").read_text(encoding="utf-8"))
-    if (cfg.get("quantization_config") or {}).get("quant_method") != "drama3-int4":
-        raise ValueError(f"{root} is not Drama 3's 4-bit build.")
-    m.text_config = Qwen3_5MoeTextConfig(**{k: v for k, v in cfg["text_config"].items() if k not in FISH_ONLY})
-    m.text_config._attn_implementation = "sdpa"
+    cfg, weight_map = _config(root, experts.weight_map if experts.root == root else None)
     m.semantic_begin, m.semantic_end = cfg["semantic_start_token_id"], cfg["semantic_end_token_id"]
     m.eos = cfg["eos_token_id"]
     m.tokenizer = Tokenizer.from_file(str(root / "tokenizer.json"))
-    weight_map = json.loads((root / "model.safetensors.index.json").read_text(encoding="utf-8"))["weight_map"]
     handles: dict[str, object] = {}
 
     def get(key):
@@ -597,9 +633,7 @@ def load(
             handles[shard] = safe_open(str(root / shard), "pt")
         return handles[shard].get_tensor(key)
 
-    with torch.device("meta"):
-        m.backbone = Qwen3_5MoeTextModel(m.text_config)
-    prefix = "model.language_model."
+    prefix = BACKBONE
     state, packed = {}, {}
     on_cuda = str(device).startswith("cuda")
     for key in weight_map:
@@ -620,14 +654,10 @@ def load(
         else:
             # The token table (1 GB) stays in CPU memory: decoding needs only its audio rows (below).
             state[name] = get(key).pin_memory() if name == "embed_tokens.weight" and on_cuda else get(key).to(device)
-    stacks = []
-    for i in range(len(m.backbone.layers)):
-        parts = {}
-        for proj, short in PARTS:
-            for kind, suffix in (("q", "qweight"), ("s", "scales")):
-                keys = [f"{prefix}layers.{i}.mlp.experts.{e}.{proj}.{suffix}" for e in range(m.text_config.num_experts)]
-                parts[f"{short}_{kind}"] = torch.stack([get(k) for k in keys]).pin_memory()
-        stacks.append(parts)
+    m.text_config = Qwen3_5MoeTextConfig(**{k: v for k, v in cfg["text_config"].items() if k not in FISH_ONLY})
+    m.text_config._attn_implementation = "sdpa"
+    with torch.device("meta"):
+        m.backbone = Qwen3_5MoeTextModel(m.text_config)
     if packed:
         from .kernels import Int4Linear
 
@@ -677,14 +707,15 @@ def load(
         TowerLayer(tower_weights(f"audio_decoder_mtp.layers.{i}.", "codebook_embedding.weight")) for i in range(9)
     ]
     m.heads = [tower_weight(f"audio_decoder_mtp.heads.{i}.weight") for i in range(9)]
+    grid, rotation = expert_format(cfg["quantization_config"].get("experts") or {}, weight_map, get, device)
     handles.clear()
     torch.cuda.empty_cache()
     graphs = graphs and on_cuda
     # The small steps between the linear layers fused by torch.compile (with the graphs).
     m.decoder = Decoder(m, graphs=graphs, fused=graphs)
+    stacks = experts.result()
     slots = expert_budget(expert_bytes(stacks[0]) * len(stacks)) if expert_budget else 0
     slots = max(0, min(slots, m.text_config.num_experts))
-    grid, rotation = expert_format(cfg["quantization_config"].get("experts") or {}, weight_map, get, device)
     for layer, parts in zip(m.backbone.layers, stacks, strict=True):
         layer.mlp.experts = Experts(parts, slots, device, grid, rotation)
     logger.info("Drama 3 loaded in %.0f s; %d experts per layer held on the GPU", time.time() - t0, slots)

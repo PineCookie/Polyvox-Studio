@@ -598,3 +598,35 @@ def test_style_and_hints_reach_every_part(settings, monkeypatch):
     assert "[audio tokens: 65]<|im_end|>" in "".join(chr(r) for r in seen[0][:, 0].tolist())
     with pytest.raises(ValueError, match="can't contain"):
         tts.synthesize(SynthesisRequest(text="一行<|im_end|>"))
+
+
+def test_expert_stacks_read_in_the_background_equal_the_stored_tensors(tmp_path):
+    from polyvox.engines.fish_drama3.reader import Stacks
+
+    torch.manual_seed(0)
+    shards = {"a.safetensors": {}, "b.safetensors": {}}
+    groups, weight_map = [], {}
+    for layer in range(2):  # (a stack's tensors lie in both shards, among others, in no order)
+        group = {}
+        for name, shape, dtype in (("q", (3, 5), torch.int32), ("s", (4,), torch.bfloat16)):
+            keys = [f"layers.{layer}.experts.{e}.{name}" for e in range(7)]
+            for e, key in enumerate(keys):
+                shard = "a.safetensors" if (e + layer) % 3 else "b.safetensors"
+                shards[shard][key] = (torch.randn(shape) * 100).to(dtype)
+                weight_map[key] = shard
+            group[name] = keys
+        groups.append(group)
+    shards["a.safetensors"]["other"] = torch.ones(11)
+    for shard, tensors in shards.items():
+        save_file(tensors, str(tmp_path / shard))
+
+    stacks = Stacks(tmp_path, weight_map, groups).result()
+
+    assert [set(s) for s in stacks] == [{"q", "s"}, {"q", "s"}]
+    for group, got in zip(groups, stacks, strict=True):
+        for name, keys in group.items():
+            assert torch.equal(got[name], torch.stack([shards[weight_map[k]][k] for k in keys]))
+
+    (tmp_path / "b.safetensors").write_bytes((tmp_path / "b.safetensors").read_bytes()[:-8])
+    with pytest.raises(OSError, match="ends inside a tensor"):
+        Stacks(tmp_path, weight_map, groups).result()

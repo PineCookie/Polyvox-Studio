@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 from .layers import rms_norm, rope_table, rotate
+from .loading import no_random_init
 
 SAMPLE_RATE = 44_100
 ENCODER_RATES = (2, 4, 8, 8)  # hop 512
@@ -353,7 +354,8 @@ def load(path: Path, device: str) -> Codec:
     state = state.get("state_dict", state)
     if any(k.startswith("generator.") for k in state):
         state = {k.removeprefix("generator."): v for k, v in state.items() if k.startswith("generator.")}
-    codec = Codec()
+    with no_random_init():  # (every weight comes from the file: checked below)
+        codec = Codec()
     missing, unexpected = codec.load_state_dict(folded(state), strict=False)
     if missing or unexpected:
         raise ValueError(f"The Fish codec doesn't fit: missing {missing[:5]}, unexpected {unexpected[:5]}")
