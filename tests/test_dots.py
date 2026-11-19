@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 import pytest
@@ -179,10 +180,9 @@ class FakeRuntime:
         self.calls: list[dict] = []
         type(self.model)._generate_latents_stream = lambda model, *a, **k: iter([torch.zeros(1)] * 5)
 
-    def run_warmup(self):
-        self.model.fuse()  # as the optimized runtime's warm-up generations do
-
     def generate(self, **kwargs):
+        if not self.model._fm_dit_solvers:
+            self.model.fuse()  # as the optimized runtime's first generation does
         self.calls.append({**kwargs, "q": self.model.get_submodule(DOTS_LAYER).weight.clone()})
         patches = list(self.model._generate_latents_stream())
         return {"audio": torch.zeros(len(patches) * 7680)}
@@ -250,6 +250,35 @@ def test_dots_loras_merge_switch_and_reject_voxcpm(engine, runtime, lora_dir):
         engine.synthesize(SynthesisRequest(text="hi", lora_id="vox/step_1"))
     engine.unload()
     assert not engine.loaded
+
+
+def test_a_lora_chosen_before_the_first_generation_reaches_the_fused_copies(settings, runtime, lora_dir, monkeypatch):
+    """No warm-up: the first request (here with a LoRA) fuses the diffusion head, so the merged
+    weights must be the ones fused; later switches write the fused copies in place."""
+    monkeypatch.setattr(DotsEngine, "unavailable", lambda self: None)
+    engine = DotsEngine(dataclasses.replace(settings, optimize=True), loader=lambda model, optimize: runtime)
+    make_dots_lora(lora_dir, "a/step_1", runtime.model, seed=1)
+    phases = []
+    stream = type(runtime.model)._generate_latents_stream
+    type(runtime.model)._generate_latents_stream = lambda m, *a, **k: (
+        phases.append(engine.progress()["phase"]) or stream(m, *a, **k)
+    )
+    dit = runtime.model.core.velocity_field_predictor
+    attn = dit.blocks[0].attn  # the unfused attention, which the LoRA is merged into
+
+    def fused_matches():
+        qkv = dit.blocks[0].attn.qkv_proj.weight
+        return torch.equal(qkv, torch.cat([attn.q_proj.weight, attn.k_proj.weight, attn.v_proj.weight]))
+
+    engine.synthesize(SynthesisRequest(text="hi", lora_id="a/step_1"))
+    base = engine._merger._originals["core.velocity_field_predictor.blocks.0.attn.q_proj"]
+    assert dit.blocks[0].attn is not attn and fused_matches()  # fused with the LoRA in
+    assert not torch.equal(attn.q_proj.weight, base)
+    pointer = dit.blocks[0].attn.qkv_proj.weight.data_ptr()
+    engine.synthesize(SynthesisRequest(text="hi"))  # the base model: the fused copy in place
+    assert torch.equal(attn.q_proj.weight, base) and fused_matches()
+    assert dit.blocks[0].attn.qkv_proj.weight.data_ptr() == pointer
+    assert phases == ["compiling", "generating"]  # only the first request after loading compiles
 
 
 def test_dots_training_config(engine, tmp_path):

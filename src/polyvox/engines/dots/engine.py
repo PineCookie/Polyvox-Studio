@@ -40,11 +40,14 @@ def load_runtime(model: str, optimize: bool):
     """dots.tts's runtime; ``optimize``: torch.compile + CUDA graphs per decode
     step (~4x faster here: 0.19 vs 0.8 s per second of audio). Its warm-up (the
     compilation, minutes with a cold Inductor cache) is left to the caller, which
-    must snapshot the model before it (dots_lora.Merger)."""
+    must snapshot the model before it (dots_lora.Merger). Built without random initial weights
+    (every one comes from the checkpoint, loaded strictly): 12 s less."""
     from ...vendor.dots_tts.runtime import DotsTtsRuntime
+    from ..common.loading import no_random_init
 
     dots_lora.quiet_logging()
-    return DotsTtsRuntime.from_pretrained(model, precision="bfloat16", optimize=optimize, warmup_on_optimize=False)
+    with no_random_init():
+        return DotsTtsRuntime.from_pretrained(model, precision="bfloat16", optimize=optimize, warmup_on_optimize=False)
 
 
 @dataclass
@@ -90,6 +93,7 @@ class DotsEngine(Engine):
         self._merger: dots_lora.Merger | None = None
         self._lora: tuple[str, float] | None = None  # (id, weights mtime) merged into the weights
         self._progress = Progress()
+        self._compiling = False  # the next generation compiles first (the first after loading)
         self._patches_per_token = PATCHES_PER_TOKEN
 
     @property
@@ -164,10 +168,13 @@ class DotsEngine(Engine):
         progress = self._progress
 
         def counted(*args, **kw):
-            progress.phase = "generating"
+            # The first request after loading compiles before its first patch comes out.
+            progress.phase = "compiling" if self._compiling else "generating"
             for patch in stream(model, *args, **kw):
+                progress.phase = "generating"
                 progress.step += 1
                 yield patch
+            self._compiling = False
 
         torch.manual_seed(seed)
         model._generate_latents_stream = counted  # this call only: progress per audio patch
@@ -206,15 +213,14 @@ class DotsEngine(Engine):
                 model = self.settings.model_path(self.model_setting)
                 logger.info("Loading dots.tts from %s (optimize=%s)", model, self.optimize)
                 runtime = self._loader(model, self.optimize)
-            # Before the warm-up fuses the diffusion head; LoRAs then go into the
+            # Before the first generation fuses the diffusion head; LoRAs then go into the
             # fused copies in place, so the recorded CUDA graphs stay valid.
             self._merger = dots_lora.Merger(runtime.model, keep_fusion=True)
             self._lora = None
-            if self.optimize:
-                self._progress.phase = "compiling"
-                t0 = time.time()
-                runtime.run_warmup()
-                logger.info("dots.tts compiled in %.0f s", time.time() - t0)
+            # No warm-up: its 17 graphs (every length bucket, with and without a prompt) took ~47 s
+            # with a warm compile cache; each request compiles the few it needs the first time
+            # (a short first one ~13 s, a new length later a few seconds once).
+            self._compiling = self.optimize
             self._runtime = runtime
         return self._runtime
 
