@@ -105,6 +105,9 @@ class Capabilities:
     free_tags: bool = False
     # Edits recorded speech (Engine.edit): changed words spoken again, the rest kept.
     speech_edit: bool = False
+    # Converts recorded speech or singing into a voice (Engine.convert), no text: the Convert tab,
+    # not Synthesize.
+    conversion: bool = False
 
     def reference_input(self, slot: str) -> ReferenceInput | None:
         return next((i for i in self.reference_inputs if i.slot == slot), None)
@@ -149,6 +152,19 @@ class EditRequest:
 
 
 @dataclass
+class ConvertRequest:
+    """Mono ``audio`` at ``rate`` (speech or singing) sung / spoken again in the voice ``lora_id``
+    (capabilities.conversion); ``options`` = values for the engine's Params."""
+
+    audio: np.ndarray
+    rate: int
+    lora_id: str
+    options: dict = field(default_factory=dict)
+    seed: int | None = None
+    on_progress: Callable[[int, int], None] | None = None  # (done, total) pieces
+
+
+@dataclass
 class SynthesisResult:
     sample_rate: int
     audio: np.ndarray
@@ -189,6 +205,10 @@ class Engine(ABC):
     def edit(self, req: EditRequest) -> SynthesisResult:
         """``req.audio`` saying ``req.new_text`` (capabilities.speech_edit)."""
         raise ValueError(f"{self.name} can't edit speech.")
+
+    def convert(self, req: ConvertRequest) -> SynthesisResult:
+        """``req.audio`` in the voice ``req.lora_id`` (capabilities.conversion)."""
+        raise ValueError(f"{self.name} can't convert recordings.")
 
     @abstractmethod
     def progress(self) -> dict:

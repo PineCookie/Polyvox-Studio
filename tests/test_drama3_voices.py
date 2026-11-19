@@ -128,7 +128,7 @@ def test_voices_are_made_and_changed_through_the_api(settings, service, training
     listed = {e["id"]: e for e in client.get("/api/engines").json()}
     caps = {i: (e["capabilities"]["package"], e["capabilities"]["voice_reference_clips"]) for i, e in listed.items()}
     assert caps == {"voxcpm": ("lora", 1), "dots_tts": ("lora", 1), "gpt_sovits": ("voice", 1),
-                    "fish_s2": ("lora", 3), "fish_drama3": (None, 3)}  # fmt: skip
+                    "fish_s2": ("lora", 3), "fish_drama3": (None, 3), "rvc": (None, 1)}  # fmt: skip
     assert listed["fish_drama3"]["base_repo"] == "fishaudio/drama-3"
     assert client.get("/api/loras/reference", params={"id": "fish_drama3/voice_a"}).status_code == 200
 

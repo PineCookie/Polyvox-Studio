@@ -79,7 +79,15 @@ export function SynthesisProgress() {
 }
 
 /** One numeric synthesis setting of an engine, as a slider; its explanation behind ⓘ. */
-function ParamSlider({ param, value, onChange }: { param: EngineParam; value: number; onChange: (v: number) => void }) {
+export function ParamSlider({
+  param,
+  value,
+  onChange,
+}: {
+  param: EngineParam
+  value: number
+  onChange: (v: number) => void
+}) {
   const t = useT()
   const step = param.step ?? (param.kind === 'int' ? 1 : 0.1)
   const decimals = param.kind === 'int' ? 0 : Math.max(0, -Math.floor(Math.log10(step)))

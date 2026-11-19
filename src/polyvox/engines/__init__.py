@@ -10,6 +10,7 @@ from __future__ import annotations
 from ..config import Settings
 from .base import (
     Capabilities,
+    ConvertRequest,
     EditRequest,
     Engine,
     Param,
@@ -24,6 +25,7 @@ DEFAULT = "voxcpm"  # runs and checkpoints that record no engine
 __all__ = [
     "DEFAULT",
     "Capabilities",
+    "ConvertRequest",
     "EditRequest",
     "Engine",
     "Param",
@@ -42,6 +44,7 @@ def classes() -> dict[str, type[Engine]]:
     from .fish_drama3.engine import FishDrama3Engine
     from .fish_s2.engine import FishS2Engine
     from .gpt_sovits.engine import GptSovitsEngine
+    from .rvc.engine import RvcEngine
     from .voxcpm.engine import VoxCPMEngine
 
     return {
@@ -50,6 +53,7 @@ def classes() -> dict[str, type[Engine]]:
         GptSovitsEngine.id: GptSovitsEngine,
         FishS2Engine.id: FishS2Engine,
         FishDrama3Engine.id: FishDrama3Engine,
+        RvcEngine.id: RvcEngine,
     }
 
 

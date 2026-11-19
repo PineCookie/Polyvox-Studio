@@ -12,6 +12,7 @@ next to the code. Changes made to vendored code are listed in each package's
 | GPT-SoVITS | `src/polyvox/vendor/gpt_sovits/` | [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | MIT, Copyright RVC-Boss ([text](src/polyvox/vendor/gpt_sovits/LICENSE)) |
 | x-transformers (rotary embeddings) | `src/polyvox/vendor/gpt_sovits/f5_tts/rotary.py` | [lucidrains/x-transformers](https://github.com/lucidrains/x-transformers) 2.17.10 | MIT, Copyright Phil Wang ([text](src/polyvox/vendor/gpt_sovits/f5_tts/LICENSE-x-transformers)) |
 | Fish Audio Drama 3 model and prompt (ported) | `src/polyvox/engines/fish_drama3/model.py`, `prompt.py` | [sgl-project/sglang-omni](https://github.com/sgl-project/sglang-omni) (`sglang_omni/models/fishaudio_drama3`) | Apache-2.0 (the same text as this project's [LICENSE](LICENSE)) |
+| RVC voice conversion (written from their sources) | `src/polyvox/engines/rvc/` | [RVC-Project/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI), [IAHispano/Applio](https://github.com/IAHispano/Applio) | MIT, Copyright liujing04, 源文雨, Ftps; AI Hispano ([text](src/polyvox/engines/rvc/LICENSE-RVC)) |
 | BS / Mel-Band RoFormer | `src/polyvox/vendor/roformer/` | [ZFTurbo/Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) | MIT, Copyright Roman Solovyev (ZFTurbo) ([text](src/polyvox/vendor/roformer/LICENSE)) |
 
 The GPT-SoVITS code includes parts its repository took from other projects (such

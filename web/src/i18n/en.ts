@@ -22,7 +22,7 @@ export const en = {
   } as Record<string, string>,
 
   // App shell
-  tabs: { synthesize: 'Synthesize', prepare: 'Prepare', train: 'Train', models: 'Models' },
+  tabs: { synthesize: 'Synthesize', convert: 'Convert', prepare: 'Prepare', train: 'Train', models: 'Models' },
   sections: 'Sections',
   dismiss: 'Dismiss',
   noSpeechModel:
@@ -181,6 +181,11 @@ export const en = {
     speed: 'Speed',
     language: 'Language',
     duration: 'Length (s)',
+    shift: 'Key change',
+    index_rate: 'Index strength',
+    protect: 'Protect consonants',
+    clean_pitch: 'Pitch clean-up',
+    rms_mix: 'Loudness of the voice',
   } as Record<string, string>,
   // Values of choice settings; others show as they are.
   choiceLabels: {
@@ -215,6 +220,15 @@ export const en = {
     language: 'A hint: the main language of the text. Auto lets the model tell.',
     duration:
       'Seconds the speech should take, for a text short enough for one take (about 150 characters). 0: its own pace.',
+    shift:
+      'Semitones up or down. A voice sings best inside the range it was trained on: −4 brings a high song lower. For a song, Move the music too keeps it in tune.',
+    index_rate:
+      "How much of the voice's own training sound replaces the recording's: higher is closer to the voice, lower keeps words clearer. Needs the voice's index.",
+    protect:
+      'Breaths and consonants keep this much of the original (0.5 = off). Lower guards against artifacts on s, sh and breaths.',
+    clean_pitch:
+      'Folds back octave jumps of the pitch tracker (reverb, harmonies, breathy notes). Not part of RVC itself.',
+    rms_mix: "1 = the converted voice's own loudness; lower follows the original's loudness curve.",
   } as Record<string, string>,
   seed: 'Seed',
   seedHint: 'The same seed, text and settings give the same take again. Empty: a new random take each time.',
@@ -427,6 +441,10 @@ export const en = {
     copying: 'Copying audio',
     normalizing: 'Normalizing loudness',
     trimming: 'Trimming clip edges',
+    reading: 'Reading the recording',
+    dereverb: 'Removing reverb',
+    converting: 'Converting the voice',
+    mixing: 'Mixing',
   } as Record<string, string>,
   starting: 'Starting',
   audioProgress: (done: string, total: string) => `${done} of ${total} audio`,
@@ -434,6 +452,51 @@ export const en = {
   jobCancelled: (what: string) => `${what} cancelled.`,
   jobFailed: (what: string) => `${what} failed.`,
   stepWhat: 'The step',
+
+  // Convert tab (RVC voice conversion)
+  convertIntro:
+    'Sing or speak a recording again in an RVC voice. A song is separated first: its vocals are converted and mixed back over the music.',
+  convertRecording: 'Recording',
+  convertChoose: 'Choose audio',
+  convertNoFile: 'A song or a vocal track (WAV, FLAC, MP3, M4A…), or drop it here',
+  convertKind: 'What it is',
+  convertSong: 'Song (vocals + music)',
+  convertVocals: 'Vocals or speech only',
+  convertDereverb: 'Remove reverb first',
+  convertDereverbHint: 'Reverb tails turn into noise in the converted voice; most studio vocals have some.',
+  convertShiftMusic: 'Move the music too',
+  convertShiftMusicHint:
+    'With a key change, the instrumental moves by the same semitones, so the song stays in tune (a little less clean).',
+  convertButton: 'Convert',
+  converting: 'Converting…',
+  convertVoice: 'Voice',
+  convertChooseVoice: 'Choose a voice…',
+  convertNoVoices: 'No RVC voices yet: import one trained in the RVC WebUI.',
+  convertResults: 'Results',
+  convertResultsEmpty: 'Converted recordings appear here.',
+  convertFiles: {
+    cover: 'Cover',
+    vocals_converted: 'Converted vocals',
+    instrumental: 'Instrumental',
+    vocals: 'Vocals used',
+  } as Record<string, string>,
+  convertMeta: (seconds: string, took: string) => `${seconds} of audio · made in ${took}`,
+  convertWhat: 'The conversion',
+  convertNeedsSeparation: 'A song needs the vocal separation model (and de-reverb, when on): download them in Models.',
+  rvcImportButton: 'Import RVC voice…',
+  rvcImportTitle: 'Import an RVC voice',
+  rvcImportIntro:
+    "A voice the RVC WebUI trained (v2, 40 kHz, with pitch), as a path on this computer. The file is copied; its index is built here (the WebUI's .index file isn't read).",
+  rvcVoiceFile: 'Voice file (.pth)',
+  rvcVoiceExample: 'X:\\rvc\\assets\\weights\\speaker_a_e100.pth',
+  rvcIndex: 'Index',
+  rvcIndexDataset: 'From a dataset',
+  rvcIndexLogs: 'From a WebUI logs folder',
+  rvcIndexNone: 'None',
+  rvcIndexDatasetHint: "The voice's training clips: ideally the dataset it was trained on.",
+  rvcIndexLogsHint: "The WebUI's logs\\<voice> folder: its total_fea.npy holds the features its index was made from.",
+  rvcIndexNoneHint: 'Converts without an index (a little less like the voice); one can be added later.',
+  rvcLogsExample: 'X:\\rvc\\logs\\speaker_a',
 
   // Dataset steps (prep/steps.py)
   stepsTitle: 'Steps',

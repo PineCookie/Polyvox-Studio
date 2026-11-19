@@ -30,6 +30,7 @@ VOICE_WEIGHTS_FILES = ("sovits_weights.pth", "gpt_weights.ckpt")
 # {"engine": ..., "base_model": ...}, read like lora_config.json.
 VOICE_FILE = "voice.json"
 MARKERS = (WEIGHTS_FILE, VOICE_WEIGHTS_FILES[0], VOICE_FILE)  # a folder holding one of these is a checkpoint
+RVC_WEIGHTS_FILE = "rvc_voice.pth"  # an RVC voice (beside its voice.json; engines/rvc/voices.py)
 # {"lora_config": {...}, "base_model": ..., "engine": ...}; no engine: VoxCPM.
 CONFIG_FILE = "lora_config.json"
 
@@ -60,7 +61,7 @@ class LoraCheckpoint:
     @property
     def weights_mtime(self) -> float:
         """When its weights last changed (any of its weight files; a saved-reference voice: its file)."""
-        files = [self.path / f for f in (WEIGHTS_FILE, *VOICE_WEIGHTS_FILES, VOICE_FILE)]
+        files = [self.path / f for f in (WEIGHTS_FILE, *VOICE_WEIGHTS_FILES, VOICE_FILE, RVC_WEIGHTS_FILE)]
         return max((f.stat().st_mtime for f in files if f.is_file()), default=0.0)
 
     @property

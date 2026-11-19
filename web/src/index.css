@@ -3255,3 +3255,49 @@ input[type='range'] {
 .take-edit .actions {
   justify-content: flex-end;
 }
+
+/* Convert tab: the recording's composer, result rows (name, player, download) */
+.convert-input > .hint,
+.convert-input > .file-picker,
+.convert-input > .segmented,
+.convert-input > .job-progress {
+  margin: 12px 14px 0;
+}
+
+.convert-input > .job-progress {
+  margin-bottom: 12px;
+}
+
+.convert-input > .segmented {
+  justify-self: start;
+}
+
+.convert-input .composer-foot {
+  margin-top: 12px;
+}
+
+.convert-file {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.convert-file-name {
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.convert .take-meta {
+  padding-left: 0;
+}
+
+@media (max-width: 640px) {
+  .convert-file {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .convert-file-name {
+    grid-column: 1 / -1;
+  }
+}

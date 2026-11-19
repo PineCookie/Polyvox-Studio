@@ -83,6 +83,7 @@ export interface Engine {
     tag_groups: TagGroup[] // inline tags its model knows (with capabilities.tags)
     free_tags: boolean // any [description] works too
     speech_edit: boolean // edits recorded speech: changed words spoken again, the rest kept
+    conversion: boolean // converts recordings (speech or singing) into a voice: the Convert tab, not Synthesize
   }
   params: EngineParam[] // synthesis settings
   model_setting: string // its base model in the Models list
@@ -282,6 +283,65 @@ export async function importGptSovits(body: GptSovitsImport): Promise<{ id: stri
       body: JSON.stringify(body),
     })
   ).json()
+}
+
+export interface RvcImport {
+  name: string
+  path: string // server-local path of the RVC WebUI's voice file (.pth)
+  // Its index (training features): built from a dataset's clips, or a WebUI logs folder's total_fea.npy.
+  index_dataset?: string
+  index_logs?: string
+}
+
+/** A voice the RVC WebUI trained (v2, 40 kHz); index_rows: rows in its index (null: none). */
+export async function importRvc(body: RvcImport): Promise<{ id: string; engine: string; index_rows: number | null }> {
+  return (await postJson('/api/rvc/import', body)).json()
+}
+
+/** A voice's index built again from a dataset or a WebUI logs folder. */
+export async function rebuildRvcIndex(body: {
+  id: string
+  index_dataset?: string
+  index_logs?: string
+}): Promise<{ index_rows: number }> {
+  return (await postJson('/api/rvc/index', body)).json()
+}
+
+export type ConvertFile = 'cover' | 'vocals_converted' | 'instrumental' | 'vocals'
+
+export type ConvertJob = Job<{
+  files: ConvertFile[]
+  seconds: number // of the recording
+  took: number
+  seed: number | null
+  voice: string
+}>
+
+export interface ConvertParams {
+  audio: File
+  voice: string // an RVC voice's id
+  options: EngineOptions // the engine's params (shift, index_rate, ...)
+  separate: boolean // a song: vocals taken out, converted, remixed
+  dereverb: boolean
+  shiftInstrumental: boolean // a key change moves the instrumental too
+  seed: number | null
+}
+
+/** Convert a recording in a job; its files are at convertFileUrl(job.id, name) once done. */
+export async function convertRecording(p: ConvertParams): Promise<ConvertJob> {
+  const form = new FormData()
+  form.set('audio', p.audio)
+  form.set('voice', p.voice)
+  form.set('options', JSON.stringify(p.options))
+  form.set('separate', String(p.separate))
+  form.set('dereverb', String(p.dereverb))
+  form.set('shift_instrumental', String(p.shiftInstrumental))
+  if (p.seed !== null) form.set('seed', String(p.seed))
+  return (await request('/api/convert', { method: 'POST', body: form })).json()
+}
+
+export function convertFileUrl(jobId: string, name: ConvertFile): string {
+  return `/api/convert/${encodeURIComponent(jobId)}/${name}`
 }
 
 /** A GPT-SoVITS voice's default reference clip. */

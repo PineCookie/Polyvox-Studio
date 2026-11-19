@@ -27,7 +27,7 @@ from ..prep.singing import SingingService
 from ..speaker import SpeakerService
 from ..training import TrainingConflict, TrainingManager
 from ..updates import UpdateCheck
-from . import clips, datasets, loras, status, tts
+from . import clips, convert, datasets, loras, status, tts
 from . import training as training_routes
 from .context import Studio, free_gpu_for_training
 
@@ -117,7 +117,7 @@ def create_app(
     def model_unavailable(request: Request, exc: models.ModelUnavailable) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=503)
 
-    for area in (status, tts, loras, datasets, clips, training_routes):
+    for area in (status, tts, loras, datasets, clips, training_routes, convert):
         app.include_router(area.router(studio))
     if WEB_DIST.is_dir():
         app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")

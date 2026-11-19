@@ -46,6 +46,10 @@ class Settings:
     s2_model: str = ""
     # Fish Audio Drama 3 (engines/fish_drama3), its 4-bit build: the folder; "" = not built.
     drama3_model: str = ""
+    # RVC voice conversion (engines/rvc): RMVPE + the base G / D (folder), and the ContentVec
+    # feature model (folder); "" = not downloaded.
+    rvc_model: str = ""
+    contentvec_model: str = ""
     lora_dir: Path = Path("lora")
     # Where JSONL training manifests are found.
     data_dir: Path = Path("data")
@@ -111,6 +115,8 @@ class Settings:
             gsv_v4_model=_env("GSV_V4_MODEL", cls.gsv_v4_model),
             s2_model=_env("S2_MODEL", cls.s2_model),
             drama3_model=_env("DRAMA3_MODEL", cls.drama3_model),
+            rvc_model=_env("RVC_MODEL", cls.rvc_model),
+            contentvec_model=_env("CONTENTVEC_MODEL", cls.contentvec_model),
             lora_dir=Path(_env("LORA_DIR", str(cls.lora_dir))),
             data_dir=Path(_env("DATA_DIR", str(cls.data_dir))),
             device=_env("DEVICE", cls.device),

@@ -15,6 +15,7 @@ import { formatStep } from './format'
 import type { VoiceChoice } from './engines'
 import { forgetPeaks } from './peaks'
 import { History } from './components/History'
+import { ConvertView } from './components/ConvertView'
 import { ModelsView } from './components/ModelsView'
 import type { Clip } from './components/History'
 import { PrepareView } from './components/PrepareView'
@@ -27,8 +28,8 @@ import { TrainingView } from './components/TrainingView'
 import { VoiceDetails } from './components/VoiceDetails'
 import { VoicePicker } from './components/VoicePicker'
 
-// Workflow order: raw audio -> dataset -> LoRA -> speech.
-const TABS = ['synthesize', 'prepare', 'train', 'models'] as const
+// Speech first (text, then recordings), then the workflow behind voices: raw audio -> dataset -> training.
+const TABS = ['synthesize', 'convert', 'prepare', 'train', 'models'] as const
 type Tab = (typeof TABS)[number]
 const UPDATE_LOOK_MS = 8000 // when to look again for the server's update check
 const DISMISSED_UPDATE_KEY = 'polyvox.dismissedUpdate' // the newer version whose notice was dismissed
@@ -130,6 +131,11 @@ export default function App() {
     }
   }
 
+  // Engines that convert recordings (RVC) have their own tab; Synthesize lists the others and their voices.
+  const converter = engines.find((e) => e.capabilities.conversion) ?? null
+  const ttsEngines = engines.filter((e) => !e.capabilities.conversion)
+  const ttsLoras = loras.filter((l) => !engines.some((e) => e.id === l.engine && e.capabilities.conversion))
+
   // The engine that edits recorded speech (any take: it keeps the voice from the audio itself).
   const editor = engines.find((e) => e.capabilities.speech_edit && !e.unavailable) ?? null
 
@@ -186,7 +192,7 @@ export default function App() {
     setTrainDataset(null)
     history.replaceState(null, '', next === 'synthesize' ? location.pathname : `#${next}`)
     // Training writes checkpoints and may unload the inference model.
-    if (next === 'synthesize') {
+    if (next === 'synthesize' || next === 'convert') {
       refreshLoras()
       refreshStatus()
     }
@@ -290,8 +296,8 @@ export default function App() {
           voiceVersion={loras.find((l) => l.id === voice.lora)?.version ?? null}
           voicePicker={
             <VoicePicker
-              engines={engines}
-              loras={loras}
+              engines={ttsEngines}
+              loras={ttsLoras}
               selected={voice}
               modelId={status?.model_id ?? null}
               onSelect={setVoice}
@@ -304,8 +310,8 @@ export default function App() {
           }
           voiceDetails={
             <VoiceDetails
-              engines={engines}
-              loras={loras}
+              engines={ttsEngines}
+              loras={ttsLoras}
               selected={voice}
               modelId={status?.model_id ?? null}
               onSelect={setVoice}
@@ -325,6 +331,15 @@ export default function App() {
           />
         </SynthesisPanel>
       </main>
+      <ConvertView
+        hidden={tab !== 'convert'}
+        engine={converter}
+        loras={loras}
+        status={status}
+        onVoicesChanged={refreshLoras}
+        onError={showError}
+        onOpenModels={() => switchTab('models')}
+      />
       {tab === 'prepare' && <PrepareView onError={showError} onTrain={trainOn} />}
       {tab === 'models' && <ModelsView onError={showError} onChanged={refreshStatus} />}
       {tab === 'train' && (
