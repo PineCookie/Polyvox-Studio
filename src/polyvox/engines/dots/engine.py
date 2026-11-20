@@ -38,10 +38,10 @@ RuntimeLoader = Callable[[str, bool], object]
 
 def load_runtime(model: str, optimize: bool):
     """dots.tts's runtime; ``optimize``: torch.compile + CUDA graphs per decode
-    step (~4x faster here: 0.19 vs 0.8 s per second of audio). Its warm-up (the
-    compilation, minutes with a cold Inductor cache) is left to the caller, which
-    must snapshot the model before it (dots_lora.Merger). Built without random initial weights
-    (every one comes from the checkpoint, loaded strictly): 12 s less."""
+    step (~4x faster). Its warm-up (the compilation, minutes with a cold Inductor
+    cache) is left to the caller, which must snapshot the model before it
+    (dots_lora.Merger). Built without random initial weights (every one comes from the
+    checkpoint, loaded strictly), which was most of the model's build time."""
     from ...vendor.dots_tts.runtime import DotsTtsRuntime
     from ..common.loading import no_random_init
 
@@ -217,9 +217,9 @@ class DotsEngine(Engine):
             # fused copies in place, so the recorded CUDA graphs stay valid.
             self._merger = dots_lora.Merger(runtime.model, keep_fusion=True)
             self._lora = None
-            # No warm-up: its 17 graphs (every length bucket, with and without a prompt) took ~47 s
-            # with a warm compile cache; each request compiles the few it needs the first time
-            # (a short first one ~13 s, a new length later a few seconds once).
+            # No warm-up: compiling all its 17 graphs (every length bucket, with and without a prompt)
+            # up front took long even with a warm compile cache; each request compiles the few it
+            # needs the first time (a new length later costs a little once).
             self._compiling = self.optimize
             self._runtime = runtime
         return self._runtime

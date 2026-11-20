@@ -27,7 +27,7 @@ another run on the same clips (other LoRA settings, a resume) starts training at
 once. Training and validation losses then need only the cached states, so with
 config "offload" the slow transformer (~7.7 GB) loads into CPU memory and visits
 the GPU only for its pass over the clips and to speak the validation samples
-(~1 s each way): what lets a 12 GB card train. The fast layers' training forward
+(a moment each way): what lets a 12 GB card train. The fast layers' training forward
 is compiled (Trainer ``fused``; config "compile").
 """
 

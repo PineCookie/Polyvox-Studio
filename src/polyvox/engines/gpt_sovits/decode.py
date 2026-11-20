@@ -3,8 +3,8 @@
 so one decoding step always has the same shapes and runs as a CUDA graph.
 
 Upstream runs each step from Python (24 layers of small kernels, each growing
-its cache with torch.cat) and syncs with the GPU on every token: at ~4 ms per
-token that is mostly launch overhead, and the GPT is most of synthesis time.
+its cache with torch.cat) and syncs with the GPU on every token: that is mostly
+launch overhead, and the GPT is most of synthesis time.
 Here the prompt goes through upstream's own process_prompt, then every step
 (embedding, layers, logits and sampling) replays one captured graph; the host
 only reads back whether to stop. Off CUDA the same step runs eagerly. Each
@@ -34,7 +34,7 @@ def layer_rest(x, q, k_cache, v_cache, bias, out_w, out_b, n1w, n1b, w1, b1, w2,
                heads: int, dim: int, eps1: float, eps2: float):  # fmt: skip
     """One layer after its query / key / value projection and cache write:
     attention as plain matrix products (for a one-token query PyTorch's fused
-    attention kernels, built for long queries, took ~100 us a layer), scores
+    attention kernels, built for long queries, were slow here), scores
     and softmax in float32; then upstream's output projection, norms and MLP."""
     length = k_cache.shape[1]
     qh = q.view(1, 1, heads, -1).transpose(1, 2)

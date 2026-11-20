@@ -47,7 +47,7 @@ class Profile:
     # trains without gradient checkpointing (larger ones checkpoint: engines.gpt_sovits.worker)
     gsv_v4_plain_batch: int = 0
     # S2-Pro training (12 GB or more; synthesis needs 16); s2_offload: keep its slow transformer
-    # in CPU memory while training from cached states (~12 -> ~3.5 GB, ~1 s each way per
+    # in CPU memory while training from cached states (~12 -> ~3.5 GB, a moment each way per
     # validation): only where the whole model and training don't fit (always below 16 GB).
     s2_train_batch: int = 4
     s2_offload: bool = True

@@ -1,7 +1,7 @@
 """Building a model whose weights all come from a checkpoint, without first filling them with
 random numbers: torch's random initializers (torch.nn.init.*, Tensor.uniform_ / normal_) do
-nothing in the thread inside ``no_random_init()``. Random initialization of a 2B-parameter model
-on the CPU takes ~12 s, all of it overwritten by the checkpoint right after.
+nothing in the thread inside ``no_random_init()``. Randomly initializing a 2B-parameter model on
+the CPU takes most of its loading time, all of it overwritten by the checkpoint right after.
 
 Only for models loaded strictly afterwards (every parameter and persistent buffer from the file):
 anything left out would hold whatever memory it got. Other threads keep the real initializers.

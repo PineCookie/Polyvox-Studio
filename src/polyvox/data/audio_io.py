@@ -116,7 +116,7 @@ def _read_av(path: Path | str, start: float, end: float | None) -> tuple[np.ndar
                     for frame in frames:
                         t = float(frame.time) if frame.time is not None else reached
                         if t < at - SEEK_SLACK_S:
-                            return progressed  # landed far behind (seen: at 5 s for 4980 s)
+                            return progressed  # landed far behind (a broken seek index)
                         data = _frame_array(frame)
                         frame_end = t + data.shape[1] / rate
                         if frame_end <= start or frame_end <= reached - 0.5:

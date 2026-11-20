@@ -1,7 +1,7 @@
 """Lead and backing vocals apart (covers: the harmonies kept as sung, or converted on their own).
 
 UVR's MDX-Net Karaoke 2 (``UVR_MDXNET_KARA_2.onnx``, MIT, Ultimate Vocal Remover), run with
-onnxruntime (on the CPU, about 9x real time). Our wrapper around the network: 44.1 kHz stereo,
+onnxruntime (on the CPU, faster than real time). Our wrapper around the network: 44.1 kHz stereo,
 STFT n_fft 5120 / hop 1024 (periodic Hann, centered), the first 2048 bins in as [batch, 4 (left
 re, left im, right re, right im), 2048, 256], chunks of 256 frames with n_fft / 2 dropped at each
 edge, the input peak-normalized. On a vocal stem the network gives the part that isn't the lead

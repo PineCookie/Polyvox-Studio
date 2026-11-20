@@ -306,7 +306,7 @@ def read_sidecar(path: Path) -> dict:
 def _review_entries(path: str, mtime_ns: int, size: int, root: str) -> tuple[tuple[str, str], ...]:
     """(absolute audio, text) per clip (clip_entries); cached until the manifest changes.
 
-    Parsing resolves every clip's path on disk: ~0.4 s for 2k clips, too slow per page.
+    Parsing resolves every clip's path on disk: too slow to repeat for every page.
     """
     entries = clip_entries(Path(path), Path(root) if root else None)
     return tuple((e["audio"], e["text"]) for e in entries)
