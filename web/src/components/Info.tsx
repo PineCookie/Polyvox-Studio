@@ -1,50 +1,96 @@
-import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { useT } from '../i18n'
 import { useDismiss } from '../useDismiss'
 
-const MARGIN = 12 // kept clear of the window's edges
+const MARGIN = 10 // kept clear of the window's edges (scroll bars not counted as window)
+const GAP = 8 // between the ⓘ and the bubble (the arrow sits in it)
+const CLOSE_DELAY_MS = 120 // the pointer may cross the gap onto the bubble
 
-/** A small ⓘ beside a label: its explanation shows on hover, focus or a tap. The bubble is placed
- * on the window (fixed), so a scrolling panel around the label can't cut it off. */
+interface Place {
+  style: CSSProperties // the bubble's
+  maxHeight: number // its text's (scrolls beyond)
+  arrow: number // the arrow's distance from the bubble's left edge, under / over the ⓘ
+  side: 'below' | 'above'
+}
+
+const HIDDEN: Place = { style: { visibility: 'hidden', left: 0, top: 0 }, maxHeight: 10_000, arrow: 0, side: 'below' }
+
+/** Where the bubble goes for an ⓘ at ``anchor``: below it, or above when there is more room there;
+ * always inside the window (shrunk to scroll when the window is too short for it); hidden while the
+ * ⓘ is scrolled out of the window. */
+function placeFor(anchor: DOMRect, width: number, height: number): Place {
+  const vw = document.documentElement.clientWidth
+  const vh = document.documentElement.clientHeight
+  if (anchor.bottom < 0 || anchor.top > vh || anchor.right < 0 || anchor.left > vw) return HIDDEN // scrolled away
+  const centre = anchor.left + anchor.width / 2
+  const left = Math.min(Math.max(MARGIN, centre - Math.min(24, width / 2)), Math.max(MARGIN, vw - width - MARGIN))
+  const roomBelow = vh - anchor.bottom - GAP - MARGIN
+  const roomAbove = anchor.top - GAP - MARGIN
+  const side = height <= roomBelow || roomBelow >= roomAbove ? 'below' : 'above'
+  const room = Math.max(40, side === 'below' ? roomBelow : roomAbove)
+  const shown = Math.min(height, room)
+  const top = side === 'below' ? anchor.bottom + GAP : anchor.top - GAP - shown
+  const arrow = Math.min(Math.max(10, centre - left), width - 10)
+  return { style: { left, top }, maxHeight: room, arrow, side }
+}
+
+/** A small ⓘ beside a label: its explanation shows on hover, focus or a tap. The bubble is drawn
+ * over the whole page (so no panel around the label can cut it off or cover it), points at its ⓘ,
+ * stays inside the window and follows the ⓘ while open. */
 export function Info({ text }: { text: string }) {
   const t = useT()
   const id = useId()
   const wrap = useRef<HTMLSpanElement>(null)
   const bubble = useRef<HTMLSpanElement>(null)
+  const inner = useRef<HTMLSpanElement>(null)
   const [hover, setHover] = useState(false)
   const [pinned, setPinned] = useState(false) // opened by a click / tap: stays until dismissed
-  const [place, setPlace] = useState<CSSProperties>({ visibility: 'hidden' })
+  const [place, setPlace] = useState<Place>(HIDDEN)
+  const closing = useRef<number | undefined>(undefined)
   const open = hover || pinned
   const close = useCallback(() => setPinned(false), [])
-  useDismiss(wrap, pinned, close)
+  const parts = useMemo(() => [wrap, bubble], [])
+  useDismiss(parts, pinned, close)
+
+  const enter = () => {
+    window.clearTimeout(closing.current)
+    setHover(true)
+  }
+  const leave = () => {
+    window.clearTimeout(closing.current)
+    closing.current = window.setTimeout(() => setHover(false), CLOSE_DELAY_MS)
+  }
+  useEffect(() => () => window.clearTimeout(closing.current), [])
 
   useLayoutEffect(() => {
     if (!open) return
+    let frame = 0
+    let last = ''
+    // Every frame while open: the ⓘ can move (scrolling, text above it changing, the window).
     function position() {
       const anchor = wrap.current?.getBoundingClientRect()
       const own = bubble.current
-      if (!anchor || !own) return
-      const width = own.offsetWidth
-      const height = own.offsetHeight
-      const left = Math.min(Math.max(MARGIN, anchor.left - 6), window.innerWidth - width - MARGIN)
-      // Below the ⓘ, or above it when there is no room below.
-      const below = anchor.bottom + 6
-      const top = below + height > window.innerHeight - MARGIN ? anchor.top - 6 - height : below
-      setPlace({ left, top })
+      if (anchor && own && inner.current) {
+        const next = placeFor(anchor, own.offsetWidth, inner.current.scrollHeight)
+        const key = JSON.stringify(next)
+        if (key !== last) {
+          last = key
+          setPlace(next)
+        }
+      }
+      frame = requestAnimationFrame(position)
     }
     position()
-    window.addEventListener('scroll', position, true)
-    window.addEventListener('resize', position)
     return () => {
-      window.removeEventListener('scroll', position, true)
-      window.removeEventListener('resize', position)
-      setPlace({ visibility: 'hidden' })
+      cancelAnimationFrame(frame)
+      setPlace(HIDDEN)
     }
-  }, [open])
+  }, [open, text])
 
   return (
-    <span className="info" ref={wrap} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+    <span className="info" ref={wrap} onMouseEnter={enter} onMouseLeave={leave}>
       <button
         type="button"
         className="info-button"
@@ -55,16 +101,28 @@ export function Info({ text }: { text: string }) {
           e.preventDefault() // inside a <label>: don't move focus to its control
           setPinned((p) => !p)
         }}
-        onFocus={() => setHover(true)}
-        onBlur={() => setHover(false)}
+        onFocus={enter}
+        onBlur={leave}
       >
         i
       </button>
-      {open && (
-        <span ref={bubble} id={id} role="tooltip" className="info-bubble" style={place}>
-          {text}
-        </span>
-      )}
+      {open &&
+        createPortal(
+          <span
+            ref={bubble}
+            id={id}
+            role="tooltip"
+            className={`info-bubble ${place.side}`}
+            style={{ ...place.style, '--arrow': `${place.arrow}px` } as CSSProperties}
+            onMouseEnter={enter}
+            onMouseLeave={leave}
+          >
+            <span ref={inner} className="info-text" style={{ maxHeight: place.maxHeight }}>
+              {text}
+            </span>
+          </span>,
+          document.body,
+        )}
     </span>
   )
 }

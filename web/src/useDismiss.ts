@@ -1,12 +1,16 @@
 import { useEffect } from 'react'
 import type { RefObject } from 'react'
 
-/** Calls `onClose` on Escape or a press outside `ref`, while `open` (pop-ups, ⓘ explanations). */
-export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, onClose: () => void) {
+type Refs = RefObject<HTMLElement | null> | RefObject<HTMLElement | null>[]
+
+/** Calls `onClose` on Escape or a press outside `refs` (one element or several, e.g. an ⓘ and
+ * its bubble drawn elsewhere), while `open` (pop-ups, ⓘ explanations). */
+export function useDismiss(refs: Refs, open: boolean, onClose: () => void) {
   useEffect(() => {
     if (!open) return
+    const inside = (target: Node) => (Array.isArray(refs) ? refs : [refs]).some((r) => r.current?.contains(target))
     const press = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+      if (!inside(e.target as Node)) onClose()
     }
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -17,5 +21,5 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, on
       document.removeEventListener('pointerdown', press)
       document.removeEventListener('keydown', key)
     }
-  }, [ref, open, onClose])
+  }, [refs, open, onClose])
 }

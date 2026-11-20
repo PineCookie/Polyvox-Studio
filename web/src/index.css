@@ -2557,13 +2557,14 @@ button .icon,
 }
 
 .info-bubble {
+  --bubble: light-dark(#26263a, #ececf4);
   position: fixed;
-  z-index: 40;
+  z-index: 1000;
+  display: block;
   width: max-content;
-  max-width: min(280px, 80vw);
-  padding: 8px 10px;
+  max-width: min(280px, calc(100vw - 20px));
   border-radius: var(--radius-sm);
-  background: light-dark(#26263a, #ececf4);
+  background: var(--bubble);
   color: light-dark(#f4f4f8, #1c1c24);
   font-size: 0.8rem;
   font-weight: 400;
@@ -2572,6 +2573,31 @@ button .icon,
   letter-spacing: normal;
   white-space: normal;
   box-shadow: 0 6px 20px rgb(15 15 30 / 0.2);
+}
+
+.info-text {
+  display: block;
+  padding: 8px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The arrow, under / over its ⓘ (--arrow: from the bubble's left edge). */
+.info-bubble::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--arrow) - 6px);
+  border: 6px solid transparent;
+}
+
+.info-bubble.below::before {
+  bottom: 100%;
+  border-bottom-color: var(--bubble);
+}
+
+.info-bubble.above::before {
+  top: 100%;
+  border-top-color: var(--bubble);
 }
 
 /* Audio player: play / pause, waveform, time. */
