@@ -108,6 +108,9 @@ class Capabilities:
     # Converts recorded speech or singing into a voice (Engine.convert), no text: the Convert tab,
     # not Synthesize.
     conversion: bool = False
+    # A long text is spoken as separate takes, each from the reference again (Engine.takes says
+    # where); a blank line in the text starts one.
+    takes: bool = False
 
     def reference_input(self, slot: str) -> ReferenceInput | None:
         return next((i for i in self.reference_inputs if i.slot == slot), None)
@@ -209,6 +212,11 @@ class Engine(ABC):
     def convert(self, req: ConvertRequest) -> SynthesisResult:
         """``req.audio`` in the voice ``req.lora_id`` (capabilities.conversion)."""
         raise ValueError(f"{self.name} can't convert recordings.")
+
+    def takes(self, text: str, cloning: bool) -> list[int]:
+        """Where each take of ``text`` ends (offsets into it, the last one its end), spoken with a
+        reference or a voice (``cloning``) or without (capabilities.takes)."""
+        return []
 
     @abstractmethod
     def progress(self) -> dict:

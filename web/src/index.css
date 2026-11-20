@@ -419,6 +419,36 @@ input[type='file']::file-selector-button {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+/* Where a take ends and the next starts: a pin between the characters (a bar with a head, unlike
+   the text cursor), taking no room. */
+.tagged-backdrop .take-cut {
+  position: relative;
+}
+
+.tagged-backdrop .take-cut::before,
+.tagged-backdrop .take-cut::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+}
+
+.tagged-backdrop .take-cut::before {
+  left: -1.5px;
+  top: 0.1em;
+  width: 3px;
+  height: 1.2em;
+  border-radius: 0 0 2px 2px;
+}
+
+.tagged-backdrop .take-cut::after {
+  left: -4.5px;
+  top: -0.25em;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
 .tagged-backdrop mark.unknown {
   background: color-mix(in srgb, var(--danger) 18%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent);

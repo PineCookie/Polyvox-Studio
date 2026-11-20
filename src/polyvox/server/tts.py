@@ -20,7 +20,7 @@ from ..prep.aligner import AlignService
 from ..prep.asr import load_audio
 from .context import Studio, checked, found, same_gpu, save_upload
 from .phase_times import ONE_OFF, PhaseTimes
-from .schemas import ReferenceClipsIn
+from .schemas import ReferenceClipsIn, TakesIn
 
 
 def temporary_wav() -> Path:
@@ -222,6 +222,15 @@ def router(s: Studio) -> APIRouter:
         if result.span:
             headers |= {"X-Edit-Start": f"{result.span[0]:.3f}", "X-Edit-End": f"{result.span[1]:.3f}"}
         return Response(buf.getvalue(), media_type="audio/wav", headers=headers)
+
+    @api.post("/api/tts/takes")
+    def takes(body: TakesIn) -> dict:
+        """Where each take of the text would end (offsets into it; engines whose capabilities say
+        ``takes``, others: none), for the editor to show."""
+        engine = s.registry.get(body.engine)
+        if engine is None:
+            raise HTTPException(404, f"Unknown engine '{body.engine}'.")
+        return {"ends": engine.takes(body.text, body.cloning)}
 
     @api.get("/api/tts/progress")
     def tts_progress() -> dict:

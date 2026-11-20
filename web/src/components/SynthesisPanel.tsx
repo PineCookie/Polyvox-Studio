@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import { getTtsProgress } from '../api'
 import type { Engine, EngineOptions, EngineParam, ReferenceInput, SynthesisParams, TtsProgress } from '../api'
@@ -8,7 +9,8 @@ import { useT } from '../i18n'
 import { emptyInput, inputAudio, lacksTranscript } from '../referenceInputs'
 import type { InputState } from '../referenceInputs'
 import { scoped, unknownTags } from '../tags'
-import { CloseIcon, SparkIcon, TagIcon } from './icons'
+import { useTakes } from '../useTakes'
+import { CloseIcon, SparkIcon, SplitIcon, TagIcon } from './icons'
 import { Info } from './Info'
 import { ReferenceInputField } from './ReferenceInputField'
 import { ProgressBar } from './RunList'
@@ -223,6 +225,26 @@ export function SynthesisPanel({
   }
 
   const unknown = unknownTags(text, engine)
+  // Long texts in separate takes (engines that do): where, with a voice to keep or without.
+  const cloning = !isBase || Object.keys(references).length > 0
+  const takes = useTakes(caps?.takes && engine ? engine.id : null, text, cloning)
+
+  /** A blank line at the cursor: the text after it (or typed next, at the end) starts a new take. */
+  function newTake() {
+    const el = textArea.current
+    const at = el?.selectionStart ?? text.length
+    const before = text.slice(0, at).replace(/\s+$/, '')
+    const after = text.slice(el?.selectionEnd ?? at).replace(/^\s+/, '')
+    const gap = before ? '\n\n' : ''
+    replaceText(before + gap + after, before.length + gap.length)
+  }
+
+  /** New text with the cursor at `cursor`, the box focused at once (so typing goes on there). */
+  function replaceText(next: string, cursor: number) {
+    flushSync(() => setText(next))
+    textArea.current?.focus()
+    textArea.current?.setSelectionRange(cursor, cursor)
+  }
 
   function onKeyDown(e: KeyboardEvent) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -248,11 +270,7 @@ export function SynthesisPanel({
       next = text.slice(0, start) + tag + text.slice(end)
       cursor = start + tag.length
     }
-    setText(next)
-    requestAnimationFrame(() => {
-      el?.focus()
-      el?.setSelectionRange(cursor, cursor)
-    })
+    replaceText(next, cursor)
   }
 
   // Why Generate can't run (shown beside it).
@@ -284,6 +302,7 @@ export function SynthesisPanel({
             onChange={setText}
             placeholder={(engine && t.textPlaceholders[engine.id]) ?? t.textPlaceholder}
             unknown={unknown}
+            cuts={takes.cuts}
             rows={7}
             autoFocus
           />
@@ -303,7 +322,20 @@ export function SynthesisPanel({
                 <TagIcon /> {t.tags}
               </button>
             )}
-            <span className="char-count">{t.characters(text.length)}</span>
+            {caps?.takes && (
+              <button type="button" className="ghost small tag-button" onClick={newTake} title={t.newTakeTitle}>
+                <SplitIcon /> {t.newTake}
+              </button>
+            )}
+            <span className="char-count">
+              {t.characters(text.length)}
+              {takes.count > 1 && (
+                <>
+                  {' · '}
+                  {t.takes(takes.count)} <Info text={t.takesInfo} />
+                </>
+              )}
+            </span>
             <span className="spacer" />
             {blocker ? (
               <span className="field-error composer-blocker">{blocker}</span>

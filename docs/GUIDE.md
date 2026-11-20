@@ -75,7 +75,12 @@ PCIe as needed). The conversion needs no calibration data: the experts are
 stored as HIGGS (each block of 128 inputs rotated by a Hadamard matrix, then
 rounded to 16 levels fitted to a Gaussian), which on real speech came closer to
 the official weights than plain 4-bit rounding or GPTQ. A long text is spoken in parts of whole sentences (a line
-break ends one too), each part with the same reference, style and hints. A take
+break ends one too), about 50 Chinese characters or 25 English words each: within
+one take the voice slowly drifts from the reference, and each part starts from
+the reference again. The editor marks where each part ends and counts
+them; a blank line (the **New take** button puts one at the cursor) always starts
+a new part, so you can choose the cuts yourself. Without a reference or a saved
+voice there is no voice to keep, and only texts too long for one take are cut. Each part gets the same reference, style and hints. A take
 that runs far longer than its text is drawn again once.
 
 Editing (History's **Edit words**) follows the "speech editing by infilling"

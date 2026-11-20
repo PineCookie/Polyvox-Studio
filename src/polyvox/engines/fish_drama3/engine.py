@@ -19,6 +19,7 @@ import random
 import re
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,9 +49,13 @@ LEARN_MIN_CHARS = 10
 MAX_FRAMES = 1024  # per part of the text (~48 s)
 CAP_FACTOR = 3.0  # a take longer than this x the expected frames has run away
 CAP_MIN = 96  # frames (~4.5 s): short texts vary most
-PART_BYTES = 300  # longer texts are spoken in parts of about this many UTF-8 bytes (~100 Chinese characters)
+# A long text is spoken in parts, each a take of its own from the references: within a take the
+# voice drifts from them as the take grows (most on voices the model clones less well).
+PART_BYTES = 300  # a part's most UTF-8 bytes (~100 Chinese characters); longer sentences are cut
+TARGET_BYTES = 150  # what parts aim for (~50 Chinese characters, ~10 s), in whole sentences
 SENTENCE_ENDS = frozenset(".!?;。！？；…\n")
 CLAUSE_MARKS = frozenset(",:，：、")
+BLANK_LINE = re.compile(r"\n(?: ?\n)+")
 # Never cut inside: special tokens, a tag pair and what it holds, [bracketed] tags.
 PROTECTED = re.compile(r"<\|[^|>]*\|>|<([A-Za-z][\w-]*)\b[^>]*>.*?</\1>|\[[^\[\]]*\]", re.S)
 KEPT_CLIPS = 4  # reference clips whose codes are kept
@@ -106,15 +111,60 @@ def _cut(units: list[tuple[str, bool]], marks: frozenset[str], longer_than: int)
     return out
 
 
-def spoken_parts(text: str, limit: int = PART_BYTES) -> list[str]:
-    """The parts a text is spoken in, one take each, as Fish's own server cuts them: up to about
-    ``limit`` UTF-8 bytes, cut at sentence ends (a line break too), a longer sentence at clause
-    marks, then spaces, then anywhere. Tags, tagged spans ("<whisper>...</whisper>", kept whole
-    even when longer) and decimals are never cut."""
+def spoken_parts(text: str, limit: int = PART_BYTES, target: int = TARGET_BYTES) -> list[str]:
+    """The parts a text is spoken in, one take each. A blank line always starts a new part (the
+    writer's own cut); between blank lines: whole sentences (a line break ends one too), in parts
+    of about ``target`` UTF-8 bytes and of even length (no short last part). Only a sentence over
+    ``limit`` bytes is cut: at clause marks, then spaces, then anywhere. Tags, tagged spans
+    ("<whisper>...</whisper>", kept whole even when longer) and decimals are never cut."""
     text = re.sub(r"[^\S\n]+", " ", text.replace("\r\n", "\n")).strip()
+    protected = [match.span() for match in PROTECTED.finditer(text)]
+    blocks, last = [], 0
+    for match in BLANK_LINE.finditer(text):
+        if not any(start < match.end() and match.start() < end for start, end in protected):
+            blocks.append(text[last : match.start()])
+            last = match.end()
+    blocks.append(text[last:])
+    return [part for block in blocks for part in _block_parts(block.strip(), limit, target)]
+
+
+def speakable(text: str) -> str:
+    """``text`` without the symbols the model can't read (ⓘ, ★, emoji, private-use characters): a
+    styled or enclosed letter or digit (ⓘ, ①, 𝐀) becomes that letter, any other is left out. With
+    such a symbol in its text, a take could speak the reference's transcript instead."""
+    out = []
+    for char in text:
+        kind = unicodedata.category(char)
+        if kind in ("So", "Co", "Cn", "No"):
+            plain = unicodedata.normalize("NFKC", char)
+            if plain != char and plain.isalnum():
+                out.append(plain)
+            elif kind == "No":  # (other numbers such as ½ stay as they are)
+                out.append(char)
+            continue
+        out.append(char)
+    return re.sub(r"[^\S\n]{2,}", " ", "".join(out)).strip()
+
+
+def part_ends(text: str, parts: list[str]) -> list[int]:
+    """Where each of ``spoken_parts(text)`` ends in ``text`` itself (the parts hold its characters
+    in order, with other white space between them)."""
+    ends, at = [], 0
+    for part in parts:
+        left = sum(not char.isspace() for char in part)
+        while left and at < len(text):
+            left -= not text[at].isspace()
+            at += 1
+        ends.append(at)
+    return ends
+
+
+def _block_parts(text: str, limit: int, target: int) -> list[str]:
     if not text:
         return []
-    if utf8_bytes(text) <= limit:
+    target = min(target, limit)
+    count = max(1, round(utf8_bytes(text) / target))
+    if count == 1 and utf8_bytes(text) <= limit:
         return [text]
     units = _cut(_units(text), SENTENCE_ENDS, 0)
     for marks in (CLAUSE_MARKS, frozenset(" ")):
@@ -126,12 +176,16 @@ def spoken_parts(text: str, limit: int = PART_BYTES) -> list[str]:
             pieces.append(piece[:cut])
             piece = piece[cut:]
         pieces.append(piece)
-    parts, current = [], ""
+    # Parts end at the piece ends nearest to even shares of the whole text.
+    share = sum(utf8_bytes(piece) for piece in pieces) / count
+    parts, current, done = [], "", 0
     for piece in pieces:
-        if current and utf8_bytes(current + piece) > limit:
+        more, end = utf8_bytes(piece), share * (len(parts) + 1)
+        if current and (utf8_bytes(current) + more > limit or done + more - end > end - done):
             parts.append(current)
             current = ""
         current += piece
+        done += more
     parts.append(current)
     return [p.strip() for p in parts if p.strip()]
 
@@ -256,6 +310,7 @@ class FishDrama3Engine(Engine):
         # A clip with its transcript (several are joined into one).
         reference_inputs=(ReferenceInput("reference", "prompt", "required"),),
         speech_edit=True,  # edit.py: changed words spoken again by infilling
+        takes=True,
     )
     params = (
         Param("temperature", "float", 1.0, 0.1, 1.5, 0.05),
@@ -302,14 +357,24 @@ class FishDrama3Engine(Engine):
         p = self._progress
         return {**p.__dict__, "elapsed": round(time.time() - p.started, 1) if p.started else 0.0}
 
+    @staticmethod
+    def _parts(text: str, cloning: bool) -> list[str]:
+        # Without a reference there is no voice to stay close to, and every take picks its own:
+        # then only what is too long for one take is cut.
+        return spoken_parts(text, target=TARGET_BYTES if cloning else PART_BYTES)
+
+    def takes(self, text: str, cloning: bool) -> list[int]:
+        return part_ends(text, self._parts(text, cloning))
+
     def synthesize(self, req: SynthesisRequest) -> SynthesisResult:
         import torch
 
         from . import model, prompt
 
-        parts = spoken_parts(req.text)
+        cloning = bool(req.prompt_wav or req.reference_wav or req.lora_id)
+        parts = [spoken for part in self._parts(req.text, cloning) if (spoken := speakable(part))]
         if not parts:
-            raise ValueError("Text to synthesize is empty.")
+            raise ValueError("Text to synthesize is empty (or only symbols that aren't spoken).")
         for part in parts:
             prompt.check(part)
         style = re.sub(r"\s+", " ", req.style or "").strip().strip("[]")

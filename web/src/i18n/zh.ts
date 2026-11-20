@@ -70,6 +70,11 @@ export const zh: Messages = {
   showTags: '显示标签',
   hideTags: '隐藏标签',
   characters: (n) => `${n.toLocaleString()} 字`,
+  takes: (n) => `分 ${n} 段`,
+  takesInfo:
+    '长文本会分成几段分别合成，每一段都重新从参考音频开始：一段太长的话，声音会慢慢偏离参考音频。文字里的标记显示每段在哪里结束。想自己决定在哪里分段，就在那里空一行。',
+  newTake: '另起一段',
+  newTakeTitle: '在光标处另起一段（空一行）',
   settingsTitle: '设置',
   tagGroup: '插入行内标签',
   tags: '标签',

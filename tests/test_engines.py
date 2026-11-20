@@ -224,3 +224,13 @@ def test_default_engine_and_params():
     with pytest.raises(ValueError):
         p.coerce(9)
     assert Param("b", "bool", True).coerce("false") is False
+
+
+def test_the_editor_can_ask_where_a_texts_takes_end(client, other):
+    other.takes = lambda text, cloning: [3, len(text)] if cloning else [len(text)]
+
+    assert client.post("/api/tts/takes", json={"engine": "other", "text": "one two"}).json() == {"ends": [3, 7]}
+    body = {"engine": "other", "text": "one two", "cloning": False}
+    assert client.post("/api/tts/takes", json=body).json() == {"ends": [7]}
+    assert client.post("/api/tts/takes", json={"engine": "voxcpm", "text": "one"}).json() == {"ends": []}
+    assert client.post("/api/tts/takes", json={"engine": "nope", "text": "one"}).status_code == 404

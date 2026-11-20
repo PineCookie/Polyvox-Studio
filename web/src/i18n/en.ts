@@ -75,6 +75,11 @@ export const en = {
   showTags: 'Show the tags',
   hideTags: 'Hide the tags',
   characters: (n: number) => `${n.toLocaleString()} ${n === 1 ? 'character' : 'characters'}`,
+  takes: (n: number) => `${n} takes`,
+  takesInfo:
+    'A long text is spoken as separate takes, each starting from the reference again: within one long take the voice slowly drifts away from it. The marks in the text show where a take ends. To choose a place yourself, leave a blank line there.',
+  newTake: 'New take',
+  newTakeTitle: 'Start a new take at the cursor (a blank line)',
   settingsTitle: 'Settings',
   tagGroup: 'Insert an inline tag',
   tags: 'Tags',

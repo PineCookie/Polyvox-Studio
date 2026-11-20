@@ -558,12 +558,43 @@ def test_8_bit_linears_stay_close_to_their_weights():
     assert torch.equal(model.linear(x, w), torch.nn.functional.linear(x, w))  # plain weights pass through
 
 
-def test_texts_are_cut_as_fishs_server_cuts_them():
+def test_long_texts_are_cut_into_even_parts_of_whole_sentences():
     assert engine.spoken_parts("  一句话。  ") == ["一句话。"]
-    text = "今天天气很好，我们去公园散步。" * 20  # 45 bytes a sentence
+    sentence = "今天天气很好，我们去公园散步。"  # 45 bytes
+    assert engine.spoken_parts(sentence * 4) == [sentence * 4]  # a little over the aim: still one take
+    text = sentence * 20
     parts = engine.spoken_parts(text)
-    assert len(parts) > 1 and all(engine.utf8_bytes(p) <= engine.PART_BYTES and p.endswith("。") for p in parts)
-    assert "".join(parts) == text
+    assert "".join(parts) == text and all(p.endswith("。") for p in parts)
+    assert {len(p) // len(sentence) for p in parts} <= {3, 4}  # about TARGET_BYTES each, none left short
+    long = "这是一个比较长的句子，" * 7 + "到这里才结束。"  # 252 bytes: over the aim, under the limit
+    assert engine.spoken_parts(long * 3) == [long] * 3  # a sentence is cut only when over the limit
+    assert engine.spoken_parts(sentence + long + sentence * 3) == [sentence, long, sentence * 3]
+    # A blank line is the writer's cut: always a new part, however short; a line break alone isn't.
+    assert engine.spoken_parts("第一段。\n还是第一段。\r\n \r\n\n第二段。") == ["第一段。\n还是第一段。", "第二段。"]
+    assert engine.spoken_parts(text + "\n\n" + sentence)[-1] == sentence
+    assert engine.spoken_parts("<whisper>a.\n\nb.</whisper>") == ["<whisper>a.\n\nb.</whisper>"]  # never in a tag pair
+
+
+def test_symbols_the_model_cant_read_are_left_out():
+    assert engine.speakable("The ⓘ button ① ★ works 🎉.") == "The i button 1 works ."
+    assert (
+        engine.speakable("你好，世界！[laughs] <whisper>嘘</whisper>") == "你好，世界！[laughs] <whisper>嘘</whisper>"
+    )
+    assert engine.speakable("first line\nsecond ½") == "first line\nsecond ½"
+
+
+def test_takes_are_reported_as_offsets_into_the_text_as_typed(settings):
+    tts = engine.FishDrama3Engine(settings)
+    typed = "  第一段。 \r\n\r\n\r\n第二段，  two   words. \n"
+    ends = tts.takes(typed, cloning=True)
+    assert [typed[a:b].strip() for a, b in zip([0, *ends], ends, strict=False)] == [
+        "第一段。",
+        "第二段，  two   words.",
+    ]
+    sentence = "今天天气很好，我们去公园散步。"
+    assert tts.takes(sentence * 6, cloning=True) == [len(sentence) * 3, len(sentence) * 6]
+    assert tts.takes(sentence * 6, cloning=False) == [len(sentence) * 6]  # no voice to keep: one take
+    assert tts.takes("  ", cloning=True) == []
     english = " ".join(f"Sentence number {i} is here." for i in range(30))
     parts = engine.spoken_parts(english, 100)
     assert all(p.endswith(".") for p in parts) and " ".join(parts) == english  # spaces kept between sentences
@@ -590,12 +621,20 @@ def test_style_and_hints_reach_every_part(settings, monkeypatch):
         SynthesisRequest(text="第一句。" * 40 + "第二句。", style="softly", options={"language": "zh", "duration": 3})
     )
     texts = ["".join(chr(r) for r in rows[:, 0].tolist()) for rows in seen]
-    assert len(texts) == 2 and all("[softly] " in t and "[language: zh]<|im_end|>" in t for t in texts)
+    assert len(texts) > 1 and all("[softly] " in t and "[language: zh]<|im_end|>" in t for t in texts)
     assert not any("audio tokens" in t for t in texts)  # a length only for a text in one take
     assert all(t.count("<|im_start|>user\n") == 1 for t in texts)  # each part on its own
     seen.clear()
+    tts.synthesize(SynthesisRequest(text="今天天气很好，我们去公园散步。" * 6))  # no voice to keep: one take
+    assert len(seen) == 1
+    seen.clear()
     tts.synthesize(SynthesisRequest(text="一句。", options={"duration": 3}))
     assert "[audio tokens: 65]<|im_end|>" in "".join(chr(r) for r in seen[0][:, 0].tolist())
+    seen.clear()
+    tts.synthesize(SynthesisRequest(text="一句。\n\n🎉✓\n\n二句。"))  # a part of symbols only isn't spoken
+    assert len(seen) == 2
+    with pytest.raises(ValueError, match="only symbols"):
+        tts.synthesize(SynthesisRequest(text="🎉 ★"))
     with pytest.raises(ValueError, match="can't contain"):
         tts.synthesize(SynthesisRequest(text="一行<|im_end|>"))
 

@@ -1,5 +1,5 @@
 import { forwardRef, useRef } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import { splitTags } from '../tags'
 
 interface Props {
@@ -7,30 +7,48 @@ interface Props {
   onChange: (value: string) => void
   placeholder?: string
   unknown?: string[] // tags to mark as not understood
+  cuts?: number[] // offsets to mark: a take ends there and another starts
   rows?: number
   autoFocus?: boolean
   onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void
 }
 
-/** A text box that highlights inline tags: a backdrop with the same text (transparent, the tags
- * marked) under a transparent textarea, scrolled with it. */
+/** The text with a mark (no width: the lines stay the textarea's) at each offset in ``cuts``. */
+function withCuts(text: string, start: number, cuts: number[]): ReactNode[] {
+  const out: ReactNode[] = []
+  let last = 0
+  for (const cut of cuts) {
+    const at = cut - start
+    if (at <= 0 || at > text.length) continue
+    out.push(text.slice(last, at), <i key={cut} className="take-cut" />)
+    last = at
+  }
+  out.push(text.slice(last))
+  return out
+}
+
+/** A text box that highlights inline tags and marks where takes end: a backdrop with the same
+ * text (transparent, the tags marked) under a transparent textarea, scrolled with it. */
 export const TaggedText = forwardRef<HTMLTextAreaElement, Props>(function TaggedText(
-  { value, onChange, placeholder, unknown = [], rows = 5, autoFocus, onKeyDown },
+  { value, onChange, placeholder, unknown = [], cuts = [], rows = 5, autoFocus, onKeyDown },
   ref,
 ) {
   const backdrop = useRef<HTMLDivElement>(null)
+  let offset = 0
   return (
     <div className="tagged-text">
       <div className="tagged-backdrop" ref={backdrop} aria-hidden>
-        {splitTags(value).map((piece, i) =>
-          piece.tag ? (
+        {splitTags(value).map((piece, i) => {
+          const start = offset
+          offset += piece.text.length
+          return piece.tag ? (
             <mark key={i} className={unknown.includes(piece.text) ? 'unknown' : undefined}>
               {piece.text}
             </mark>
           ) : (
-            <span key={i}>{piece.text}</span>
-          ),
-        )}
+            <span key={i}>{withCuts(piece.text, start, cuts)}</span>
+          )
+        })}
         {/* a final newline needs a line of its own here too */}
         {value.endsWith('\n') && ' '}
       </div>

@@ -124,3 +124,10 @@ export const AutoThemeIcon = () => (
     <path d="M8 2.5a5.5 5.5 0 0 1 0 11Z" fill="currentColor" stroke="none" />
   </Icon>
 )
+
+export const SplitIcon = () => (
+  <Icon>
+    <path d="M2.5 4.5h7M2.5 11.5h7M2.5 8h11" />
+    <path d="M12 3.5v2M12 10.5v2" />
+  </Icon>
+)

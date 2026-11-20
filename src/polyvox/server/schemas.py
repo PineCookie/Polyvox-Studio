@@ -36,6 +36,12 @@ class LoraOut(BaseModel):
     version: str | None = None  # the model version, when the checkpoint records one (e.g. v2ProPlus)
 
 
+class TakesIn(BaseModel):
+    engine: str
+    text: str = Field(max_length=100_000)
+    cloning: bool = True  # spoken with a reference or a voice
+
+
 class GptSovitsImportIn(BaseModel):
     """Weights the GPT-SoVITS webui trained, as server-local paths."""
 

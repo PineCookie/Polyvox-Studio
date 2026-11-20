@@ -84,6 +84,7 @@ export interface Engine {
     free_tags: boolean // any [description] works too
     speech_edit: boolean // edits recorded speech: changed words spoken again, the rest kept
     conversion: boolean // converts recordings (speech or singing) into a voice: the Convert tab, not Synthesize
+    takes: boolean // a long text is spoken as separate takes (getTakes says where); a blank line starts one
   }
   params: EngineParam[] // synthesis settings
   model_setting: string // its base model in the Models list
@@ -415,6 +416,11 @@ export interface TtsProgress {
   // (null: not measured here yet).
   phase_elapsed?: number | null
   last_time?: number | null
+}
+
+/** Where each take of the text would end (offsets into it), with a reference or voice or without. */
+export async function getTakes(engine: string, text: string, cloning: boolean): Promise<number[]> {
+  return (await (await postJson('/api/tts/takes', { engine, text, cloning })).json()).ends
 }
 
 export async function getTtsProgress(): Promise<TtsProgress> {
