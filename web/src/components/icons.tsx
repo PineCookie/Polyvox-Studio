@@ -131,3 +131,15 @@ export const SplitIcon = () => (
     <path d="M12 3.5v2M12 10.5v2" />
   </Icon>
 )
+
+export const ChevronRightIcon = () => (
+  <Icon>
+    <path d="m6 3.5 4.5 4.5L6 12.5" />
+  </Icon>
+)
+
+export const CheckIcon = () => (
+  <Icon>
+    <path d="m3.5 8.5 3 3 6-7" />
+  </Icon>
+)

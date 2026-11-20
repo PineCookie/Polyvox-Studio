@@ -2,15 +2,16 @@ import { useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { Engine, Lora } from '../api'
 import type { VoiceChoice } from '../engines'
-import { useFolded } from '../folded'
 import { formatStep } from '../format'
 import { useT } from '../i18n'
 import { groupVoices, incompatible, shortModel, unknownEngine, voiceHue } from '../voices'
 import type { Voice } from '../voices'
-import { Chevron } from './Fold'
 import { GptSovitsImportDialog } from './GptSovitsImportDialog'
-import { ChevronDownIcon, PlusIcon, RefreshIcon, SearchIcon } from './icons'
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, RefreshIcon, SearchIcon } from './icons'
 import { Popover } from './Popover'
+
+const LAST_VOICE_KEY = 'polyvox.lastVoice' // {engine id: the LoRA / voice id last chosen with it}
+const SEARCH_FROM = 7 // voices of a model from which their list gets a filter box
 
 interface Props {
   engines: Engine[]
@@ -35,8 +36,28 @@ export function VoiceAvatar({ name, base = false }: { name: string; base?: boole
   )
 }
 
-/** The voice Synthesize speaks with: a button showing it, opening the searchable list of base
- * models and voices (by model), with the import actions at its foot. */
+function lastVoices(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_VOICE_KEY) ?? '{}') ?? {}
+  } catch {
+    return {}
+  }
+}
+
+function rememberVoice(engine: string, lora: string | null) {
+  try {
+    const last = lastVoices()
+    if (lora) last[engine] = lora
+    else delete last[engine]
+    localStorage.setItem(LAST_VOICE_KEY, JSON.stringify(last))
+  } catch {
+    // Not remembered (storage blocked): choosing the model again starts from its base model.
+  }
+}
+
+/** What Synthesize speaks with, chosen in two steps: the model, then its base model or one of its
+ * voices (trained LoRAs, imported or saved voices). Choosing a model brings back the voice last
+ * used with it. Import actions sit at the foot of the voice list. */
 export function VoicePicker({
   engines,
   loras,
@@ -51,100 +72,47 @@ export function VoicePicker({
 }: Props) {
   const t = useT()
   const voices = useMemo(() => groupVoices(loras, t), [loras, t])
-  const [open, setOpen] = useState(false)
+  const [opened, setOpened] = useState<'model' | 'voice' | null>(null)
   const [filter, setFilter] = useState('')
   const [importing, setImporting] = useState(false)
   const [importingGsv, setImportingGsv] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
-  const [collapsed, toggleGroup] = useFolded('polyvox.voiceGroups') // engine ids whose group is folded
 
-  const engineOf = (id: string) => engines.find((e) => e.id === id) ?? null
-  const engineName = (id: string) => engineOf(id)?.name ?? id
-  const keepsReference = (id: string) => !!engineOf(id)?.capabilities.voice_reference
+  const engine = engines.find((e) => e.id === selected.engine) ?? null
+  const engineName = engine?.name ?? selected.engine
+  const keepsReference = !!engine?.capabilities.voice_reference
+  const usable = (v: Voice) => !incompatible(v, modelId) && !unknownEngine(v, engines)
+  const voicesOf = (id: string) => voices.filter((v) => v.engine === id)
+  const own = voicesOf(selected.engine)
+  const shown = own.filter((v) => v.name.toLowerCase().includes(filter.trim().toLowerCase()))
+  const others = voices.filter((v) => unknownEngine(v, engines)).length // of models this server lacks
   const current = loras.find((l) => l.id === selected.lora) ?? null
   const currentVoice = current ? voices.find((v) => v.key === current.voice_path) : null
-  const shown = voices.filter((v) => v.name.toLowerCase().includes(filter.trim().toLowerCase()))
 
-  // Voices grouped by model, in the server's engine order (VoxCPM first); checkpoints of an
-  // engine this server doesn't know go last.
-  const groups: { id: string; name: string; engine: Engine | null; voices: Voice[] }[] =
-    engines.length === 0
-      ? [{ id: 'all', name: '', engine: null, voices: shown }]
-      : [
-          ...engines.map((e) => ({
-            id: e.id,
-            name: e.name,
-            engine: e,
-            voices: shown.filter((v) => v.engine === e.id),
-          })),
-          { id: '?', name: t.otherModels, engine: null, voices: shown.filter((v) => unknownEngine(v, engines)) },
-        ].filter((g) => (filter ? g.voices.length > 0 : g.engine || g.voices.length > 0))
-
-  function choose(choice: VoiceChoice) {
-    onSelect(choice)
-    setOpen(false)
+  function close() {
+    setOpened(null)
     setFilter('')
   }
 
-  function baseRow(engine: Engine) {
-    const active = selected.lora === null && selected.engine === engine.id
-    return (
-      <button
-        key={`base:${engine.id}`}
-        type="button"
-        role="option"
-        aria-selected={active}
-        className={`voice-row ${active ? 'active' : ''}`}
-        onClick={() => choose({ engine: engine.id, lora: null })}
-        disabled={!!engine.unavailable}
-        title={engine.unavailable ? t.engineUnavailable(engine.name, engine.unavailable) : undefined}
-      >
-        <VoiceAvatar name={engine.name} base />
-        <span className="voice-row-name">{t.baseModel}</span>
-        {engine.unavailable && <span className="muted">{t.unavailableShort}</span>}
-      </button>
-    )
+  function choose(choice: VoiceChoice) {
+    rememberVoice(choice.engine, choice.lora)
+    onSelect(choice)
+    close()
   }
 
-  function voiceRow(voice: Voice) {
-    const active = voice === currentVoice
-    const best = voice.checkpoints[0]
-    const blocked = incompatible(voice, modelId) || unknownEngine(voice, engines)
-    return (
-      <button
-        key={voice.key}
-        type="button"
-        role="option"
-        aria-selected={active}
-        className={`voice-row ${active ? 'active' : ''}`}
-        onClick={() => choose({ engine: best.lora.engine, lora: best.lora.id })}
-        disabled={blocked}
-        title={incompatible(voice, modelId) ? t.trainedOn(voice.baseModelId!, modelId!) : best.lora.id}
-      >
-        <VoiceAvatar name={voice.name} />
-        <span className="voice-row-name">{voice.name}</span>
-        {incompatible(voice, modelId) ? (
-          <span className="tag subtle">{shortModel(voice.baseModelId!)}</span>
-        ) : (
-          <span className="muted">
-            {unknownEngine(voice, engines) && <span className="tag subtle">{voice.engine}</span>}{' '}
-            {[
-              best.lora.version,
-              best.step !== null && t.stepsCount(formatStep(best.step)),
-              keepsReference(best.lora.engine) && best.lora.reference_text === null && t.noReference,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
-        )}
-      </button>
-    )
+  /** A model: the voice last used with it if it is still there, else its base model. */
+  function chooseModel(id: string) {
+    if (id === selected.engine) return close()
+    const last = lastVoices()[id]
+    const voice = voicesOf(id).find((v) => usable(v) && v.checkpoints.some((c) => c.lora.id === last))
+    onSelect({ engine: id, lora: voice ? last : null })
+    close()
   }
 
   async function importFile(file: File | undefined) {
     if (!file) return
     setImporting(true)
-    setOpen(false)
+    close()
     try {
       await onImport(file)
     } finally {
@@ -153,18 +121,123 @@ export function VoicePicker({
     }
   }
 
-  const name = currentVoice?.name ?? t.baseModel
-  const sub = current
-    ? [engineName(current.engine), current.step !== null && t.stepLabel(formatStep(current.step))]
-        .filter(Boolean)
-        .join(' · ')
-    : engineName(selected.engine)
+  function modelRow(e: Engine) {
+    const active = e.id === selected.engine
+    const count = voicesOf(e.id).length
+    return (
+      <button
+        key={e.id}
+        type="button"
+        role="option"
+        aria-selected={active}
+        className={`model-row${active ? ' active' : ''}`}
+        onClick={() => chooseModel(e.id)}
+        disabled={!!e.unavailable}
+      >
+        <span className="model-row-text">
+          <span className="model-row-name">{e.name}</span>
+          <span className="model-row-sub">
+            {e.unavailable ? t.engineUnavailableReason(e.unavailable) : t.voicesCount(count)}
+          </span>
+        </span>
+        {e.loaded && !e.unavailable && <span className="model-row-loaded" title={t.statusLoaded} />}
+        {active && <CheckIcon />}
+      </button>
+    )
+  }
+
+  function baseRow() {
+    const active = selected.lora === null
+    return (
+      <button
+        type="button"
+        role="option"
+        aria-selected={active}
+        className={`voice-row${active ? ' active' : ''}`}
+        onClick={() => choose({ engine: selected.engine, lora: null })}
+      >
+        <VoiceAvatar name={engineName} base />
+        <span className="voice-row-name">{t.baseModel}</span>
+        <span className="muted">{t.baseModelSub}</span>
+        {active && <CheckIcon />}
+      </button>
+    )
+  }
+
+  function voiceRow(voice: Voice) {
+    const active = voice === currentVoice
+    const best = voice.checkpoints[0]
+    return (
+      <button
+        key={voice.key}
+        type="button"
+        role="option"
+        aria-selected={active}
+        className={`voice-row${active ? ' active' : ''}`}
+        onClick={() => choose({ engine: best.lora.engine, lora: best.lora.id })}
+        disabled={!usable(voice)}
+        title={incompatible(voice, modelId) ? t.trainedOn(voice.baseModelId!, modelId!) : best.lora.id}
+      >
+        <VoiceAvatar name={voice.name} />
+        <span className="voice-row-name">{voice.name}</span>
+        {incompatible(voice, modelId) ? (
+          <span className="tag subtle">{shortModel(voice.baseModelId!)}</span>
+        ) : (
+          <span className="muted">
+            {[
+              best.lora.version,
+              best.step !== null && t.stepsCount(formatStep(best.step)),
+              keepsReference && best.lora.reference_text === null && t.noReference,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        )}
+        {active && <CheckIcon />}
+      </button>
+    )
+  }
+
+  const voiceName = currentVoice?.name ?? t.baseModel
+  const voiceSub = current
+    ? current.step !== null
+      ? t.stepLabel(formatStep(current.step))
+      : (current.version ?? t.voiceKind(!!engine?.capabilities.reference_voices))
+    : t.baseModelSub
 
   return (
-    <>
+    <div className="voice-pickers">
       <Popover
-        open={open}
-        onClose={() => setOpen(false)}
+        open={opened === 'model'}
+        onClose={close}
+        align="start"
+        className="voice-popover model-popover"
+        anchor={
+          <button
+            type="button"
+            className="voice-picker model-picker"
+            aria-haspopup="listbox"
+            aria-expanded={opened === 'model'}
+            onClick={() => (opened === 'model' ? close() : setOpened('model'))}
+            title={t.chooseModel}
+          >
+            <span className="voice-picker-text">
+              <span className="voice-picker-label">{t.modelLabel}</span>
+              <span className="voice-picker-name">{engineName}</span>
+            </span>
+            <ChevronDownIcon />
+          </button>
+        }
+      >
+        <div className="voice-list" role="listbox" aria-label={t.modelLabel}>
+          {engines.map(modelRow)}
+          {others > 0 && <p className="muted model-others">{t.otherModelVoices(others)}</p>}
+        </div>
+      </Popover>
+      <ChevronRightIcon />
+      <Popover
+        open={opened === 'voice'}
+        onClose={close}
         align="start"
         className="voice-popover"
         anchor={
@@ -172,56 +245,38 @@ export function VoicePicker({
             type="button"
             className="voice-picker"
             aria-haspopup="listbox"
-            aria-expanded={open}
-            onClick={() => setOpen((o) => !o)}
+            aria-expanded={opened === 'voice'}
+            onClick={() => (opened === 'voice' ? close() : setOpened('voice'))}
             title={t.chooseVoice}
           >
-            <VoiceAvatar name={currentVoice ? name : engineName(selected.engine)} base={!currentVoice} />
+            <VoiceAvatar name={currentVoice ? voiceName : engineName} base={!currentVoice} />
             <span className="voice-picker-text">
-              <span className="voice-picker-name">{name}</span>
-              <span className="voice-picker-sub">{sub}</span>
+              <span className="voice-picker-name">{voiceName}</span>
+              <span className="voice-picker-sub">{voiceSub}</span>
             </span>
             <ChevronDownIcon />
           </button>
         }
       >
-        <label className="voice-search">
-          <SearchIcon />
-          <input
-            type="search"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder={t.filterVoices(voices.length)}
-            aria-label={t.filterVoicesLabel}
-            autoFocus
-          />
-        </label>
+        <div className="voice-popover-head">{t.voicesOf(engineName)}</div>
+        {own.length >= SEARCH_FROM && (
+          <label className="voice-search">
+            <SearchIcon />
+            <input
+              type="search"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder={t.filterVoices(own.length)}
+              aria-label={t.filterVoicesLabel}
+              autoFocus
+            />
+          </label>
+        )}
         <div className="voice-list" role="listbox" aria-label={t.voice}>
-          {groups.map((group) => {
-            // While filtering every group is open and shows only matches (no base rows).
-            const isOpen = !!filter || !collapsed.has(group.id)
-            const baseActive = !!group.engine && selected.lora === null && selected.engine === group.engine.id
-            return (
-              <div key={group.id} className="voice-group">
-                {group.name && (
-                  <button
-                    type="button"
-                    className="voice-group-head"
-                    aria-expanded={isOpen}
-                    onClick={() => !filter && toggleGroup(group.id)}
-                  >
-                    <Chevron open={isOpen} />
-                    <span>{group.name}</span>
-                    <span className="muted">{group.voices.length}</span>
-                  </button>
-                )}
-                {group.engine && !filter && (isOpen || baseActive) && baseRow(group.engine)}
-                {group.voices.filter((v) => isOpen || v === currentVoice).map(voiceRow)}
-              </div>
-            )
-          })}
-          {!loading && voices.length === 0 && <p className="muted empty">{t.noLoras}</p>}
-          {voices.length > 0 && shown.length === 0 && <p className="muted empty">{t.noVoiceMatches(filter)}</p>}
+          {!filter && baseRow()}
+          {shown.map(voiceRow)}
+          {!loading && own.length === 0 && <p className="muted empty">{t.noVoicesYet}</p>}
+          {own.length > 0 && filter && shown.length === 0 && <p className="muted empty">{t.noVoiceMatches(filter)}</p>}
         </div>
         <div className="voice-popover-foot">
           <input
@@ -240,17 +295,19 @@ export function VoicePicker({
           >
             <PlusIcon /> {importing ? t.importing : t.importPackage}
           </button>
-          <button
-            type="button"
-            className="ghost small"
-            onClick={() => {
-              setOpen(false)
-              setImportingGsv(true)
-            }}
-            title={t.gsvImportButtonTitle}
-          >
-            <PlusIcon /> {t.gsvImportButton}
-          </button>
+          {selected.engine === 'gpt_sovits' && (
+            <button
+              type="button"
+              className="ghost small"
+              onClick={() => {
+                close()
+                setImportingGsv(true)
+              }}
+              title={t.gsvImportButtonTitle}
+            >
+              <PlusIcon /> {t.gsvImportButton}
+            </button>
+          )}
           <span className="spacer" />
           <button
             type="button"
@@ -267,6 +324,6 @@ export function VoicePicker({
       {importingGsv && (
         <GptSovitsImportDialog onImported={onImported} onError={onError} onClose={() => setImportingGsv(false)} />
       )}
-    </>
+    </div>
   )
 }

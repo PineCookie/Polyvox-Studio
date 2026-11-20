@@ -287,9 +287,16 @@ export const zh: Messages = {
 
   // 音色面板
   voice: '音色',
+  chooseModel: '选择模型',
+  modelLabel: '模型',
+  voicesCount: (n) => (n === 0 ? '还没有音色' : `${n} 个音色`),
+  engineUnavailableReason: (reason) => `无法在此运行：${reason}`,
+  baseModelSub: '未训练音色',
+  voicesOf: (engine) => `${engine} 的音色`,
+  noVoicesYet: '这个模型还没有音色：可以训练一个，或导入他人分享的音色包。',
+  otherModelVoices: (n) => `另有 ${n} 个音色属于当前版本没有的模型`,
   chooseVoice: '选择音色',
   importPackage: '音色包…',
-  unavailableShort: '无法在此运行',
   voiceKind: (savedReference) => (savedReference ? '保存的音色' : '训练的音色'),
   zeroShotInfo: '未针对某个声音训练：它用参考音频的声音说话，或使用自己的声音',
   import: '导入',
@@ -309,7 +316,6 @@ export const zh: Messages = {
   referenceClipsFromDataset: '数据集中最好的几段（拼接）',
   gsvReferenceClip: '指定片段',
   gsvReferenceLater: '稍后添加',
-  otherModels: '其他模型',
   noReference: '无参考音频',
   gsvReferenceLaterHint: '稍后在音色面板中添加；在此之前每次合成都需提供参考音频。',
   gsvReferencePickHint: '选一段已检查、无标记、4–10 秒的片段及其文本。',
@@ -342,7 +348,6 @@ export const zh: Messages = {
   trainedOn: (base, server) => `基于 ${base} 训练；当前服务运行的是 ${server}`,
   rank: (r) => `r${r}`,
   stepsCount: (steps) => `${steps} 步`,
-  noLoras: '还没有 LoRA。可以训练一个，或导入他人分享的包。',
   noVoiceMatches: (filter) => `没有与「${filter}」匹配的音色。`,
 
   // 导出

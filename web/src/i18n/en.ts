@@ -272,8 +272,15 @@ export const en = {
   // Voice panel
   voice: 'Voice',
   chooseVoice: 'Choose the voice',
+  chooseModel: 'Choose the model',
+  modelLabel: 'Model',
+  voicesCount: (n: number) => (n === 0 ? 'no voices yet' : n === 1 ? '1 voice' : `${n} voices`),
+  engineUnavailableReason: (reason: string) => `can't run here: ${reason}`,
+  baseModelSub: 'no trained voice',
+  voicesOf: (engine: string) => `${engine} voices`,
+  noVoicesYet: 'No voices for this model yet: train one, or import a shared package.',
+  otherModelVoices: (n: number) => `${n} ${n === 1 ? 'voice' : 'voices'} of models this version doesn't have`,
   importPackage: 'Voice package…',
-  unavailableShort: "can't run here",
   voiceKind: (savedReference: boolean): string => (savedReference ? 'Saved voice' : 'Trained voice'),
   zeroShotInfo: 'not trained on one voice: it speaks with the voice of a reference clip, or one of its own',
   import: 'Import',
@@ -293,7 +300,6 @@ export const en = {
   referenceClipsFromDataset: 'Best clips of a dataset, joined',
   gsvReferenceClip: 'A clip',
   gsvReferenceLater: 'Later',
-  otherModels: 'Other models',
   noReference: 'no reference',
   gsvReferenceLaterHint: 'Add one in the Voice panel; until then give a clip with each synthesis.',
   gsvReferencePickHint: 'A checked clip of 4–10 s without flags, with its transcript.',
@@ -326,7 +332,6 @@ export const en = {
   trainedOn: (base: string, server: string) => `Trained on ${base}; the server runs ${server}`,
   rank: (r: number) => `r${r}`,
   stepsCount: (steps: string) => `${steps} steps`,
-  noLoras: 'No LoRAs yet. Train one, or import a shared package.',
   noVoiceMatches: (filter: string) => `No voice matches “${filter}”.`,
 
   // Export dialog
