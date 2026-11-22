@@ -30,6 +30,11 @@ from ..updates import UpdateCheck, current_version
 
 logger = logging.getLogger(__name__)
 
+# Job kinds (JobRunner.start) of dataset work, which loads ASR / aligner / separation models.
+PREP_JOBS = ("import", "step", "normalize")
+# Job kinds that keep a speech or conversion engine on the GPU.
+ENGINE_JOBS = ("convert", "reference_search")
+
 
 def cuda_index(device: str) -> int | None:
     if not device.startswith("cuda"):
@@ -149,11 +154,21 @@ class Studio:
         """ASR and alignment can run: no training on their GPU."""
         return not (self.training.active_run and cuda_index(self.asr.device) == (self.settings.train_gpu or 0))
 
+    def running_job(self, kinds: tuple[str, ...]):
+        return next((j for k in kinds if (j := self.jobs.running(k))), None)
+
+    def refuse_tts_during_prep(self) -> None:
+        """On a card that fits one model group at a time, speech waits for dataset work."""
+        if self.profile.exclusive and (running := self.running_job(PREP_JOBS)):
+            raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
+
     def refuse_if_busy(self, gpu: bool) -> None:
-        """One preparation job at a time; GPU stages wait for training on their GPU."""
-        jobs = self.jobs
-        if running := next((j for k in ("import", "step", "check", "normalize") if (j := jobs.running(k))), None):
+        """One preparation job at a time; GPU stages wait for training on their GPU and, on a card
+        that fits one model group at a time, for jobs that keep a speech engine on it."""
+        if running := self.running_job(PREP_JOBS):
             raise HTTPException(409, f"Wait for “{running.title}” to finish.")
+        if gpu and self.profile.exclusive and (running := self.running_job(ENGINE_JOBS)):
+            raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
         if gpu and not self.gpu_free():
             raise HTTPException(
                 409,

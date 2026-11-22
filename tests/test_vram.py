@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from polyvox import vram
 from polyvox.server import create_app
 
+from conftest import make_dataset
+
 
 def test_profiles_by_card_size():
     assert [vram.profile_for(gb).name for gb in (24, 15.9, 11.6, 7.6, 5.8)] == [
@@ -73,6 +75,36 @@ def test_status_reports_the_profile_and_services_use_it(monkeypatch, service, tr
     assert gpu["s2_offload"]  # 8 GB: S2-Pro's slow transformer waits in CPU memory while training
     assert not vram.profile_for(16.0).s2_offload  # 16 GB holds it: offloading would only cost time
     assert service.denoise_on_cpu
+
+
+def test_small_cards_keep_speech_and_dataset_steps_apart(monkeypatch, service, training):
+    import threading
+    import time
+
+    from polyvox.jobs import JobRunner
+
+    monkeypatch.setenv("POLYVOX_VRAM_GB", "8")
+    jobs = JobRunner()
+    client = TestClient(create_app(service.settings, service, training, jobs=jobs))
+    release = threading.Event()
+    step = jobs.start("step", "Steps of a dataset", lambda job: release.wait(5) and {}, "a_dataset")
+    try:
+        r = client.post("/api/tts", data={"text": "hello"})
+        assert r.status_code == 409 and "Steps of a dataset" in r.json()["detail"]
+    finally:
+        release.set()
+    while step.state == "running":
+        time.sleep(0.01)
+    assert client.post("/api/tts", data={"text": "hello"}).status_code == 200
+    # The other way round: a job that holds a speech engine keeps GPU dataset work waiting.
+    make_dataset(service.settings.data_dir, "a_dataset")
+    release.clear()
+    jobs.start("reference_search", "Reference clips", lambda job: release.wait(5) and {})
+    try:
+        r = client.post("/api/dataset-clip/check", json={"id": "a_dataset/train.jsonl", "index": 0})
+        assert r.status_code == 409 and "Reference clips" in r.json()["detail"]
+    finally:
+        release.set()
 
 
 def test_dots_checkpoints_batches_too_large_for_the_card(monkeypatch):

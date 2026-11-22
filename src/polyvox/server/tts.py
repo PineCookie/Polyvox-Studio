@@ -93,8 +93,7 @@ def router(s: Studio) -> APIRouter:
             given["reference"] = (None, [])
         if any(given["prompt"]) and caps.reference_input("prompt") is None:
             raise HTTPException(422, f"{tts_engine.name} takes no prompt to continue from.")
-        if s.profile.exclusive and (running := s.jobs.running("import") or s.jobs.running("check")):
-            raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
+        s.refuse_tts_during_prep()
         s.make_room_for_tts(tts_engine)
         temporary: list[Path] = []  # removed afterwards (never the dataset's own clips)
 
@@ -189,8 +188,7 @@ def router(s: Studio) -> APIRouter:
             raise HTTPException(422, f"{tts_engine.name} can't edit speech.")
         if reason := tts_engine.unavailable():
             raise HTTPException(503, f"{tts_engine.name} can't run here: {reason}")
-        if s.profile.exclusive and (running := s.jobs.running("import") or s.jobs.running("check")):
-            raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
+        s.refuse_tts_during_prep()
         s.make_room_for_tts(tts_engine)
 
         def align(path: Path, said: str) -> list[tuple[float, float]]:
@@ -260,6 +258,10 @@ def router(s: Studio) -> APIRouter:
         language: Annotated[str | None, Form()] = None,
         prompt: Annotated[str | None, Form()] = None,
     ) -> dict:
+        if not s.gpu_free():
+            raise HTTPException(
+                409, f"Run '{s.training.active_run}' is training on the GPU that ASR uses. Wait for it to finish."
+            )
         s.make_room_for_prep()
         path = save_upload(audio)
         try:

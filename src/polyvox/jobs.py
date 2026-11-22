@@ -110,12 +110,16 @@ class JobRunner:
         except KeyError:
             raise KeyError(f"Unknown job: {job_id}") from None
 
+    def _all(self) -> list[Job]:
+        with self._lock:  # start / prune change the dict from other threads
+            return list(self._jobs.values())
+
     def running(self, kind: str) -> Job | None:
-        return next((j for j in self._jobs.values() if j.kind == kind and j.state == "running"), None)
+        return next((j for j in self._all() if j.kind == kind and j.state == "running"), None)
 
     def running_for(self, subject: str) -> Job | None:
         """The running job working on ``subject``, if any."""
-        return next((j for j in self._jobs.values() if j.subject == subject and j.state == "running"), None)
+        return next((j for j in self._all() if j.subject == subject and j.state == "running"), None)
 
     def cancel(self, job_id: str) -> Job:
         job = self.get(job_id)

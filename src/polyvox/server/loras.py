@@ -231,8 +231,7 @@ def router(s: Studio) -> APIRouter:
         manifest = found(manifests.resolve, settings.data_dir, body.dataset)
         if running := s.jobs.running("reference_search"):
             raise HTTPException(409, f"Wait for “{running.title}” to finish.")
-        if s.profile.exclusive and (running := s.jobs.running("import") or s.jobs.running("check")):
-            raise HTTPException(409, f"This GPU fits one model group at a time: wait for “{running.title}”.")
+        s.refuse_tts_during_prep()
         root = manifests.legacy_root(settings.data_dir)
         clips = body.count or cls.capabilities.voice_reference_clips
 
