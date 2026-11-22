@@ -11,7 +11,7 @@ from test_aligner import tone
 from test_importer import create, wait_job
 
 from polyvox.data import manifests, record
-from polyvox.prep import checks, slicer, steps
+from polyvox.prep import checks, separation, slicer, steps
 from polyvox.prep.asr import load_audio
 from polyvox.prep.slicer import SliceOptions
 from polyvox.server import create_app
@@ -57,7 +57,7 @@ def test_steps_work_on_what_still_needs_them(tmp_path, data_dir, align_service):
     assert steps.slice_recordings(folder, OPTS, vad)["clips"] == 2  # no guide: the clips have no text yet
     assert steps.status(folder)["transcribe"] == {"clips": 3}
     result = steps.transcribe(folder, transcriber, settings={"language": "zh"})
-    assert result == {"transcribed": 3, "dropped": 0, "tidied": 0}
+    assert result == {"transcribed": 3, "dropped": 0, "tidied": 0, "unreadable": 0}
     assert set(manifests.read_sidecar(folder / manifests.ASR_FILE)) == {
         "wavs/b.flac",
         "wavs/talk_00000900_00006100.wav",
@@ -158,3 +158,44 @@ def test_deleting_a_dataset_warns_of_runs_and_waits_for_training(service, traini
     blocked = client.get("/api/datasets/deletion", params={"id": "speaker_b/train.jsonl"}).json()["blocked"]
     assert blocked == "shared"
     assert client.post("/api/datasets/delete", json={"id": "speaker_b/train.jsonl"}).status_code == 409
+
+
+def test_a_damaged_clip_is_skipped_and_the_rest_done(tmp_path, data_dir):
+    src = material(tmp_path / "speaker_a")
+    folder = steps.create(data_dir, "speaker_a")
+    steps.add_source(folder, str(src), None, data_dir)
+    (folder / "wavs" / "b.flac").write_bytes(b"not audio")  # damaged after it was added
+    chain = separation.Chain(rate=16000, channels=1, process=lambda audio: audio)
+
+    result = steps.clean_up(folder, chain, ["separate"])
+    assert (result["cleaned"], result["unreadable"]) == (1, 1)
+    # Clips sliced from the cleaned voice count as cleaned: only the damaged clip is left.
+    vad = lambda wav: [(1.0, 6.0), (8.0, 13.0)]  # noqa: E731
+    assert steps.slice_recordings(folder, OPTS, vad, chain=chain, cleaned_with=["separate"])["clips"] == 2
+    assert steps.status(folder)["clean_up"] == {"clips": 1}
+
+    def picky(paths):
+        if any(p.name == "b.flac" for p in paths):
+            raise ValueError("Unreadable audio")
+        return transcriber(paths)
+
+    result = steps.transcribe(folder, picky)
+    assert (result["transcribed"], result["unreadable"]) == (2, 1)
+
+
+def test_a_cancelled_clean_up_remembers_the_clips_it_did(tmp_path, data_dir):
+    src = material(tmp_path / "speaker_a")
+    (src / "talk.wav").unlink()
+    folder = steps.create(data_dir, "speaker_a")
+    steps.add_source(folder, str(src), None, data_dir)
+    chain = separation.Chain(rate=16000, channels=1, process=lambda audio: audio)
+
+    def cancel_second(phase, done, total):
+        if done == 1:
+            raise KeyboardInterrupt  # as a job's cancel does
+
+    try:
+        steps.clean_up(folder, chain, ["separate"], cancel_second)
+    except KeyboardInterrupt:
+        pass
+    assert steps.status(folder)["clean_up"] == {"clips": 1}

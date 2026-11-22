@@ -60,11 +60,11 @@ function useSummary() {
       case 'add':
         return t.stepAdded(n('clips'), n('recordings'))
       case 'clean_up':
-        return t.stepCleaned(n('cleaned'), n('skipped'))
+        return t.stepCleaned(n('cleaned'), n('skipped'), n('unreadable'))
       case 'slice':
-        return t.stepSliced(n('sliced'), n('clips'), n('missing'))
+        return t.stepSliced(n('sliced'), n('clips'), n('missing'), n('unreadable'))
       case 'transcribe':
-        return t.stepTranscribed(n('transcribed'), n('dropped'), n('tidied'))
+        return t.stepTranscribed(n('transcribed'), n('dropped'), n('tidied'), n('unreadable'))
       case 'check':
         return t.stepChecked(n('checked'), n('flagged'))
       case 'tidy':

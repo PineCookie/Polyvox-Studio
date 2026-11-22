@@ -301,7 +301,11 @@ def import_dataset(
         record.remember(folder, step, settings)
     if separation is not None:
         st.clean_up(folder, separation, cleanup_models or [], progress)
-    sliced = st.slice_recordings(folder, slicing, vad, guide, separation, progress)["sliced"] if slicing else 0
+    sliced = (
+        st.slice_recordings(folder, slicing, vad, guide, separation, progress, cleanup_models)["sliced"]
+        if slicing
+        else 0
+    )
     if transcriber:
         st.transcribe(folder, transcriber, tidy_fillers, progress, (steps or {}).get("transcribe"))
     elif tidy_fillers:

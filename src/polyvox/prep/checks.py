@@ -675,25 +675,29 @@ def trim_clips(manifest: Path, root: Path | None, cut_for: CutFor) -> dict:
     clips = dict(saved.get("clips", {}))
     cuts: dict[str, tuple[float, float]] = {}
     trimmed = skipped = 0
-    for index, entry in enumerate(entries):
-        audio = Path(entry["audio"])
-        key = row_key(str(audio), manifest_dir)
-        stored = clips.get(key)
-        current = stored is not None and stored.get("text") == text_key(entry["text"])
-        check = ClipCheck.from_saved(stored) if current else None
-        if (cut := cut_for(index, check)) is None:
-            continue
-        if not audio.is_relative_to(manifest_dir) or audio.suffix.lower() not in TRIM_IN_PLACE_FORMATS:
-            skipped += 1
-            continue
-        _trim_file(audio, manifest_dir / ORIGINALS_DIR / key, *cut)
-        if check:
-            clips[key] = {"text": stored["text"], **asdict(check.trimmed(*cut))}
-        cuts[key] = cut
-        trimmed += 1
-    if trimmed:
-        _write_align(manifest_dir, {**saved, "clips": clips})
-        record.trimmed(manifest_dir, cuts)
+    try:
+        for index, entry in enumerate(entries):
+            audio = Path(entry["audio"])
+            key = row_key(str(audio), manifest_dir)
+            stored = clips.get(key)
+            current = stored is not None and stored.get("text") == text_key(entry["text"])
+            check = ClipCheck.from_saved(stored) if current else None
+            if (cut := cut_for(index, check)) is None:
+                continue
+            if not audio.is_relative_to(manifest_dir) or audio.suffix.lower() not in TRIM_IN_PLACE_FORMATS:
+                skipped += 1
+                continue
+            _trim_file(audio, manifest_dir / ORIGINALS_DIR / key, *cut)
+            if check:
+                clips[key] = {"text": stored["text"], **asdict(check.trimmed(*cut))}
+            cuts[key] = cut
+            trimmed += 1
+    finally:
+        # Also when a clip fails midway: the clips trimmed so far must not keep their old edges
+        # (trimming again by those would cut into the speech).
+        if trimmed:
+            _write_align(manifest_dir, {**saved, "clips": clips})
+            record.trimmed(manifest_dir, cuts)
     return {"trimmed": trimmed, "skipped": skipped}
 
 

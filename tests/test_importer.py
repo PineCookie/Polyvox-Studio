@@ -239,7 +239,7 @@ def test_import_job_endpoints(service, training, asr_service, data_dir, tmp_path
     job = wait_job(client, client.post("/api/datasets/step", json=body).json()["id"])
     assert job["state"] == "done", job
     assert "asr" in job["result"].pop("timings")
-    assert job["result"] == {"transcribed": 1, "dropped": 0, "tidied": 0}
+    assert job["result"] == {"transcribed": 1, "dropped": 0, "tidied": 0, "unreadable": 0}
     first = json.loads((data_dir / "speaker_a" / "train.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert first["text"] == "clip of 16000 samples"  # the fake ASR; 1 s at 16 kHz
     assert asr_service._processor.requests[-1]["language"] == "en"

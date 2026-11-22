@@ -127,7 +127,11 @@ def rewrite_manifest(path: Path, change, backup: bool = True) -> int:
     entry (clips without text too: text ""), in place: other lines and keys stay
     as written. The first time, the original is kept as ``<name>.orig``. Returns
     the number of entries changed."""
-    lines = path.read_text(encoding="utf-8").splitlines()
+    # Lines as read_manifest sees them: split at line ends only (splitlines would also split
+    # at U+2028 / U+0085, which json.dumps leaves in a transcript).
+    lines = path.read_text(encoding="utf-8").split("\n")
+    if lines[-1] == "":
+        lines.pop()
     changed = 0
     for n, line in enumerate(lines):
         entry, _ = _parse_line(line, untranscribed=True)

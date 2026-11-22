@@ -614,16 +614,21 @@ export const en = {
     `Added ${clips.toLocaleString()} clips` +
     (recordings ? ` and ${recordings} ${recordings === 1 ? 'recording' : 'recordings'}` : '') +
     '.',
-  stepCleaned: (cleaned: number, skipped: number) =>
-    `Cleaned ${cleaned.toLocaleString()} clips${skipped ? ` (${skipped} can't be rewritten in place)` : ''}.`,
-  stepSliced: (sliced: number, clips: number, missing: number) =>
+  stepCleaned: (cleaned: number, skipped: number, unreadable: number) =>
+    `Cleaned ${cleaned.toLocaleString()} clips` +
+    (skipped ? ` (${skipped} can't be rewritten in place)` : '') +
+    (unreadable ? `; ${unreadable} couldn't be read` : '') +
+    '.',
+  stepSliced: (sliced: number, clips: number, missing: number, unreadable: number) =>
     `Sliced ${sliced} ${sliced === 1 ? 'recording' : 'recordings'} into ${clips.toLocaleString()} clips` +
     (missing ? `; ${missing} recordings were not found` : '') +
+    (unreadable ? `; ${unreadable} couldn't be read` : '') +
     '.',
-  stepTranscribed: (n: number, dropped: number, tidied: number) =>
+  stepTranscribed: (n: number, dropped: number, tidied: number, unreadable: number) =>
     `Transcribed ${n.toLocaleString()} clips` +
     (dropped ? `; ${dropped} with nothing heard were dropped` : '') +
     (tidied ? `; tidied fillers in ${tidied}` : '') +
+    (unreadable ? `; ${unreadable} couldn't be read` : '') +
     '.',
   stepChecked: (checked: number, flagged: number) =>
     `${checked.toLocaleString()} clips checked, ${flagged.toLocaleString()} flagged.`,

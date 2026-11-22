@@ -21,6 +21,7 @@ Rewritten clips keep their first version in ``originals/`` (checks.ORIGINALS_DIR
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,6 +37,8 @@ from . import checks, fillers, importer, loudness, slicer
 from .checks import ORIGINALS_DIR, TRIM_IN_PLACE_FORMATS, TRIM_REVIEW_FIRST, Checker, ClipCheck
 from .importer import LONG_RECORDING_S, ImportPreview, Progress, Transcriber
 from .slicer import SliceOptions, Vad
+
+logger = logging.getLogger(__name__)
 
 MANIFEST = "train.jsonl"
 WAVS = "wavs"
@@ -153,30 +156,40 @@ def clean_up(folder: Path, chain, models: list[str], progress: Progress = _quiet
     rec = record.read_record(folder)
     todo = [Path(e["audio"]) for e in clip_entries(manifest)]
     todo = [a for a in todo if row_key(str(a), folder) not in rec.cleaned]
-    cleaned = skipped = 0
-    for n, audio in enumerate(todo):
-        progress("separating", n, len(todo))
-        if not _writable(audio, folder):
-            skipped += 1
-            continue
-        src = slicer.Source(audio)
-        voice = chain.process(src.read_channels(0.0, src.duration, chain.rate, chain.channels)).mean(axis=0)
-        key = row_key(str(audio), folder)
-        backup = folder / ORIGINALS_DIR / key
-        if not backup.exists():
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(audio, backup)
-        tmp = audio.with_name(f".{audio.name}.tmp")
-        sf.write(tmp, voice, chain.rate, format=sf.info(str(audio)).format)
-        tmp.replace(audio)
-        rec.cleaned[key] = list(models)
-        cleaned += 1
-        if cleaned % 20 == 0:  # saved as it goes
-            record.write_record(folder, rec)
-    progress("separating", len(todo), len(todo))
-    rec.steps["clean_up"] = {"models": list(models)}
-    record.write_record(folder, rec)
-    return {"cleaned": cleaned, "skipped": skipped}
+    cleaned = skipped = unreadable = 0
+    try:
+        for n, audio in enumerate(todo):
+            progress("separating", n, len(todo))
+            if not _writable(audio, folder):
+                skipped += 1
+                continue
+            try:
+                src = slicer.Source(audio)
+                channels = src.read_channels(0.0, src.duration, chain.rate, chain.channels)
+            except (ValueError, OSError) as e:  # a damaged or missing clip: the others go on
+                logger.warning("Clean-up skipped %s: %s", audio, e, exc_info=True)
+                unreadable += 1
+                continue
+            voice = chain.process(channels).mean(axis=0)
+            key = row_key(str(audio), folder)
+            backup = folder / ORIGINALS_DIR / key
+            if not backup.exists():
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(audio, backup)
+            tmp = audio.with_name(f".{audio.name}.tmp")
+            sf.write(tmp, voice, chain.rate, format=sf.info(str(audio)).format)
+            tmp.replace(audio)
+            rec.cleaned[key] = list(models)
+            cleaned += 1
+            if cleaned % 20 == 0:  # saved as it goes
+                record.write_record(folder, rec)
+        progress("separating", len(todo), len(todo))
+        rec.steps["clean_up"] = {"models": list(models)}
+    finally:
+        # Also on cancel / an error: every clip rewritten so far is known as cleaned (a second
+        # pass would separate it again).
+        record.write_record(folder, rec)
+    return {"cleaned": cleaned, "skipped": skipped, "unreadable": unreadable}
 
 
 def _add_asr(folder: Path, languages: dict[str, str | None]) -> None:
@@ -197,11 +210,13 @@ def slice_recordings(
     guide: slicer.Guide | None = None,
     chain=None,
     progress: Progress = _quiet,
+    cleaned_with: list[str] | None = None,
 ) -> dict:
     """Cut the recordings not sliced yet into clips in ``wavs/`` (between words
     with a ``guide``, which also gives each clip its text; with a separation
-    ``chain``, from the cleaned voice). Each recording is saved when done.
-    Progress counts seconds of audio. Returns {"sliced", "clips", "missing"}."""
+    ``chain`` of the clean-up models ``cleaned_with``, from the cleaned voice:
+    the clips count as cleaned). Each recording is saved when done. Progress
+    counts seconds of audio. Returns {"sliced", "clips", "missing", "unreadable"}."""
     folder = folder.resolve()
     rec = record.read_record(folder)
     todo = [r for r in rec.recordings if r.sliced is None]
@@ -211,7 +226,7 @@ def slice_recordings(
     work = folder / ".slicing"
     wavs = folder / WAVS
     wavs.mkdir(exist_ok=True)
-    sliced = added = missing = 0
+    sliced = added = missing = unreadable = 0
     seconds = 0.0
     for recording in todo:
         path = Path(recording.audio)
@@ -221,9 +236,15 @@ def slice_recordings(
         base = seconds
         progress(phase, int(seconds), total)
         shutil.rmtree(work, ignore_errors=True)
-        clips = slicer.slice_recording(
-            path, work, opts, vad, guide, lambda at, base=base: progress(phase, int(base + at), total), chain
-        )
+        try:
+            clips = slicer.slice_recording(
+                path, work, opts, vad, guide, lambda at, base=base: progress(phase, int(base + at), total), chain
+            )
+        except (ValueError, OSError) as e:  # a damaged recording: the others go on
+            logger.warning("Slicing skipped %s: %s", path, e, exc_info=True)
+            unreadable += 1
+            seconds += recording.seconds
+            continue
         used = {p.name.lower() for p in wavs.iterdir()}
         entries, languages = [], {}
         rec = record.read_record(folder)  # the steps may run while nothing else writes; re-read to be safe
@@ -233,6 +254,8 @@ def slice_recordings(
             key = f"{WAVS}/{name}"
             entries.append({"audio": key, "text": clip.text})
             rec.origins[key] = record.Origin(recording.audio, clip.start, clip.end)
+            if chain is not None and cleaned_with:
+                rec.cleaned[key] = list(cleaned_with)
             if clip.text:
                 languages[key] = clip.language
         manifests.append_entries(manifest_of(folder), entries)
@@ -247,7 +270,7 @@ def slice_recordings(
         seconds += recording.seconds
     shutil.rmtree(work, ignore_errors=True)
     progress(phase, total, total)
-    return {"sliced": sliced, "clips": added, "missing": missing}
+    return {"sliced": sliced, "clips": added, "missing": missing, "unreadable": unreadable}
 
 
 def transcribe(
@@ -260,18 +283,31 @@ def transcribe(
     """Give the clips without text (not dropped) ASR text, saved chunk by
     chunk; clips ASR hears nothing in are dropped (review can bring them
     back). With ``tidy_fillers``, every text's runs of fillers are tidied
-    after. Returns {"transcribed", "dropped", "tidied"}."""
+    after. Returns {"transcribed", "dropped", "tidied", "unreadable"}."""
     folder = folder.resolve()
     manifest = manifest_of(folder)
     excluded = manifests.excluded_keys(folder)
     todo = [Path(e["audio"]) for e in clip_entries(manifest) if not e["text"]]
     todo = [a for a in todo if row_key(str(a), folder) not in excluded]
-    done = empty = 0
+    done = empty = unreadable = 0
+
+    def heard(chunk: list[Path]) -> list[tuple[Path, tuple[str, str | None]]]:
+        """(clip, ASR's (text, language)) for the clips that can be read."""
+        nonlocal unreadable
+        try:
+            return list(zip(chunk, transcriber(chunk), strict=True))
+        except (ValueError, OSError):  # a damaged or missing clip: find it, the others go on
+            if len(chunk) > 1:
+                return [pair for audio in chunk for pair in heard([audio])]
+            logger.warning("Transcribing skipped %s", chunk[0], exc_info=True)
+            unreadable += 1
+            return []
+
     for start in range(0, len(todo), TRANSCRIBE_CHUNK):
         progress("transcribing", start, len(todo))
         chunk = todo[start : start + TRANSCRIBE_CHUNK]
         texts, languages, nothing = {}, {}, set()
-        for audio, (text, language) in zip(chunk, transcriber(chunk), strict=True):
+        for audio, (text, language) in heard(chunk):
             key = row_key(str(audio), folder)
             if text.strip():
                 texts[key], languages[key] = text.strip(), language
@@ -285,7 +321,7 @@ def transcribe(
     progress("transcribing", len(todo), len(todo))
     tidied = fillers.tidy_manifest(manifest) if tidy_fillers else 0
     record.remember(folder, "transcribe", {**(settings or {}), "tidy_fillers": tidy_fillers})
-    return {"transcribed": done, "dropped": empty, "tidied": tidied}
+    return {"transcribed": done, "dropped": empty, "tidied": tidied, "unreadable": unreadable}
 
 
 def check(

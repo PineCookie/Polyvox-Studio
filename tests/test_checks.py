@@ -322,6 +322,26 @@ def test_trim_in_place_keeps_the_original_and_updates_the_check(data_dir):
     assert sf.info(str(folder / "wavs" / "1.flac")).duration == pytest.approx(1.3, abs=0.03)
 
 
+def test_clips_trimmed_before_a_failure_keep_their_new_checks(data_dir, monkeypatch):
+    manifest = laugh_then_words(data_dir)
+    real = checks._trim_file
+
+    def second_fails(audio, backup, start, end):
+        if audio.suffix == ".flac":
+            raise PermissionError("in use by another program")
+        real(audio, backup, start, end)
+
+    monkeypatch.setattr(checks, "_trim_file", second_fails)
+    with pytest.raises(PermissionError):
+        checks.trim_clips(manifest, None, lambda i, c: c.trim_range())
+    saved = json.loads((manifest.parent / manifests.ALIGN_FILE).read_text(encoding="utf-8"))["clips"]
+    assert saved["wavs/0.wav"]["duration"] == pytest.approx(1.3, abs=0.03)  # the trimmed one's check moved
+    monkeypatch.setattr(checks, "_trim_file", real)
+    # Trimming again leaves the first clip alone (its check says nothing is left to cut).
+    assert checks.trim_clips(manifest, None, lambda i, c: c and c.trim_range())["trimmed"] == 1
+    assert sf.info(str(manifest.parent / "wavs" / "0.wav")).duration == pytest.approx(1.3, abs=0.03)
+
+
 def test_trim_flagged_leaves_doubtful_clips_for_review(data_dir):
     manifest = laugh_then_words(data_dir, flags_of_second=("edge_sound", "asr_more"))
 

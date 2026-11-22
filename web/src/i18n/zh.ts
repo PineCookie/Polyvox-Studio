@@ -611,14 +611,21 @@ export const zh: Messages = {
   trimEdgesShort: '裁剪边缘（静音、未转写的声音）',
   stepAdded: (clips, recordings) =>
     `添加了 ${clips.toLocaleString()} 个片段${recordings ? `和 ${recordings} 段录音` : ''}。`,
-  stepCleaned: (cleaned, skipped) =>
-    `清理了 ${cleaned.toLocaleString()} 个片段${skipped ? `（${skipped} 个无法原地改写）` : ''}。`,
-  stepSliced: (sliced, clips, missing) =>
-    `把 ${sliced} 段录音切成了 ${clips.toLocaleString()} 个片段${missing ? `；${missing} 段录音找不到` : ''}。`,
-  stepTranscribed: (n, dropped, tidied) =>
+  stepCleaned: (cleaned, skipped, unreadable) =>
+    `清理了 ${cleaned.toLocaleString()} 个片段` +
+    (skipped ? `（${skipped} 个无法原地改写）` : '') +
+    (unreadable ? `；${unreadable} 个无法读取` : '') +
+    '。',
+  stepSliced: (sliced, clips, missing, unreadable) =>
+    `把 ${sliced} 段录音切成了 ${clips.toLocaleString()} 个片段` +
+    (missing ? `；${missing} 段录音找不到` : '') +
+    (unreadable ? `；${unreadable} 段录音无法读取` : '') +
+    '。',
+  stepTranscribed: (n, dropped, tidied, unreadable) =>
     `转写了 ${n.toLocaleString()} 个片段` +
     (dropped ? `；${dropped} 个听不到内容，已排除` : '') +
     (tidied ? `；整理了 ${tidied} 条文本的语气词` : '') +
+    (unreadable ? `；${unreadable} 个无法读取` : '') +
     '。',
   stepChecked: (checked, flagged) =>
     `检查了 ${checked.toLocaleString()} 个片段，标记了 ${flagged.toLocaleString()} 个。`,

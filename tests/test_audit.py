@@ -38,6 +38,18 @@ def test_set_text_rewrites_one_entry_and_keeps_the_original(data_dir):
         manifests.set_text(manifest, 5, "x")
 
 
+def test_a_line_separator_in_a_transcript_survives_rewriting(data_dir):
+    manifest = write_dataset(data_dir, ["第一句", "第二句", "第三句"])
+    manifests.set_text(manifest, 0, "上一行\u2028下一行")  # e.g. pasted from a document
+    manifests.set_text(manifest, 2, "改过的第三句")  # rewrites the file again
+    root = manifests.legacy_root(data_dir)
+    assert [e["text"] for e in manifests.clip_entries(manifest, root)] == [
+        "上一行\u2028下一行",
+        "第二句",
+        "改过的第三句",
+    ]
+
+
 def test_editing_a_flagged_clip_checks_it_again(client, data_dir):
     manifest = write_dataset(data_dir, ["第一句", "错错错句"])
     assert (

@@ -107,7 +107,9 @@ def router(s: Studio) -> APIRouter:
             )
             mid = (opts["min_seconds"] + opts["max_seconds"]) / 2
             cut = SliceOptions(min_seconds=opts["min_seconds"], max_seconds=opts["max_seconds"], target_seconds=mid)
-            return steps.slice_recordings(folder, cut, guide=guide, chain=chain, progress=job.progress)
+            return steps.slice_recordings(
+                folder, cut, guide=guide, chain=chain, progress=job.progress, cleaned_with=models if chain else None
+            )
         if step == "transcribe":
             _, transcriber = asr_tools(opts["language"], opts["prompt"])
             keep = {"language": opts["language"], "prompt": opts["prompt"]}
