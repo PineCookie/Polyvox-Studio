@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 ENGINE = "fish_s2"
 MIN_GB = 15.0  # a 16 GB card reports a little under 16
 TRAIN_MIN_GB = 11.0  # training: a 12 GB card (the slow transformer offloaded)
+TRAIN_BATCHES = dict.fromkeys((vram.GB16, vram.GB12, vram.GB8, vram.SMALL, vram.ON_CPU), 4)
 FAST_ADAMW_LR = 5e-4  # the fast transformer's LoRA with AdamW (tested); the slow one's: s2_slow_lr
 FRAMES_PER_CHAR = 5.0  # first guess (Chinese ~4.5 characters per second, 21.5 frames per second); then learned
 MIN_FRAMES = 10
@@ -340,10 +341,10 @@ class FishS2Engine(Engine):
         """The fast transformer's LoRA (AdamW tested at 5e-4); optionally the slow one's too, with
         AdamW only and its own rate (s2_slow, experimental). Fast-only trains from slow
         transformer states cached per clip, the slow transformer in CPU memory meanwhile where
-        the GPU can't hold it beside training (profile.s2_offload: always below 16 GB)."""
-        small = bool(profile and profile.s2_offload)
+        the GPU can't hold it beside training (below 16 GB)."""
+        small = bool(profile) and profile.name not in (vram.GB16, vram.ON_CPU)
         slow, fast_only = {"s2_slow": (True,)}, {"s2_slow": (False,)}
-        form = train_form.lora_form(cls.id, profile, adamw_lr=FAST_ADAMW_LR)
+        form = train_form.lora_form(TRAIN_BATCHES, profile, adamw_lr=FAST_ADAMW_LR)
         form = train_form.replace(form, "optimizer", disabled_if=slow)
         lr = next(p for p in form if p.name == "learning_rate")
         form = train_form.replace(form, "learning_rate", labels=((slow, "s2_fast_lr"), *lr.labels))

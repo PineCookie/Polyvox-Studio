@@ -20,7 +20,7 @@ On top of the script this adds:
 - Each clip's audio-VAE latents computed once (``cache_audio_latents``).
 - ``torchaudio.load`` / ``save`` through audio_io, as in the server
   (torchcodec, which they would use, is not installed).
-- On small GPUs (vram.Profile.train_checkpointing), gradient checkpointing
+- On 8 GB and smaller GPUs (vram profiles), gradient checkpointing
   (``checkpoint_layers``); on CUDA unless POLYVOX_OPTIMIZE is off, the
   transformer layers fused by torch.compile (``fuse_layers``).
 - Prodigy / Prodigy Schedule-Free instead of AdamW (``use_optimizer``).
@@ -485,7 +485,7 @@ def main() -> None:
 
     audio_io.patch_torchaudio()
     vram.apply_limit("cuda")  # POLYVOX_VRAM_GB, as in the server
-    if os.environ.get("POLYVOX_TRAIN_CHECKPOINT") == "1" or vram.detect("cuda")[1].train_checkpointing:
+    if os.environ.get("POLYVOX_TRAIN_CHECKPOINT") == "1" or vram.detect("cuda")[1].name in (vram.GB8, vram.SMALL):
         checkpoint_layers()
     if optimize_from_env():
         fuse_layers()  # after checkpointing: compiled with it, torch.compile plans the recomputation

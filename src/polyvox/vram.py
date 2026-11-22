@@ -25,6 +25,10 @@ from dataclasses import asdict, dataclass
 logger = logging.getLogger(__name__)
 
 
+# Profile names: engines key their own per-GPU settings by them (per_gpu).
+GB16, GB12, GB8, SMALL, ON_CPU = "16 GB or more", "12 GB", "8 GB", "under 8 GB", "CPU"
+
+
 @dataclass(frozen=True)
 class Profile:
     name: str
@@ -34,110 +38,25 @@ class Profile:
     exclusive: bool  # one model group on the GPU at a time: TTS, or the preparation models
     swap_prep_models: bool  # also one preparation model at a time (the others wait in CPU memory)
     denoise_on_cpu: bool  # the reference denoiser (ZipEnhancer) runs on the CPU
-    train_batch: int  # training micro-batch; accumulation makes up the rest of 16
-    train_checkpointing: bool = False  # recompute layer activations in the backward pass (less memory, slower)
     note: str = ""  # shown to the user: what doesn't fit
-    # dots.tts training: the micro-batch to use, and the largest one that trains
-    # without gradient checkpointing (larger ones checkpoint: engines.dots.worker)
-    dots_train_batch: int = 1
-    dots_plain_batch: int = 0
-    # GPT-SoVITS training batch of both stages (as the webui: no accumulation for SoVITS, a GAN)
-    gsv_train_batch: int = 1
-    # GPT-SoVITS v4's SoVITS stage (a LoRA on its mel DiT): the largest batch that
-    # trains without gradient checkpointing (larger ones checkpoint: engines.gpt_sovits.worker)
-    gsv_v4_plain_batch: int = 0
-    # S2-Pro training (12 GB or more; synthesis needs 16); s2_offload: keep its slow transformer
-    # in CPU memory while training from cached states (~12 -> ~3.5 GB, a moment each way per
-    # validation): only where the whole model and training don't fit (always below 16 GB).
-    s2_train_batch: int = 4
-    s2_offload: bool = True
-    # RVC training batch (a GAN: no accumulation); batch 16 peaks near 6.4 GB plus ~1 GB of
-    # feature / pitch models the worker keeps for samples.
-    rvc_train_batch: int = 4
 
     def public(self) -> dict:
-        train_batches = {
-            "voxcpm": self.train_batch,
-            "dots_tts": self.dots_train_batch,
-            "gpt_sovits": self.gsv_train_batch,
-            "fish_s2": self.s2_train_batch,
-            "rvc": self.rvc_train_batch,
-        }
-        return {**asdict(self), "train_batches": train_batches}
+        return asdict(self)
 
 
 PROFILES = (  # (at least this many GB, profile), largest first
-    (
-        15.0,
-        Profile(
-            "16 GB or more",
-            400,
-            160,
-            2,
-            False,
-            False,
-            False,
-            4,
-            dots_train_batch=4,
-            dots_plain_batch=4,
-            gsv_train_batch=8,
-            gsv_v4_plain_batch=4,
-            s2_offload=False,
-            rvc_train_batch=16,
-        ),
-    ),
-    (
-        11.0,
-        Profile(
-            "12 GB",
-            200,
-            160,
-            2,
-            True,
-            False,
-            False,
-            2,
-            dots_train_batch=8,
-            dots_plain_batch=2,
-            gsv_train_batch=8,
-            gsv_v4_plain_batch=2,
-            rvc_train_batch=16,
-        ),
-    ),
-    (
-        7.0,
-        Profile("8 GB", 60, 80, 1, True, True, True, 1, True, dots_train_batch=4, gsv_train_batch=4, rvc_train_batch=8),
-    ),
-    (
-        0.0,
-        Profile(
-            "under 8 GB",
-            60,
-            60,
-            1,
-            True,
-            True,
-            True,
-            1,
-            True,
-            "Speech synthesis and training need about 8 GB of GPU memory; preparing datasets works.",
-        ),
-    ),
-)
-CPU = Profile(
-    "CPU",
-    400,
-    160,
-    2,
-    False,
-    False,
-    False,
-    1,
-    note="No CUDA GPU: everything runs on the CPU (slow).",
-    dots_plain_batch=64,
-    gsv_v4_plain_batch=64,
-    s2_offload=False,
-)
+    (15.0, Profile(GB16, 400, 160, 2, False, False, False)),
+    (11.0, Profile(GB12, 200, 160, 2, True, False, False)),
+    (7.0, Profile(GB8, 60, 80, 1, True, True, True)),
+    (0.0, Profile(SMALL, 60, 60, 1, True, True, True,
+                  "Speech synthesis and training need about 8 GB of GPU memory; preparing datasets works.")),
+)  # fmt: skip
+CPU = Profile(ON_CPU, 400, 160, 2, False, False, False, "No CUDA GPU: everything runs on the CPU (slow).")
+
+
+def per_gpu(profile: Profile | None, table: dict, default):
+    """An engine's setting for this GPU (``table`` by profile name), else ``default``."""
+    return table.get(profile.name, default) if profile else default
 
 
 def profile_for(total_gb: float) -> Profile:

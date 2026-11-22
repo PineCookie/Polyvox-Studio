@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ... import lora_library, models
+from ... import lora_library, models, vram
 from ...config import Settings
 from ...data import audio_io
 from ..base import Capabilities, ConvertRequest, Engine, Param, SynthesisRequest, SynthesisResult
@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 RATES = (32000, 40000, 48000)  # its base models' rates (train.RATES)
 USUAL_RATE = 40000  # RVC's usual
+# Training batch per GPU (vram.per_gpu); a GAN: no accumulation. Batch 16 peaks near
+# 6.4 GB plus ~1 GB of feature / pitch models the worker keeps for samples.
+TRAIN_BATCHES = {vram.GB16: 16, vram.GB12: 16, vram.GB8: 8, vram.SMALL: 4, vram.ON_CPU: 4}
 
 
 @dataclass
@@ -257,7 +260,7 @@ class RvcEngine(Engine):
         WebUI trains (a GAN: the batch as is); a voice saved every so many epochs."""
         return train_form.full_form(
             profile,
-            cls.id,
+            TRAIN_BATCHES,
             Param("rvc_epochs", "int", 100, min=1, max=1000, scope="option", config="epochs"),
             Param("rvc_save_every", "int", 25, min=1, max=1000, scope="option", config="save_every"),
             Param("rvc_sample_rate", "choice", USUAL_RATE, choices=RATES, scope="option", config="sample_rate",

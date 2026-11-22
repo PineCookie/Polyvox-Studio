@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from ... import vram
 from ..common.worker import log
 
 if TYPE_CHECKING:
@@ -138,16 +139,19 @@ def sovits_keeps(clip: dict, version: str = "v2ProPlus") -> bool:
     return MIN_FRAMES <= len(clip["wav"]) // 640 <= (V4_MAX_FRAMES if version == V4 else MAX_FRAMES)
 
 
+# v4's SoVITS stage: the largest batch that trains without gradient checkpointing, per GPU
+# (vram.per_gpu; 0 elsewhere).
+V4_PLAIN_BATCHES = {vram.GB16: 4, vram.GB12: 2, vram.ON_CPU: 64}
+
+
 def v4_checkpointing(batch_size: int) -> bool:
     """Recompute the DiT's activations in the backward pass when the batch is
-    larger than what trains without it on this GPU (vram.Profile.
-    gsv_v4_plain_batch); POLYVOX_TRAIN_CHECKPOINT 1 / 0 forces it on / off."""
-    from ... import vram
-
+    larger than what trains without it on this GPU (V4_PLAIN_BATCHES);
+    POLYVOX_TRAIN_CHECKPOINT 1 / 0 forces it on / off."""
     forced = os.environ.get("POLYVOX_TRAIN_CHECKPOINT")
     if forced in ("0", "1"):
         return forced == "1"
-    return batch_size > vram.detect("cuda")[1].gsv_v4_plain_batch
+    return batch_size > vram.per_gpu(vram.detect("cuda")[1], V4_PLAIN_BATCHES, 0)
 
 
 def dit_block(block, x, t, mask=None, rope=None):

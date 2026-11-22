@@ -13,6 +13,7 @@ import dataclasses
 import math
 from collections.abc import Iterable
 
+from ... import vram
 from ..base import Param
 
 EFFECTIVE_BATCH = 16
@@ -31,11 +32,12 @@ def js_round(x: float) -> int:
     return math.floor(x + 0.5)
 
 
-def gpu_batch(profile, engine_id: str) -> int:
-    """The micro-batch that fits ``profile``'s GPU for an engine (at most the effective batch)."""
+def gpu_batch(profile, batches: dict[str, int], default: int = 1) -> int:
+    """The micro-batch that fits ``profile``'s GPU: an engine's ``batches`` by profile name
+    (vram.per_gpu), at most the effective batch."""
     if profile is None:
         return WITHOUT_GPU_BATCH
-    return max(1, min(profile.public()["train_batches"].get(engine_id, profile.train_batch), EFFECTIVE_BATCH))
+    return max(1, min(vram.per_gpu(profile, batches, default), EFFECTIVE_BATCH))
 
 
 def replace(form: tuple[Param, ...], name: str, **changes) -> tuple[Param, ...]:
@@ -54,7 +56,7 @@ def optimizer_rates(adamw_lr: float) -> dict[str, dict]:
 
 
 def lora_form(
-    engine_id: str,
+    batches: dict[str, int],
     profile=None,
     *,
     adamw_lr: float = OPTIMIZER_LR["adamw"],
@@ -62,9 +64,10 @@ def lora_form(
     token_budget: bool = False,
     workers: bool = False,
 ) -> tuple[Param, ...]:
-    """The fields of a LoRA run sized in epochs. ``layers``: the networks LoRA can go on
-    (TrainParams.enable_*); ``token_budget``: max_batch_tokens; ``workers``: data loader workers."""
-    batch = gpu_batch(profile, engine_id)
+    """The fields of a LoRA run sized in epochs, its micro-batch from ``batches`` (gpu_batch).
+    ``layers``: the networks LoRA can go on (TrainParams.enable_*); ``token_budget``:
+    max_batch_tokens; ``workers``: data loader workers."""
+    batch = gpu_batch(profile, batches)
     accum = max(1, js_round(EFFECTIVE_BATCH / batch))
     adv = "advanced"
     return (
@@ -93,7 +96,7 @@ def lora_form(
 
 
 def full_form(
-    profile, engine_id: str, *fields: Param, extra: tuple[Param, ...] = (), learning_rate: float = 1e-4
+    profile, batches: dict[str, int], *fields: Param, extra: tuple[Param, ...] = (), learning_rate: float = 1e-4
 ) -> tuple[Param, ...]:
     """The fields of a full fine-tuning run: its sizing ``fields``, the learning rate and batch
     (no accumulation), then ``extra``. Its steps follow from its own epochs (Engine.plan), shown
@@ -101,7 +104,7 @@ def full_form(
     return (
         *fields,
         Param("learning_rate", "float", learning_rate, min=0, legacy=OPTIMIZER_LR["adamw"]),
-        Param("batch_size", "int", gpu_batch(profile, engine_id), min=1, max=64, legacy=1),
+        Param("batch_size", "int", gpu_batch(profile, batches), min=1, max=64, legacy=1),
         *extra,
         Param("num_iters", "int", 200, min=1, group="advanced", disabled="stepsFollowEpochs"),
         Param("log_interval", "int", 5, min=1, group="advanced"),

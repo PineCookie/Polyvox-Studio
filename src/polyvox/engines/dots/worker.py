@@ -38,6 +38,7 @@ from types import SimpleNamespace
 import yaml
 from torch.utils.data import Dataset
 
+from ... import vram
 from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, replacing, watch_for_stop
 
 SAMPLES = 2  # validation clips whose texts are synthesized at each validation
@@ -221,14 +222,18 @@ def training_layers(model, checkpointing: bool, fused: bool) -> None:
             module.forward = functools.partial(run, module)
 
 
+# The largest micro-batch that trains without gradient checkpointing, per GPU (vram.per_gpu; 0
+# elsewhere): checkpointing the DiT and LM, batch 4 / 8 take ~6.9 / 7.7 GB instead of 13.5 / 20.6.
+PLAIN_BATCHES = {vram.GB16: 4, vram.GB12: 2, vram.ON_CPU: 64}
+
+
 def use_checkpointing(batch_size: int, profile) -> bool:
     """Checkpoint layers when the micro-batch is larger than what trains without it
-    on this GPU (vram.Profile.dots_plain_batch); POLYVOX_TRAIN_CHECKPOINT
-    1 / 0 forces it on / off."""
+    on this GPU (PLAIN_BATCHES); POLYVOX_TRAIN_CHECKPOINT 1 / 0 forces it on / off."""
     forced = os.environ.get("POLYVOX_TRAIN_CHECKPOINT")
     if forced in ("0", "1"):
         return forced == "1"
-    return batch_size > profile.dots_plain_batch
+    return batch_size > vram.per_gpu(profile, PLAIN_BATCHES, 0)
 
 
 def loss_terms(model, batch: dict) -> dict:

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ... import lora_library, models
+from ... import lora_library, models, vram
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from ..common import train_form
@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 PATCHES_PER_TOKEN = 1.6  # first guess of audio patches per text token; refined from finished generations
 MIN_PATCHES = 6
+# Training micro-batch per GPU (vram.per_gpu): the 12 GB card trains 8 with gradient checkpointing
+# (worker.PLAIN_BATCHES), faster than 4 without; accumulation makes up the effective batch.
+TRAIN_BATCHES = {vram.GB16: 4, vram.GB12: 8, vram.GB8: 4}
 LEARN_MIN_TOKENS = 10
 
 # (model path, optimize) -> DotsTtsRuntime, not warmed up yet
@@ -252,7 +255,7 @@ class DotsEngine(Engine):
 
     @classmethod
     def train_form(cls, profile=None):
-        return train_form.lora_form(cls.id, profile, layers=("lm", "dit"), workers=True)
+        return train_form.lora_form(TRAIN_BATCHES, profile, layers=("lm", "dit"), workers=True)
 
     @classmethod
     def plan(cls, values, clips, seconds, overrides=()):

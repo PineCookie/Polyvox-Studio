@@ -17,7 +17,7 @@ def test_profiles_by_card_size():
         "under 8 GB",
     ]
     small = vram.profile_for(7.6)
-    assert small.exclusive and small.denoise_on_cpu and small.train_batch == 1
+    assert small.exclusive and small.denoise_on_cpu
     assert vram.profile_for(5.8).note  # tells what doesn't fit
 
 
@@ -70,10 +70,7 @@ def test_status_reports_the_profile_and_services_use_it(monkeypatch, service, tr
     monkeypatch.setenv("POLYVOX_VRAM_GB", "8")
     client = TestClient(create_app(service.settings, service, training))
     gpu = client.get("/api/status").json()["gpu"]
-    assert (gpu["total_gb"], gpu["name"], gpu["train_batch"]) == (8.0, "8 GB", 1)
-    assert gpu["train_batches"] == {"voxcpm": 1, "dots_tts": 4, "gpt_sovits": 4, "fish_s2": 4, "rvc": 8}
-    assert gpu["s2_offload"]  # 8 GB: S2-Pro's slow transformer waits in CPU memory while training
-    assert not vram.profile_for(16.0).s2_offload  # 16 GB holds it: offloading would only cost time
+    assert (gpu["total_gb"], gpu["name"]) == (8.0, "8 GB")
     assert service.denoise_on_cpu
 
 
@@ -111,12 +108,39 @@ def test_dots_checkpoints_batches_too_large_for_the_card(monkeypatch):
     from polyvox.engines.dots.worker import use_checkpointing
 
     monkeypatch.delenv("POLYVOX_TRAIN_CHECKPOINT", raising=False)
+    from polyvox.engines.dots.engine import TRAIN_BATCHES
+
     big, mid, small = vram.profile_for(16), vram.profile_for(12), vram.profile_for(8)
-    assert not use_checkpointing(big.dots_train_batch, big)
+    batch = lambda profile: vram.per_gpu(profile, TRAIN_BATCHES, 1)  # noqa: E731
+    assert not use_checkpointing(batch(big), big)
     assert use_checkpointing(8, big)  # a larger batch set by hand
-    assert use_checkpointing(mid.dots_train_batch, mid) and use_checkpointing(small.dots_train_batch, small)
+    assert use_checkpointing(batch(mid), mid) and use_checkpointing(batch(small), small)
     assert not use_checkpointing(16, vram.CPU)
     monkeypatch.setenv("POLYVOX_TRAIN_CHECKPOINT", "0")
     assert not use_checkpointing(8, small)
     monkeypatch.setenv("POLYVOX_TRAIN_CHECKPOINT", "1")
     assert use_checkpointing(1, big)
+
+
+def test_each_engine_trains_at_its_own_batch_for_the_gpu():
+    from polyvox import engines
+
+    names = (vram.GB16, vram.GB12, vram.GB8, vram.SMALL, vram.ON_CPU)
+    profiles = [vram.profile_for(gb) for gb in (16, 12, 8, 6)] + [vram.CPU]
+    assert [p.name for p in profiles] == list(names)
+    batches = {
+        cls.id: [next(p.default for p in cls.train_form(profile) if p.name == "batch_size") for profile in profiles]
+        for cls in engines.classes().values()
+        if cls.capabilities.training
+    }
+    assert batches == {
+        "voxcpm": [4, 2, 1, 1, 1],
+        "dots_tts": [4, 8, 4, 1, 1],
+        "gpt_sovits": [8, 8, 4, 1, 1],
+        "fish_s2": [4, 4, 4, 4, 4],
+        "rvc": [16, 16, 8, 4, 4],
+    }
+    offload = [
+        next(p.default for p in engines.classes()["fish_s2"].train_form(f) if p.name == "s2_offload") for f in profiles
+    ]
+    assert offload == [False, True, True, True, False]  # where the whole model and training don't fit

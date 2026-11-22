@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ... import vram
 from ...config import Settings
 from ...data import manifests
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
     from ...training import TrainParams
 
 LORA_TARGETS = ["q_proj", "v_proj", "k_proj", "o_proj"]
+# Training micro-batch per GPU (vram.per_gpu; 1 elsewhere): bf16 frozen weights, r32: batch 1 / 2 /
+# 4 ~ 7 / 8.2 / 10.9 GB; accumulation makes up the effective batch.
+TRAIN_BATCHES = {vram.GB16: 4, vram.GB12: 2}
 
 
 def resolve_model(model: str) -> tuple[str, int, int]:
@@ -169,7 +173,9 @@ class VoxCPMEngine(Engine):
     def train_form(cls, profile=None):
         # LoRA on the two LMs, the diffusion head and (optionally) the projections; its
         # script drops clips over the token budget.
-        return train_form.lora_form(cls.id, profile, layers=("lm", "dit", "proj"), token_budget=True, workers=True)
+        return train_form.lora_form(
+            TRAIN_BATCHES, profile, layers=("lm", "dit", "proj"), token_budget=True, workers=True
+        )
 
     @classmethod
     def plan(cls, values, clips, seconds, overrides=()):

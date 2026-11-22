@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ... import lora_library
+from ... import lora_library, vram
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from ..common import train_form
@@ -40,6 +40,9 @@ LEARN_MIN_CHARS = 10
 BASE_VERSION = "v2ProPlus"
 TRAIN_VERSIONS = BASE_VERSIONS  # base models a run trains from, the default first
 NAME_TAGS = {"v2ProPlus": "v2pp", "v2Pro": "v2pro", "v4": "v4"}  # in run names, as imported webui voices
+# Both stages' batch per GPU (vram.per_gpu; 1 elsewhere): SoVITS batch 4 / 6 / 8 ~ 6.6 / 7.2 / 8.3 GB
+# incl. its front ends.
+TRAIN_BATCHES = {vram.GB16: 8, vram.GB12: 8, vram.GB8: 4}
 V4_BATCH = 4  # v4's SoVITS stage (a LoRA on its mel DiT) at the batch it was tuned at
 
 # (base models folder, G2PW folder, device) -> synth.Pipeline
@@ -249,11 +252,11 @@ class GptSovitsEngine(Engine):
         """Both stages as the webui trains them (its epochs), the batch that fits the GPU for both
         (no accumulation: SoVITS is a GAN); v4's SoVITS stage is a LoRA on its mel DiT, at the
         batch it was tuned at (smaller GPUs recompute activations instead)."""
-        batch = train_form.gpu_batch(profile, cls.id)
+        batch = train_form.gpu_batch(profile, TRAIN_BATCHES)
         v4 = {"gsv_version": (V4,)}
         return train_form.full_form(
             profile,
-            cls.id,
+            TRAIN_BATCHES,
             Param("sovits_epochs", "int", 8, min=0, max=100, scope="option"),
             Param("gpt_epochs", "int", 15, min=0, max=100, scope="option", legacy=0),
             Param("lora_rank", "int", 32, min=1, max=512, shown_if=v4, config="lora_rank"),
