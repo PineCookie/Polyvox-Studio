@@ -14,13 +14,13 @@ from pathlib import Path
 
 import librosa
 import numpy as np
-import soundfile as sf
 import torch
 import torch.nn.functional as F
 from scipy import signal
 from torch import nn
 from torch.nn.utils.parametrizations import weight_norm
 
+from ...data import audio_io
 from .model import Config, Synthesizer
 
 
@@ -254,8 +254,8 @@ def piece_count(seconds: float, rate: int = 40000) -> int:
 def clip_features(path: str, contentvec, rmvpe, rate: int = 40000) -> list[dict]:
     """One clip -> its pieces (piece_features), as RVC's preprocessing makes them: at the voice's
     rate, a 48 Hz high-pass, cut, each piece's level normalized."""
-    y, sr = sf.read(path, dtype="float32", always_2d=True)
-    y = y.mean(1)
+    y, sr = audio_io.read(path)  # m4a / mp3 clips too (PyAV)
+    y = y.mean(0)
     y = librosa.resample(y, orig_sr=sr, target_sr=rate, res_type="soxr_vhq") if sr != rate else y
     y = signal.lfilter(*highpass(rate), y).astype(np.float32)
     return [f for piece in pieces(y, rate) if (f := piece_features(normalize(piece), contentvec, rmvpe, rate))]

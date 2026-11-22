@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ... import lora_library, models
 from ...config import Settings
+from ...data import audio_io
 from ..base import Capabilities, ConvertRequest, Engine, Param, SynthesisRequest, SynthesisResult
 from . import voices
 
@@ -197,7 +198,6 @@ class RvcEngine(Engine):
         """The voice's index from a dataset's clips (ContentVec of each at 16 kHz), saved in its
         voice folder; rows kept."""
         import librosa
-        import soundfile as sf
         import torch
 
         ckpt = self.checkpoint(lora_id)
@@ -205,8 +205,8 @@ class RvcEngine(Engine):
             rt = self._ensure_runtime()
             rows = []
             for i, clip in enumerate(clips):
-                y, sr = sf.read(clip, dtype="float32", always_2d=True)
-                y = y.mean(1)
+                y, sr = audio_io.read(clip)  # m4a / mp3 clips too (PyAV)
+                y = y.mean(0)
                 if sr != 16000:
                     y = librosa.resample(y, orig_sr=sr, target_sr=16000, res_type="soxr_vhq")
                 if len(y) >= 1600:  # 0.1 s
@@ -253,7 +253,7 @@ class RvcEngine(Engine):
         exact once the worker has cut them; a voice saved every rvc_save_every epochs."""
         if reason := self.training_unavailable():
             raise ValueError(f"RVC can't train here: {reason}")
-        from ...data import audio_io, manifests
+        from ...data import manifests
         from .train import piece_count
         from .worker import plan
 

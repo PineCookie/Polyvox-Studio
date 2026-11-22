@@ -39,6 +39,19 @@ def clean_f0(f0: np.ndarray, window: int = 15) -> np.ndarray:
     return f0
 
 
+def quiet_cuts(audio: np.ndarray) -> list[int]:
+    """Where long 16 kHz audio is cut into pieces: near every CENTER_S, at the quietest 10 ms
+    (summed magnitude) within QUERY_S of it. None when it fits one piece (MAX_S)."""
+    t_query, t_center, t_max = (s * RATE for s in (QUERY_S, CENTER_S, MAX_S))
+    if len(audio) + HOP <= t_max:
+        return []
+    padded = np.pad(np.abs(audio), (HOP // 2, HOP // 2), mode="reflect")
+    loudness = np.convolve(padded, np.ones(HOP), mode="valid")[: len(audio)]
+    return [
+        t - t_query + int(np.argmin(loudness[t - t_query : t + t_query])) for t in range(t_center, len(audio), t_center)
+    ]
+
+
 def coarse_pitch(f0: np.ndarray) -> np.ndarray:
     """f0 (Hz) -> RVC's 255 mel-spaced pitch classes (1 = unvoiced)."""
     mel = 1127 * np.log(1 + f0 / 700)
@@ -139,7 +152,13 @@ class Converter:
             feats = index.blend(feats[0])[None] * opts.index_rate + (1 - opts.index_rate) * feats
         up = lambda t: F.interpolate(t.permute(0, 2, 1), scale_factor=2).permute(0, 2, 1)  # noqa: E731  50 -> 100 per s
         feats, feats0 = up(feats), up(feats0)
-        n = min(len(audio) // HOP, feats.shape[1])
+        # Frames this piece stands for (its pitch frames). ContentVec's come in pairs (one per
+        # 20 ms) and fall one short of an odd count: the last one repeated, so no piece comes back
+        # 10 ms short (the converted vocals would drift ahead of the music, piece by piece).
+        n = min(len(audio) // HOP, len(pitch))
+        if (short := n - feats.shape[1]) > 0:
+            feats = torch.cat([feats, feats[:, -1:].expand(-1, short, -1)], dim=1)
+            feats0 = torch.cat([feats0, feats0[:, -1:].expand(-1, short, -1)], dim=1)
         pitch = torch.from_numpy(pitch[:n])[None].to(self.device)
         f0 = torch.from_numpy(f0[:n]).float()[None].to(self.device)
         if opts.protect < 0.5:
@@ -168,15 +187,9 @@ class Converter:
         if peak > 1:
             audio = audio / peak
         audio = signal.filtfilt(*HIGHPASS, audio)
-        t_pad, t_query, t_center, t_max = (s * RATE for s in (PAD_S, QUERY_S, CENTER_S, MAX_S))
+        t_pad = PAD_S * RATE
         pad_tgt = voice.sample_rate * PAD_S
-        cuts = []
-        if len(audio) + HOP > t_max:
-            padded = np.pad(audio, (HOP // 2, HOP // 2), mode="reflect")
-            window_sum = np.convolve(padded, np.ones(HOP), mode="valid")[: len(audio)]
-            for t in range(t_center, len(audio), t_center):
-                around = np.abs(window_sum[t - t_query : t + t_query])
-                cuts.append(t - t_query + int(np.argmin(around)))
+        cuts = quiet_cuts(audio)
         padded = np.pad(audio, (t_pad, t_pad), mode="reflect")
         pitch, f0 = self.pitch(padded, len(padded) // HOP, opts)
         out, s = [], 0

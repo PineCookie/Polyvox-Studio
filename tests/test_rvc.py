@@ -128,7 +128,20 @@ def test_conversion_covers_long_audio_in_pieces(tmp_path):
     calls = []
     audio = np.sin(np.arange(16000 * 45) / 16000 * 2 * np.pi * 220).astype(np.float32) * 0.3
     out = rt.converter.convert(voice, audio, 16000, None, convert.Options(), lambda d, t: calls.append((d, t)))
-    assert abs(len(out) / 40000 - 45) < 0.05 and calls[-1] == (2, 2)  # cut once near 38 s
+    assert calls[-1] == (2, 2)  # cut once near 38 s
+    assert len(out) == len(audio) // 160 * 400  # to the frame: no piece comes back short
+    for seconds in (79.99, 80.0, 80.01, 121.37):  # more pieces, of odd and even frame counts
+        longer = np.resize(audio, int(16000 * seconds))
+        assert len(rt.converter.convert(voice, longer, 16000)) == len(longer) // 160 * 400
+
+
+def test_long_audio_is_cut_in_a_quiet_moment():
+    t = np.arange(16000 * 45) / 16000
+    audio = np.sin(t * 2 * np.pi * 220) * 0.3
+    audio[(t > 35.0) & (t < 35.3)] *= 0.01  # a breath between two lines
+    (cut,) = convert.quiet_cuts(audio)
+    assert 35.0 < cut / 16000 < 35.3
+    assert convert.quiet_cuts(audio[: 16000 * 40]) == []  # fits one piece
 
 
 def rvc_client(settings, service, training, **extra) -> TestClient:
