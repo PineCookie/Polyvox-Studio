@@ -89,6 +89,16 @@ export function ReferenceClips({
     },
     [],
   )
+  // Only the latest pick reports its clips, and none after the chooser has gone (another source
+  // chosen meanwhile): the answer would bring back the state it started from.
+  const pickRun = useRef(0)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   // One player for the list: starting a clip stops the one playing.
   const audio = useRef<HTMLAudioElement>(null)
   const [playing, setPlaying] = useState<number | null>(null)
@@ -110,6 +120,8 @@ export function ReferenceClips({
   }
 
   async function pick(dataset: string, exclude: number[], how: ReferencePick = by) {
+    const run = ++pickRun.current
+    const current = () => mounted.current && run === pickRun.current
     setTested(null)
     setBusy(true)
     if (dataset !== value.dataset) onChange({ dataset, clips: [] }) // the menu shows it while its clips load
@@ -118,17 +130,19 @@ export function ReferenceClips({
         if (!exclude.length) throw e
         return null // every clip was shown: start over
       })
-      if (clips === null) {
+      if (clips === null && current()) {
         exclude = []
         clips = await pickReferenceClips(dataset, count, exclude, how)
       }
+      if (!current() || clips === null) return
       onChange({ dataset, clips })
       setSeen([...exclude, ...clips.map((c) => c.index)])
     } catch (e) {
+      if (!current()) return
       onChange({ dataset, clips: [] })
       onError((e as Error).message)
     } finally {
-      setBusy(false)
+      if (current()) setBusy(false)
     }
   }
 

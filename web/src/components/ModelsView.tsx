@@ -59,13 +59,15 @@ export function ModelsView({ onError, onChanged }: Props) {
     listModels().then(
       (l) => {
         setList(l)
+        // A download started before the tab was last left: follow it again.
+        if (l.job) setJob((j) => (j?.state === 'running' ? j : l.job))
         // Keep the ticks of what is still missing (a finished download drops its own).
         const missing = new Set(l.models.filter((m) => m.state === 'missing').map((m) => m.setting))
         setSelected((s) => s.filter((setting) => missing.has(setting)))
       },
       (e: Error) => onError(e.message),
     )
-  }, [onError])
+  }, [onError, setJob])
 
   useEffect(refresh, [refresh])
 

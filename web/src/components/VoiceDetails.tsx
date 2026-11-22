@@ -93,6 +93,7 @@ export function VoiceDetails({ engines, loras, selected, modelId, onSelect, onRe
           )}
           {!!engine?.capabilities.voice_reference && (
             <VoiceReference
+              key={current.id} // another voice: a fresh form (not the last voice's choices)
               lora={current}
               count={engine.capabilities.voice_reference_clips ?? 1}
               search={engine.capabilities.reference_search}

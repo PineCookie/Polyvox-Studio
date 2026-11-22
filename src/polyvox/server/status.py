@@ -54,7 +54,13 @@ def router(s: Studio) -> APIRouter:
                     ways=spec.ways(),
                 )
             )
-        return ModelsOut(models_dir=str(settings.models_dir.resolve()), endpoint=models.current_endpoint(), models=out)
+        running = jobs.running("download")
+        return ModelsOut(
+            models_dir=str(settings.models_dir.resolve()),
+            endpoint=models.current_endpoint(),
+            models=out,
+            job=JobOut(**running.public()) if running else None,
+        )
 
     @api.post("/api/models/source")
     def set_source(body: SourceIn) -> dict:

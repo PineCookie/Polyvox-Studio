@@ -51,6 +51,7 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
   // The selected run's detail, polled while it trains and refetched when its summary changes.
   const summary = runs.find((r) => r.name === selected)
   const summaryKey = summary && `${summary.status}:${summary.saved_step}`
+  const live = !!summary && isLive(summary)
   useEffect(() => {
     if (!selected || selected === NEW_RUN) {
       setDetail(null)
@@ -70,7 +71,10 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
         setDetail(run)
         if (isLive(run)) timer = setTimeout(load, DETAIL_POLL_MS)
       } catch (e) {
-        if (!cancelled) onError((e as Error).message)
+        if (cancelled) return
+        onError((e as Error).message)
+        // A request that failed once (server busy, restarting) is tried again while the run trains.
+        if (known ? isLive(known) : live) timer = setTimeout(load, DETAIL_POLL_MS * 3)
       }
     }
     load()
@@ -78,7 +82,7 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
       cancelled = true
       clearTimeout(timer)
     }
-  }, [selected, summaryKey, onError])
+  }, [selected, summaryKey, live, onError])
 
   async function act(action: () => Promise<unknown>) {
     try {

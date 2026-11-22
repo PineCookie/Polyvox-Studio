@@ -327,6 +327,7 @@ class ModelsOut(BaseModel):
     models_dir: str
     endpoint: str  # the download source in use ("" = huggingface.co); POST /api/models/source sets it
     models: list[ModelOut]
+    job: JobOut | None = None  # the download running, if any (the tab follows it again when reopened)
 
 
 class SourceIn(BaseModel):

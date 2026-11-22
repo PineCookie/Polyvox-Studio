@@ -235,6 +235,7 @@ export interface ModelList {
   models_dir: string
   endpoint: string // the download source in use ("" = huggingface.co)
   models: ModelInfo[]
+  job: DownloadJob | null // the download running, if any
 }
 
 export type DownloadJob = Job<{ downloaded: string[] }>
