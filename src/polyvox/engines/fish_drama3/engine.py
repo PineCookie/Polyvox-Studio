@@ -17,6 +17,7 @@ import gc
 import logging
 import random
 import re
+import sys
 import threading
 import time
 import unicodedata
@@ -533,6 +534,10 @@ class FishDrama3Engine(Engine):
             if self._runtime is None:
                 return
             self._runtime = None
+            # Module-level buffers (a layer's streamed experts on the GPU, the pinned staging), there
+            # once the real model ran.
+            if model := sys.modules.get(f"{__package__}.model"):
+                model.release_buffers()
             gc.collect()
             import torch
 

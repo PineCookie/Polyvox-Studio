@@ -194,8 +194,10 @@ def test_drama3_is_built_from_the_official_weights_when_the_build_is_gone(tmp_pa
         fetched.append((repo, revision))
         if repo == models.DRAMA3_BUILD_REPO:
             raise FileNotFoundError(f"{repo} has no config.json.")
-        folder.rmdir()
-        fake_fp8_checkpoint(folder)
+        fake_fp8_checkpoint(staging := folder.with_name("staging"))
+        for f in staging.iterdir():
+            f.replace(folder / f.name)
+        staging.rmdir()
         report(1 << 20, 1 << 20)
 
     monkeypatch.setattr(models, "_fetch_hf", fake_fetch)
@@ -206,6 +208,20 @@ def test_drama3_is_built_from_the_official_weights_when_the_build_is_gone(tmp_pa
     assert small.downloaded(tmp_path) and not (tmp_path / "fp8").exists()
     assert "Built with Fish Audio" in (tmp_path / small.folder / convert.NOTICE).read_text(encoding="utf-8")
     assert progress[-1][0] == progress[-1][1] > 0  # download + build reach the end of one bar
+
+
+def test_official_weights_the_user_put_there_stay_after_a_build(tmp_path, monkeypatch):
+    small = small_drama3_spec()
+    fake_fp8_checkpoint(tmp_path / "fp8")  # downloaded by hand before
+
+    def fake_fetch(repo, revision, folder, files, endpoint, report):
+        if repo == models.DRAMA3_BUILD_REPO:
+            raise FileNotFoundError(f"{repo} has no config.json.")
+        report(1, 1)  # everything is there already
+
+    monkeypatch.setattr(models, "_fetch_hf", fake_fetch)
+    models.download(small, tmp_path)
+    assert small.downloaded(tmp_path) and (tmp_path / "fp8" / "config.json").is_file()
 
 
 def test_a_network_error_is_not_a_reason_to_build(tmp_path, monkeypatch):

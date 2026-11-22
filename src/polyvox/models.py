@@ -790,6 +790,7 @@ def _fetch_hf(
 
 
 BUILD_SHARE = 0.25  # of the download, how much of the progress bar a build takes
+DOWNLOADED_HERE = ".downloaded-by-polyvox"  # in a build's source folder that the app downloaded
 
 
 def _download_and_build(
@@ -801,7 +802,12 @@ def _download_and_build(
 
     repo, revision = (source.repo, source.revision) if source.repo else (spec.repo, spec.revision)
     src = models_dir / source.folder
-    src.mkdir(parents=True, exist_ok=True)
+    # Only a source folder this download made is removed afterwards (a copy the user put there
+    # stays); the mark survives a stopped download, so resuming it still cleans up.
+    mark = src / DOWNLOADED_HERE
+    if not src.exists() or (src.is_dir() and not any(src.iterdir())):
+        src.mkdir(parents=True, exist_ok=True)
+        mark.touch()
     mb = 1_000_000  # decimal MB, as size_mb and the hub's sizes
     downloaded = [spec.size_mb * mb]
 
@@ -814,5 +820,5 @@ def _download_and_build(
     module, name = source.build.split(":")
     build = getattr(importlib.import_module(module), name)
     build(src, models_dir / spec.folder, lambda f: report(total + int(total * BUILD_SHARE * f), total))
-    if not (source.keep or keep):
+    if not (source.keep or keep) and mark.exists():
         shutil.rmtree(src, ignore_errors=True)
