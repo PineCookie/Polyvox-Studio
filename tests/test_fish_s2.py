@@ -198,6 +198,48 @@ def test_the_lora_trains_only_itself_and_merges_into_the_weights():
                 "fast_layers.0.attention.wo.lora_B": torch.zeros(32, 2),
             }
         )
+    with pytest.raises(ValueError, match="does not fit"):  # A and B of different ranks
+        merger.apply(
+            {
+                "fast_layers.0.attention.wo.lora_A": torch.zeros(2, 32),
+                "fast_layers.0.attention.wo.lora_B": torch.zeros(32, 3),
+            }
+        )
+
+
+def test_a_voice_that_fails_to_load_leaves_the_base_model(tmp_path):
+    import copy
+    from types import SimpleNamespace
+
+    from safetensors.torch import save_file
+
+    from polyvox import lora_library
+    from polyvox.engines.fish_s2.engine import Runtime
+
+    m = tiny_model()
+    originals = {k: v.clone() for k, v in m.state_dict().items()}
+    loras = s2lora.attach(copy.deepcopy(m), rank=2, alpha=2.0)
+    with torch.no_grad():
+        for lo in loras.values():
+            lo.B.normal_(std=0.5)
+    good, bad = tmp_path / "good", tmp_path / "bad"
+    good.mkdir(), bad.mkdir()
+    save_file({k: v.contiguous() for k, v in s2lora.state(loras).items()}, str(good / lora_library.WEIGHTS_FILE))
+    (bad / lora_library.WEIGHTS_FILE).write_bytes(b"half a file")  # e.g. read while training saves it
+    voice = lambda path: SimpleNamespace(id=path.name, weights_mtime=1.0, path=path, rank=2, alpha=2.0)  # noqa: E731
+    runtime = object.__new__(Runtime)
+    runtime.model, runtime.merger, runtime.lora = m, s2lora.Merger(m), None
+
+    def is_base() -> bool:
+        return all(torch.equal(v, originals[k]) for k, v in m.state_dict().items())
+
+    runtime.use_lora(voice(good))
+    assert not is_base()
+    with pytest.raises(RuntimeError, match="Unable to load voice 'bad'"):
+        runtime.use_lora(voice(bad))
+    assert is_base() and runtime.lora is None  # not the good voice's weights under the base model's name
+    runtime.use_lora(None)
+    assert is_base()
 
 
 def test_reference_picks_follow_the_clips_not_their_order():

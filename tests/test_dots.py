@@ -345,3 +345,37 @@ def test_dots_checkpoints_are_listed_with_their_engine(lora_dir):
     info = json.loads((ckpt.path / "lora_config.json").read_text())
     assert (ckpt.engine, ckpt.rank, ckpt.alpha, ckpt.config) == ("dots_tts", 4, 8.0, None)
     assert info["base_model"] == "org/dots"
+
+
+def test_a_lora_that_fails_to_load_leaves_the_base_model(tmp_path):
+    from types import SimpleNamespace
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def apply(self, tensors, scale=1.0):
+            self.calls.append(None if tensors is None else sorted(tensors))
+
+    engine = object.__new__(DotsEngine)
+    engine._merger, engine._lora = Recorder(), ("good", 1.0)  # a LoRA merged earlier
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / lora_library.WEIGHTS_FILE).write_bytes(b"half a file")
+    with pytest.raises(RuntimeError, match="Unable to load LoRA 'bad'"):
+        engine._apply_lora(SimpleNamespace(id="bad", weights_mtime=1.0, path=bad, rank=4, alpha=4.0))
+    assert engine._merger.calls == [None] and engine._lora is None  # back to the base model's weights
+
+
+def test_a_save_that_fails_midway_leaves_the_old_file(tmp_path):
+    from polyvox.engines.common.worker import replacing
+
+    target = tmp_path / "training_state.pt"
+    target.write_bytes(b"old")
+    with pytest.raises(KeyboardInterrupt), replacing(target) as tmp:
+        tmp.write_bytes(b"half")
+        raise KeyboardInterrupt  # the stop's signal, or the process killed
+    assert target.read_bytes() == b"old" and list(tmp_path.iterdir()) == [target]
+    with replacing(target) as tmp:
+        tmp.write_bytes(b"new")
+    assert target.read_bytes() == b"new" and list(tmp_path.iterdir()) == [target]

@@ -112,7 +112,8 @@ class Merger:
         for name in names:
             layer = self._modules.get(name)
             a, b = tensors[f"{name}.lora_A"], tensors[f"{name}.lora_B"]
-            if not isinstance(layer, nn.Linear) or a.shape[1] != layer.in_features or b.shape[0] != layer.out_features:
+            fits = a.ndim == b.ndim == 2 and a.shape[0] == b.shape[1]
+            if not (fits and isinstance(layer, nn.Linear) and (a.shape[1], b.shape[0]) == layer.weight.shape[::-1]):
                 raise ValueError(f"LoRA layer {name} does not fit this S2-Pro model.")
         for name in names:
             weight = self._modules[name].weight

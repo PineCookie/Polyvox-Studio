@@ -38,7 +38,7 @@ from types import SimpleNamespace
 import yaml
 from torch.utils.data import Dataset
 
-from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, watch_for_stop
+from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, replacing, watch_for_stop
 
 SAMPLES = 2  # validation clips whose texts are synthesized at each validation
 SAMPLE_SEED = 42
@@ -376,17 +376,19 @@ def main() -> None:
                        "enable_lm": "llm" in networks, "enable_dit": "dit" in networks}  # fmt: skip
         for folder in (save_dir / f"step_{at:07d}", latest):
             folder.mkdir(parents=True, exist_ok=True)
-            save_file(weights, folder / "lora_weights.safetensors")
+            with replacing(folder / "lora_weights.safetensors") as tmp:
+                save_file(weights, tmp)
             dots_lora.write_config(folder, lora_config, str(config["pretrained_path"]))
-        torch.save(
-            {
-                "step": at,
-                "train_weights": dots_lora.state(loras),
-                "optimizer": opt.state_dict(),
-                "scheduler": scheduler.state_dict() if scheduler is not None else None,
-            },
-            latest / "training_state.pt",
-        )
+        with replacing(latest / "training_state.pt") as tmp:
+            torch.save(
+                {
+                    "step": at,
+                    "train_weights": dots_lora.state(loras),
+                    "optimizer": opt.state_dict(),
+                    "scheduler": scheduler.state_dict() if scheduler is not None else None,
+                },
+                tmp,
+            )
         (latest / "training_state.json").write_text(json.dumps({"step": at}), encoding="utf-8")
         log(f"Saved step {at}.")
 

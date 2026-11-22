@@ -126,16 +126,19 @@ class Runtime:
         if ckpt is None:
             self.merger.apply(None)
             return
+        from safetensors import SafetensorError
         from safetensors.torch import load_file
 
+        # Whatever fails, the weights go back to the base model's: self.lora (None) says so.
         try:
             tensors = load_file(str(ckpt.path / lora_library.WEIGHTS_FILE))
-        except (OSError, RuntimeError) as e:
+        except (OSError, RuntimeError, SafetensorError) as e:
+            self.merger.apply(None)
             raise RuntimeError(f"Unable to load voice '{ckpt.id}': {e}") from e
         rank, alpha = ckpt.rank, ckpt.alpha
         try:
             self.merger.apply(tensors, (alpha / rank) if rank and alpha else 1.0)
-        except ValueError:
+        except BaseException:
             self.merger.apply(None)
             raise
         self.lora = key

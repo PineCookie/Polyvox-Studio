@@ -4,6 +4,7 @@ them, the learning rates and metrics they log, and shuffled batches."""
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import random
@@ -17,6 +18,18 @@ POLL_S = 1.0
 
 def log(message: str) -> None:
     print(f"[studio] {message}", file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def replacing(path: Path):
+    """A temporary path beside ``path`` to write to; it becomes ``path`` once written, so a stop or
+    crash midway leaves the old file (a run stays resumable), never half of a new one."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        yield tmp
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def process_alive(pid: int) -> bool:

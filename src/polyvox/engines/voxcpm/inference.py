@@ -328,9 +328,11 @@ class InferenceService:
         key = (ckpt.id, ckpt.weights_mtime)
         if self._loaded_lora != key:
             self._loaded_lora = None
+            from safetensors import SafetensorError
+
             try:
                 self._lora_scale = load_lora_padded(model.tts_model, ckpt)
-            except (OSError, RuntimeError) as e:  # unreadable file; ValueError (mismatch) passes through
+            except (OSError, RuntimeError, SafetensorError) as e:  # unreadable; ValueError (mismatch) passes
                 raise RuntimeError(f"Unable to load LoRA '{ckpt.id}': {e}") from e
             self._loaded_lora = key
         set_lora_scale(model.tts_model, self._lora_scale)

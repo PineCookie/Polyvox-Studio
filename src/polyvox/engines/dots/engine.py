@@ -232,14 +232,21 @@ class DotsEngine(Engine):
         if ckpt is None:
             self._merger.apply(None)
             return
+        from safetensors import SafetensorError
         from safetensors.torch import load_file
 
+        # Whatever fails, the weights go back to the base model's: self._lora (None) says so.
         try:
             tensors = load_file(str(ckpt.path / lora_library.WEIGHTS_FILE))
-        except (OSError, RuntimeError) as e:
+        except (OSError, RuntimeError, SafetensorError) as e:
+            self._merger.apply(None)
             raise RuntimeError(f"Unable to load LoRA '{ckpt.id}': {e}") from e
         rank, alpha = ckpt.rank, ckpt.alpha
-        self._merger.apply(tensors, (alpha / rank) if rank and alpha else 1.0)
+        try:
+            self._merger.apply(tensors, (alpha / rank) if rank and alpha else 1.0)
+        except BaseException:
+            self._merger.apply(None)
+            raise
         self._lora = key
 
     def training_config(

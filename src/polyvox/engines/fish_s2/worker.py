@@ -46,7 +46,7 @@ from pathlib import Path
 import yaml
 
 from ..common.reference import REFERENCE_JSON, REFERENCE_WAV
-from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, watch_for_stop
+from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, replacing, watch_for_stop
 
 SAMPLES = 2  # validation clips whose texts are spoken at each validation
 SAMPLE_SEED = 42
@@ -323,7 +323,8 @@ def main() -> None:
         lora_config = {"r": rank, "alpha": alpha, "dropout": lora_cfg.get("dropout") or 0.0, "targets": list(targets)}
         for folder in (save_dir / f"step_{at:07d}", latest):
             folder.mkdir(parents=True, exist_ok=True)
-            save_file(weights, folder / "lora_weights.safetensors")
+            with replacing(folder / "lora_weights.safetensors") as tmp:
+                save_file(weights, tmp)
             s2lora.write_config(folder, lora_config, str(model_dir))
             for name in (REFERENCE_WAV, REFERENCE_JSON):
                 shutil.copy2(run_dir / name, folder / name)
