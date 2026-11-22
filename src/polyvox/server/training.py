@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 
 from ..training import RunDetail, RunSummary, TrainParams
 from .context import Studio, checked, found
-from .schemas import ResumeIn
+from .schemas import PlanIn, PlanOut, ResumeIn
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,15 @@ def router(s: Studio) -> APIRouter:
     @api.post("/api/training/runs")
     def start_run(params: TrainParams) -> RunDetail:
         return checked(training.start, params)
+
+    @api.post("/api/training/plan")
+    def plan_run(body: PlanIn) -> PlanOut:
+        """A new run's size from the form's values and its training clips (Engine.plan): the
+        steps etc. that follow (not the ``overrides``), a summary, the model part of its name."""
+        engine = s.registry.get(body.engine)
+        if engine is None or not engine.capabilities.training:
+            raise HTTPException(404, f"No engine '{body.engine}' trains here.")
+        return PlanOut(**checked(engine.plan, body.values, body.clips, body.seconds, body.overrides))
 
     @api.get("/api/training/runs/{name}")
     def run_detail(name: str, since: int | None = None, log_from: int | None = None) -> RunDetail:

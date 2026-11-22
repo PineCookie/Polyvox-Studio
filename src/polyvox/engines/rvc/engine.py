@@ -15,9 +15,13 @@ from ... import lora_library, models
 from ...config import Settings
 from ...data import audio_io
 from ..base import Capabilities, ConvertRequest, Engine, Param, SynthesisRequest, SynthesisResult
+from ..common import train_form
 from . import voices
 
 logger = logging.getLogger(__name__)
+
+RATES = (32000, 40000, 48000)  # its base models' rates (train.RATES)
+USUAL_RATE = 40000  # RVC's usual
 
 
 @dataclass
@@ -247,6 +251,46 @@ class RvcEngine(Engine):
             return "download its base models first (Models: RVC v2 base models)."
         return self.unavailable()
 
+    @classmethod
+    def train_form(cls, profile=None):
+        """Its whole model from the base models at a rate, in epochs over 3.7 s pieces, as its
+        WebUI trains (a GAN: the batch as is); a voice saved every so many epochs."""
+        return train_form.full_form(
+            profile,
+            cls.id,
+            Param("rvc_epochs", "int", 100, min=1, max=1000, scope="option", config="epochs"),
+            Param("rvc_save_every", "int", 25, min=1, max=1000, scope="option", config="save_every"),
+            Param("rvc_sample_rate", "choice", USUAL_RATE, choices=RATES, scope="option", config="sample_rate",
+                  hint="rvcRateHint"),
+        )  # fmt: skip
+
+    @classmethod
+    def plan(cls, values, clips, seconds, overrides=()):
+        from .worker import plan
+
+        # RVC cuts clips into pieces of up to 3.7 s, one every 3.4 s (train.pieces): about this many
+        # (~0.37 a clip are remainders on a real dataset; the worker counts them exactly).
+        pieces = max(clips, train_form.js_round(seconds / 3.4 + clips * 0.37)) if clips > 0 else 0
+        batch, epochs = int(values.get("batch_size") or 1), int(values.get("rvc_epochs") or 1)
+        own, final = train_form.derived(
+            values, {"num_iters": plan(pieces, batch, epochs)[1]} if pieces else {}, overrides
+        )
+        rate = int(values.get("rvc_sample_rate") or USUAL_RATE)
+        return {
+            "values": own,
+            "summary": {
+                "kind": "pieces",
+                "steps": final.get("num_iters"),
+                "pieces": pieces,
+                "epochs": epochs,
+                "batch": batch,
+                "save_every": values.get("rvc_save_every"),
+                "model": "full",
+            },
+            "name_tag": "rvc" if rate == USUAL_RATE else f"rvc{rate // 1000}k",
+            "samples": {"every": values.get("rvc_save_every"), "unit": "epochs"},
+        }
+
     def training_config(self, params, run_dir: Path, train_manifest: Path, val_manifest: Path | None) -> dict:
         """RVC's training (worker.py) from its base models at rvc_sample_rate: rvc_epochs over the
         dataset's 3.7 s pieces at batch_size; num_iters estimated from the clips' lengths here,
@@ -257,10 +301,11 @@ class RvcEngine(Engine):
         from .train import piece_count
         from .worker import plan
 
+        opts = self.train_options(params.options)
         records = manifests.read_manifest(train_manifest)[0]
         pieces = sum(piece_count(audio_io.info(r["audio"])[0]) for r in records)
-        _, num_iters = plan(pieces, params.batch_size, params.rvc_epochs)
-        rate, k = params.rvc_sample_rate, params.rvc_sample_rate // 1000
+        _, num_iters = plan(pieces, params.batch_size, opts["rvc_epochs"])
+        rate, k = opts["rvc_sample_rate"], opts["rvc_sample_rate"] // 1000
         bases = Path(self.settings.model_path("rvc_train_model"))
         dataset = manifests.resolve(self.settings.data_dir, params.dataset)
         return {
@@ -274,8 +319,8 @@ class RvcEngine(Engine):
             "val_manifest": str(val_manifest) if val_manifest else "",
             "save_path": str(run_dir / "checkpoints"),
             "num_iters": num_iters,
-            "epochs": params.rvc_epochs,
-            "save_every": params.rvc_save_every,
+            "epochs": opts["rvc_epochs"],
+            "save_every": opts["rvc_save_every"],
             "batch_size": params.batch_size,
             "learning_rate": params.learning_rate,
             "log_interval": params.log_interval,

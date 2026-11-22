@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getSimilarity, sampleUrl } from '../api'
-import type { Lora, RunDetail as Run, Similarity } from '../api'
+import type { Engine, Lora, RunDetail as Run, Similarity } from '../api'
 import { useFolded } from '../folded'
 import { formatDuration, formatStep, formatValue } from '../format'
 import { useT } from '../i18n'
@@ -9,7 +9,6 @@ import { FoldPanel } from './Fold'
 import type { Fold } from './Fold'
 import { LossChart } from './LossChart'
 import { LrChart } from './LrChart'
-import { paramsFromConfig } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { ProgressBar, StatusPill } from './RunList'
 import { SampleCell } from './SampleCell'
@@ -24,6 +23,8 @@ interface Props {
   onStop: () => void
   onResume: (numIters?: number) => void
   onTryCheckpoint: (loraId: string) => void
+  // Their training forms: the Parameters tab shows this run's values in its engine's fields.
+  engines: Engine[]
 }
 
 // A run's checkpoint id, from the run's folder (RunSummary.path).
@@ -49,7 +50,7 @@ function lossKeys(run: Run): string[] {
 
 type Tab = 'progress' | 'dataset' | 'parameters'
 
-export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckpoint }: Props) {
+export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckpoint, engines }: Props) {
   const t = useT()
   const [tab, setTab] = useState<Tab>('progress')
   const [extendTo, setExtendTo] = useState(run.num_iters * 2)
@@ -181,8 +182,10 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
       {tab === 'parameters' && (
         <section className="panel">
           <ParamsFields
-            params={paramsFromConfig({ engine: run.engine, ...run.config })}
-            fullFinetune={run.lora_rank === null}
+            form={engines.find((e) => e.id === run.engine)?.train_form ?? []}
+            values={run.params}
+            engine={run.engine}
+            engines={engines.filter((e) => e.capabilities.training)}
             validation={
               <div className="field">
                 <span>{t.validation}</span>

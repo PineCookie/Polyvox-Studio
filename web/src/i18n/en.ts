@@ -930,8 +930,8 @@ export const en = {
   chooseDatasetOption: 'Choose a dataset…',
   holdoutHint: (every: number) =>
     `clips set aside for validation loss and audio samples every ${every} steps (0 = none)`,
-  rvcHoldoutHint: (every: number) =>
-    `clips set aside and converted into the voice each time one is saved, every ${every} epochs (0 = none)`,
+  holdoutEpochsHint: (every: number) =>
+    `clips set aside for audio samples ${every === 1 ? 'after every epoch' : `every ${every} epochs`} (0 = none)`,
   newPill: 'New',
   starting2: 'Starting…',
   startTraining: 'Start training',
@@ -965,7 +965,7 @@ export const en = {
   rvcSteps: (steps: string, pieces: string) => `~${steps} steps over ~${pieces} pieces`,
   rvcScheduleHint: (epochs: number, pieces: string, batch: number, gpu: string, steps: string, every: number) =>
     `${epochs} epochs over ~${pieces} pieces of up to 3.7 s (the training clips cut as RVC's WebUI cuts them) at batch ${batch}${gpu ? ` (fits this ${gpu} GB GPU)` : ''} = ~${steps} steps; a voice is saved every ${every} epochs. Exact counts once the clips are cut. RVC trains its whole model from its base models, as the WebUI does; singing clips help it sing.`,
-  rvcRate: (khz: number, usual: boolean) => `${khz} kHz${usual ? " (RVC's usual)" : ''}`,
+  stepsFollowEpochs: 'Follows from the epochs and the dataset',
   rvcRateHint:
     'The rate the voice is trained at and sings at. 48 kHz only adds treble when the clips themselves go above 20 kHz (recorded at 44.1 / 48 kHz); 32 kHz cuts at 16 kHz.',
 
@@ -1012,11 +1012,11 @@ export const en = {
   s2SlowNeeds16: 'Needs a 16 GB GPU: on this one the slow transformer waits in CPU memory while the fast one trains.',
   s2SlowHint:
     'Adds a LoRA on the slow transformer’s attention, with AdamW and its own small learning rate (tested: 5e-4 fast, 2e-5 slow; Prodigy can’t give one part a smaller rate). About twice as slow; in our tests it sounded no more like the voice, and at higher rates it cut sentences short and left long silences. Compare its checkpoints with a run without it.',
-  optimizers: {
-    adamw: 'AdamW',
-    prodigy: 'Prodigy',
-    prodigy_sf: 'Prodigy-SF',
-  },
+  // Values of training choices by setting (others show as they are).
+  trainChoices: {
+    optimizer: { adamw: 'AdamW', prodigy: 'Prodigy', prodigy_sf: 'Prodigy-SF' },
+    rvc_sample_rate: { 32000: '32 kHz', 40000: "40 kHz (RVC's usual)", 48000: '48 kHz' },
+  } as Record<string, Record<string, string>>,
 
   // Models
   models: 'Models',

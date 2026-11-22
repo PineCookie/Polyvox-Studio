@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import engines, lora_library
 from .config import Settings
@@ -95,26 +95,31 @@ class TrainParams(BaseModel):
     enable_lm: bool = True
     enable_dit: bool = True
     enable_proj: bool = False
-    # GPT-SoVITS (full fine-tuning, two stages; the webui's defaults): epochs of
-    # each stage (num_iters then follows from them) and the GPT stage's batch.
-    sovits_epochs: int = Field(8, ge=0, le=100)
-    gpt_epochs: int = Field(15, ge=0, le=100)
-    gpt_batch_size: int = Field(8, ge=1, le=64)
-    gsv_version: Literal["v2ProPlus", "v2Pro", "v4"] = "v2ProPlus"  # the base model trained from (v4: LoRA rank)
-    # S2-Pro: also a LoRA on the slow transformer's attention (experimental, never the default:
-    # engines/fish_s2/lora.py), at its own AdamW learning rate (learning_rate is the fast layers').
-    s2_slow: bool = False
-    s2_slow_lr: float = Field(2e-5, gt=0, le=1)
-    # S2-Pro training only the fast transformer: references cached per clip (0: train without
-    # references), and the slow transformer kept in CPU memory between validation samples
-    # (New run takes it from the GPU profile, vram.Profile.s2_offload).
-    s2_cached_references: int = Field(2, ge=0, le=8)
-    s2_offload: bool = False
-    # RVC (full training from its base models at that rate): epochs over the dataset's 3.7 s
-    # pieces (num_iters then follows), and every how many epochs a checkpoint (a voice) is saved.
-    rvc_epochs: int = Field(100, ge=1, le=1000)
-    rvc_save_every: int = Field(25, ge=1, le=1000)
-    rvc_sample_rate: Literal[32000, 40000, 48000] = 40000
+    # The engine's own settings (Engine.train_form, scope "option"), by name; missing ones take
+    # their defaults (Engine.train_options). Given at the top level too (as before engines had
+    # their own: e.g. gsv_version), they are moved here.
+    options: dict = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _engine_settings(cls, data):
+        """The engine's own settings given at the top level go into ``options`` (checked);
+        sizing-only values (epochs) and other engines' settings are dropped."""
+        if not isinstance(data, dict):
+            return data
+        engine = engines.classes().get(str(data.get("engine") or engines.DEFAULT))
+        if engine is None:
+            return data
+        form = {p.name: p for p in engine.train_form()}
+        options = dict(data.get("options") or {})
+        rest = {}
+        for key, value in data.items():
+            if key in cls.model_fields:
+                rest[key] = value
+            elif form.get(key) is not None and form[key].scope == "option":
+                options[key] = value
+        rest["options"] = {name: value for name, value in engine.train_options(options).items() if name in options}
+        return rest
 
 
 class RunSummary(BaseModel):
@@ -143,6 +148,7 @@ class Sample(BaseModel):
 
 class RunDetail(RunSummary):
     config: dict
+    params: dict = {}  # the training form's values it was started with (Engine.values_from_config)
     train: list[dict]  # {"step", "loss/diff", "loss/stop", "lr", "epoch", "grad_norm", "interval"?}
     val: list[dict]  # {"step", "loss/total", "loss/diff", "loss/stop"}
     seconds_per_step: float | None
@@ -488,9 +494,11 @@ class TrainingManager:
                 elif MODEL_INPUT_FILE.fullmatch(f.name):
                     model_inputs.append(f.name)
 
+        engine = engines.classes().get(summary.engine)
         return RunDetail(
             **summary.model_dump(),
             config=config,
+            params=engine.values_from_config(config) if engine else {},
             train=downsample(shown["train"]),
             val=downsample(shown["val"]),
             since=since,

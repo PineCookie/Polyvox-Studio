@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { appendNew, getRun, listDatasets, listRuns, resumeRun, startRun, stopTraining } from '../api'
-import type { Lora, RunDetail as Run, RunSummary, TrainParams } from '../api'
+import { appendNew, getRun, listDatasets, listEngines, listRuns, resumeRun, startRun, stopTraining } from '../api'
+import type { Engine, Lora, RunDetail as Run, RunSummary, TrainRequest } from '../api'
 import { useT } from '../i18n'
 import { NewRunForm } from './NewRunForm'
 import { RunDetail } from './RunDetail'
@@ -26,6 +26,11 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
   const [datasets, setDatasets] = useState<string[]>([])
   const [selected, setSelected] = useState<string | null>(newRunDataset ? NEW_RUN : null)
   const [detail, setDetail] = useState<Run | null>(null)
+  // Their training forms (fields, this GPU's defaults): New run and the runs' Parameters tab.
+  const [engines, setEngines] = useState<Engine[]>([])
+  useEffect(() => {
+    listEngines().then(setEngines, (e: Error) => onError(e.message))
+  }, [onError])
 
   const activeRun = runs.find(isLive)?.name ?? null
 
@@ -93,7 +98,7 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
     await refreshRuns()
   }
 
-  async function start(params: TrainParams) {
+  async function start(params: TrainRequest) {
     await act(async () => {
       const run = await startRun(params)
       setDetail(run)
@@ -113,6 +118,7 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
             activeRun={activeRun}
             onStart={start}
             initialDataset={newRunDataset}
+            engines={engines}
           />
         ) : shown ? (
           <RunDetail
@@ -123,6 +129,7 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
             onStop={() => act(stopTraining)}
             onResume={(numIters) => act(() => resumeRun(shown.name, numIters))}
             onTryCheckpoint={onTryCheckpoint}
+            engines={engines}
           />
         ) : (
           <section className="panel">

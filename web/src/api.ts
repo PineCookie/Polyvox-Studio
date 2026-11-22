@@ -28,16 +28,30 @@ export interface Lora {
 }
 
 // A TTS model family (src/polyvox/engines/base.py).
+export type FormValue = number | boolean | string
+export type FormValues = Record<string, FormValue>
+// {another setting: the values it may have}: holds when each has one of them.
+export type Condition = Record<string, FormValue[]>
+
 export interface EngineParam {
   name: string
   kind: 'float' | 'int' | 'bool' | 'choice'
-  default: number | boolean | string
+  default: FormValue
   min: number | null
   max: number | null
   step: number | null
-  choices: string[] | null // kind 'choice': the allowed values
+  choices: (string | number)[] | null // kind 'choice': the allowed values
   base_only: boolean // only used with the base model (no voice chosen)
   versions: string[] // only used by these model versions (the voice's, or base_version); empty: all
+  // Training forms (Engine.train_form) only:
+  scope: 'run' | 'option' | 'plan' // a TrainParams field / the engine's own setting / only sizes the run
+  group: 'main' | 'advanced'
+  shown_if: Condition | null
+  disabled_if: Condition | null // fixed at its value while this holds
+  disabled: string | null // can't be changed here: why (a message key)
+  implies: Record<string, FormValues> | null // {its value: settings it sets} when it takes that value
+  labels: [Condition, string][] // the first that holds names it (a label key)
+  hint: string | null // message key of a note shown with it
 }
 
 export type ReferenceSlot = 'reference' | 'prompt'
@@ -88,6 +102,7 @@ export interface Engine {
     takes: boolean // a long text is spoken as separate takes (getTakes says where); a blank line starts one
   }
   params: EngineParam[] // synthesis settings
+  train_form: EngineParam[] // New run's fields, with the defaults that fit this GPU (engines that train)
   model_setting: string // its base model in the Models list
   base_repo: string | null // that model's Hugging Face repo
   loaded: boolean
@@ -548,6 +563,7 @@ export type MetricPoint = { step: number } & Record<string, number>
 
 export interface RunDetail extends RunSummary {
   config: Record<string, unknown>
+  params: FormValues // the training form's values it was started with
   train: MetricPoint[]
   val: MetricPoint[]
   seconds_per_step: number | null
@@ -565,47 +581,53 @@ export interface RunDetail extends RunSummary {
 
 const CONSOLE_LINES = 200 // as many as the server's tail
 
-export const OPTIMIZERS = ['adamw', 'prodigy', 'prodigy_sf'] as const
-export type Optimizer = (typeof OPTIMIZERS)[number]
-
-export interface TrainParams {
+// A new run: what it trains on, and the training form's values (Engine.train_form) by name; the
+// server puts the engine's own settings into its options.
+export interface TrainRequest {
   name: string
   engine: string
   dataset: string
   val_dataset: string | null
   val_holdout: number
-  num_iters: number
-  batch_size: number
-  grad_accum_steps: number
-  max_batch_tokens: number // clips too long for this per-batch budget are left out; 0 = no limit
-  learning_rate: number
-  optimizer: Optimizer
-  prodigy_steps: number // prodigy_sf: step size fixed from this step on; 0 = adapts throughout
-  weight_decay: number
-  warmup_steps: number
-  max_grad_norm: number
-  log_interval: number
-  valid_interval: number
-  save_interval: number
-  num_workers: number
-  lora_rank: number
-  lora_alpha: number
-  lora_dropout: number
-  enable_lm: boolean
-  enable_dit: boolean
-  enable_proj: boolean
-  // GPT-SoVITS (full fine-tuning in two stages): num_iters follows from these
-  sovits_epochs: number
-  gpt_epochs: number
-  gpt_batch_size: number
-  gsv_version: string // the GPT-SoVITS base model trained from: v2ProPlus | v2Pro
-  s2_slow: boolean // S2-Pro: also a LoRA on the slow transformer (experimental; off by default)
-  s2_slow_lr: number // its own AdamW learning rate (learning_rate is then the fast transformer's)
-  s2_cached_references: number // fast-only: references cached per clip (0 = train without references)
-  s2_offload: boolean // fast-only: the slow transformer waits in CPU memory between samples
-  rvc_epochs: number // RVC: epochs over the dataset's 3.7 s pieces (num_iters follows)
-  rvc_save_every: number // RVC: a checkpoint (a voice) every this many epochs
-  rvc_sample_rate: number // RVC: 32000 / 40000 / 48000 (the base models trained from)
+  [field: string]: FormValue | null
+}
+
+// What a run of these settings will do (POST /api/training/plan; Engine.plan).
+export interface RunPlan {
+  values: FormValues // the fields that follow (num_iters, warmup_steps, ...), except those set by hand
+  summary: {
+    kind: 'epochs' | 'stages' | 'pieces'
+    steps: number | null
+    model: 'lora' | 'full' | 'v4_lora'
+    rank?: number
+    alpha?: number
+    // kind "epochs"
+    per_step?: number
+    batch?: number
+    accum?: number
+    epochs?: number | null // the passes over the clips the steps make
+    save_interval?: number
+    warmup_steps?: number
+    // kind "stages" (GPT-SoVITS)
+    sovits?: number
+    gpt?: number
+    gpt_batch?: number
+    // kind "pieces" (RVC)
+    pieces?: number
+    save_every?: number
+  }
+  name_tag: string // the model part of a run name
+  samples: { every: number; unit: 'steps' | 'epochs' } // validation samples
+}
+
+export async function planRun(body: {
+  engine: string
+  values: FormValues
+  clips: number
+  seconds: number
+  overrides: string[]
+}): Promise<RunPlan> {
+  return (await postJson('/api/training/plan', body)).json()
 }
 
 function postJson(url: string, body?: unknown): Promise<Response> {
@@ -1012,7 +1034,7 @@ export function appendNew(known: RunDetail, run: RunDetail): RunDetail {
   return { ...run, since: null, train, val, log, log_appended: false }
 }
 
-export async function startRun(params: TrainParams): Promise<RunDetail> {
+export async function startRun(params: TrainRequest): Promise<RunDetail> {
   return (await postJson('/api/training/runs', params)).json()
 }
 

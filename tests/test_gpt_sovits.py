@@ -320,7 +320,7 @@ def test_training_config_is_full_finetuning_in_two_stages(engine, data_dir, tmp_
     assert GptSovitsEngine.capabilities.training and GptSovitsEngine.capabilities.full_finetune
     with pytest.raises(ValueError, match="epochs"):
         engine.training_config(
-            params.model_copy(update={"sovits_epochs": 0, "gpt_epochs": 0}), tmp_path, run_manifest, None
+            TrainParams(**{**params.model_dump(), "sovits_epochs": 0, "gpt_epochs": 0}), tmp_path, run_manifest, None
         )
 
 

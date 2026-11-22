@@ -91,7 +91,8 @@ def test_engines_are_listed_with_their_settings(client):
     assert set(body) == {"voxcpm", "other"}
     assert body["voxcpm"]["capabilities"]["style"] is True
     assert [p["name"] for p in body["voxcpm"]["params"]] == ["cfg_value", "inference_timesteps", "normalize", "denoise"]
-    assert body["other"]["params"][0] == {
+    shown = {"name", "kind", "default", "min", "max", "step", "choices", "base_only", "versions"}
+    assert {k: v for k, v in body["other"]["params"][0].items() if k in shown} == {
         "name": "steps",
         "kind": "int",
         "default": 8,

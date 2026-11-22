@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 from ... import lora_library, vram
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
+from ..common import train_form
 from . import lora as s2lora
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 ENGINE = "fish_s2"
 MIN_GB = 15.0  # a 16 GB card reports a little under 16
 TRAIN_MIN_GB = 11.0  # training: a 12 GB card (the slow transformer offloaded)
+FAST_ADAMW_LR = 5e-4  # the fast transformer's LoRA with AdamW (tested); the slow one's: s2_slow_lr
 FRAMES_PER_CHAR = 5.0  # first guess (Chinese ~4.5 characters per second, 21.5 frames per second); then learned
 MIN_FRAMES = 10
 LEARN_MIN_CHARS = 10
@@ -333,6 +335,45 @@ class FishS2Engine(Engine):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
+    @classmethod
+    def train_form(cls, profile=None):
+        """The fast transformer's LoRA (AdamW tested at 5e-4); optionally the slow one's too, with
+        AdamW only and its own rate (s2_slow, experimental). Fast-only trains from slow
+        transformer states cached per clip, the slow transformer in CPU memory meanwhile where
+        the GPU can't hold it beside training (profile.s2_offload: always below 16 GB)."""
+        small = bool(profile and profile.s2_offload)
+        slow, fast_only = {"s2_slow": (True,)}, {"s2_slow": (False,)}
+        form = train_form.lora_form(cls.id, profile, adamw_lr=FAST_ADAMW_LR)
+        form = train_form.replace(form, "optimizer", disabled_if=slow)
+        lr = next(p for p in form if p.name == "learning_rate")
+        form = train_form.replace(form, "learning_rate", labels=((slow, "s2_fast_lr"), *lr.labels))
+        form = train_form.insert_after(
+            form,
+            "learning_rate",
+            Param("s2_slow_lr", "float", 2e-5, min=0, max=1, scope="option", shown_if=slow,
+                  config="slow_learning_rate"),
+            Param("s2_slow", "bool", False, scope="option", hint="s2SlowNeeds16" if small else "s2SlowHint",
+                  disabled="s2SlowNeeds16" if small else None,
+                  implies={"true": {"optimizer": "adamw", "learning_rate": FAST_ADAMW_LR}}),
+        )  # fmt: skip
+        return (
+            *form,
+            Param("s2_cached_references", "int", 2, min=0, max=8, scope="option", group="advanced",
+                  shown_if=fast_only, hint="s2CacheHint", config="cached_references"),
+            Param("s2_offload", "bool", small, scope="option", group="advanced", shown_if=fast_only,
+                  disabled="s2SlowNeeds16" if small else None, config="offload", legacy=True),
+        )  # fmt: skip
+
+    @classmethod
+    def plan(cls, values, clips, seconds, overrides=()):
+        return train_form.epoch_plan(values, clips, overrides, "s2")
+
+    @classmethod
+    def values_from_config(cls, config: dict) -> dict:
+        lora = config.get("lora") or {}
+        targets = lora.get("targets") if isinstance(lora, dict) else None
+        return {**super().values_from_config(config), "s2_slow": isinstance(targets, list) and "slow_attn" in targets}
+
     def training_config(
         self, params: TrainParams, run_dir: Path, train_manifest: Path, val_manifest: Path | None
     ) -> dict:
@@ -343,12 +384,13 @@ class FishS2Engine(Engine):
 
         if reason := self.training_unavailable():
             raise ValueError(f"Fish Audio S2-Pro can't train here: {reason}")
+        opts = self.train_options(params.options)
         # Below 16 GB the whole model never fits beside training: the slow transformer
         # always waits in CPU memory, and can't train itself.
         small = (self.training_gb() or 0) < MIN_GB
-        if params.s2_slow and small:
+        if opts["s2_slow"] and small:
             raise ValueError("Training the slow transformer needs a 16 GB GPU.")
-        if params.s2_slow and params.optimizer != "adamw":
+        if opts["s2_slow"] and params.optimizer != "adamw":
             raise ValueError("Training the slow transformer needs AdamW (Prodigy can't give it a smaller rate).")
         dataset = manifests.resolve(self.settings.data_dir, params.dataset)
         clips = self.capabilities.voice_reference_clips
@@ -374,15 +416,15 @@ class FishS2Engine(Engine):
                 "r": params.lora_rank,
                 "alpha": params.lora_alpha,
                 "dropout": params.lora_dropout,
-                "targets": [*s2lora.DEFAULT_TARGETS, *(s2lora.SLOW_TARGETS if params.s2_slow else ())],
+                "targets": [*s2lora.DEFAULT_TARGETS, *(s2lora.SLOW_TARGETS if opts["s2_slow"] else ())],
             },
             "compile": self.settings.optimize is not False,  # fuse the fast layers' training forward
-            "cached_references": params.s2_cached_references,
-            "offload": params.s2_offload or small,
+            "cached_references": opts["s2_cached_references"],
+            "offload": opts["s2_offload"] or small,
             # Codes and slow transformer states, shared by the dataset's runs (hidden folders aren't datasets).
             "cache_file": str(dataset.parent / ".cache" / "fish_s2.pt"),
             # The slow transformer's own AdamW rate (learning_rate is the fast layers').
-            **({"slow_learning_rate": params.s2_slow_lr} if params.s2_slow else {}),
+            **({"slow_learning_rate": opts["s2_slow_lr"]} if opts["s2_slow"] else {}),
             "reference": {
                 "clips": [{"audio": str(c.audio), "text": c.text} for c in picked],
                 "source": f"{params.dataset}: " + ", ".join(c.audio.name for c in picked),

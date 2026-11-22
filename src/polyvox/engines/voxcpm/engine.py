@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from ...config import Settings
 from ...data import manifests
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
+from ..common import train_form
 from .inference import InferenceService
 from .inference import SynthesisRequest as VoxRequest
 
@@ -163,6 +164,16 @@ class VoxCPMEngine(Engine):
     def unload(self) -> None:
         if self._service is not None:
             self._service.unload()
+
+    @classmethod
+    def train_form(cls, profile=None):
+        # LoRA on the two LMs, the diffusion head and (optionally) the projections; its
+        # script drops clips over the token budget.
+        return train_form.lora_form(cls.id, profile, layers=("lm", "dit", "proj"), token_budget=True, workers=True)
+
+    @classmethod
+    def plan(cls, values, clips, seconds, overrides=()):
+        return train_form.epoch_plan(values, clips, overrides, "voxcpm2")
 
     def training_config(
         self, params: TrainParams, run_dir: Path, train_manifest: Path, val_manifest: Path | None

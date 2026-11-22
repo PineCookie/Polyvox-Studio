@@ -345,3 +345,18 @@ class DownloadIn(BaseModel):
 
 class ResumeIn(BaseModel):
     num_iters: int | None = Field(None, ge=1, le=1_000_000)
+
+
+class PlanIn(BaseModel):
+    engine: str
+    values: dict  # the training form's values (Engine.train_form), by name
+    clips: int = Field(ge=0)  # training clips (the dataset's, less those held out)
+    seconds: float = Field(0.0, ge=0)  # their audio in all
+    overrides: list[str] = []  # fields set by hand: kept as they are
+
+
+class PlanOut(BaseModel):
+    values: dict  # the fields that follow from the others (num_iters, warmup_steps, ...)
+    summary: dict  # {"kind": "epochs" | "stages" | "pieces", ...}: what the run will do
+    name_tag: str  # the model part of a run name, e.g. "voxcpm2-r32"
+    samples: dict  # {"every", "unit": "steps" | "epochs"}: validation samples

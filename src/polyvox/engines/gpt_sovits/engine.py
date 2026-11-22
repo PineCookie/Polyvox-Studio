@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from ... import lora_library
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
+from ..common import train_form
 from . import voices
 from .synth import BASE_VERSIONS, REF_MAX_S, V4, VERSIONS, Options, split_text
 
@@ -37,6 +38,9 @@ TOKENS_PER_CHAR = 5.5  # first guess of semantic tokens per character; refined f
 MIN_TOKENS = 12
 LEARN_MIN_CHARS = 10
 BASE_VERSION = "v2ProPlus"
+TRAIN_VERSIONS = BASE_VERSIONS  # base models a run trains from, the default first
+NAME_TAGS = {"v2ProPlus": "v2pp", "v2Pro": "v2pro", "v4": "v4"}  # in run names, as imported webui voices
+V4_BATCH = 4  # v4's SoVITS stage (a LoRA on its mel DiT) at the batch it was tuned at
 
 # (base models folder, G2PW folder, device) -> synth.Pipeline
 PipelineLoader = Callable[[Path, Path, str], object]
@@ -240,6 +244,54 @@ class GptSovitsEngine(Engine):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
+    @classmethod
+    def train_form(cls, profile=None):
+        """Both stages as the webui trains them (its epochs), the batch that fits the GPU for both
+        (no accumulation: SoVITS is a GAN); v4's SoVITS stage is a LoRA on its mel DiT, at the
+        batch it was tuned at (smaller GPUs recompute activations instead)."""
+        batch = train_form.gpu_batch(profile, cls.id)
+        v4 = {"gsv_version": (V4,)}
+        return train_form.full_form(
+            profile,
+            cls.id,
+            Param("sovits_epochs", "int", 8, min=0, max=100, scope="option"),
+            Param("gpt_epochs", "int", 15, min=0, max=100, scope="option", legacy=0),
+            Param("lora_rank", "int", 32, min=1, max=512, shown_if=v4, config="lora_rank"),
+            extra=(
+                Param("gpt_batch_size", "int", batch if profile else 8, min=1, max=64, scope="option"),
+                Param("gsv_version", "choice", "v2ProPlus", choices=(*TRAIN_VERSIONS,), scope="option",
+                      config="version", implies={v: {"batch_size": V4_BATCH if v == V4 else batch}
+                                                 for v in TRAIN_VERSIONS}),
+            ),
+        )  # fmt: skip
+
+    @classmethod
+    def plan(cls, values, clips, seconds, overrides=()):
+        from .worker import gpt_batch_size, plan_steps
+
+        batch, gpt_batch = int(values.get("batch_size") or 1), int(values.get("gpt_batch_size") or 1)
+        sovits, gpt = plan_steps(
+            clips, batch, values.get("sovits_epochs") or 0, clips, gpt_batch, values.get("gpt_epochs") or 0
+        )
+        own, final = train_form.derived(values, {"num_iters": sovits + gpt} if clips > 0 else {}, overrides)
+        version = str(values.get("gsv_version") or "v2ProPlus")
+        rank = values.get("lora_rank")
+        return {
+            "values": own,
+            "summary": {
+                "kind": "stages",
+                "sovits": sovits,
+                "gpt": gpt,
+                "batch": batch,
+                "gpt_batch": gpt_batch_size(clips, gpt_batch) if clips else gpt_batch,
+                "steps": final.get("num_iters"),
+                "model": "v4_lora" if version == V4 else "full",
+                "rank": rank,
+            },
+            "name_tag": NAME_TAGS.get(version, version.lower()) + (f"-r{rank}" if version == V4 else ""),
+            "samples": {"every": 1, "unit": "epochs"},
+        }
+
     def training_config(
         self, params: TrainParams, run_dir: Path, train_manifest: Path, val_manifest: Path | None
     ) -> dict:
@@ -250,9 +302,10 @@ class GptSovitsEngine(Engine):
         reference clip (samples, checkpoints) is the dataset's best one."""
         if reason := self.unavailable():
             raise ValueError(f"GPT-SoVITS can't train yet: {reason}")
-        if not params.sovits_epochs and not params.gpt_epochs:
+        opts = self.train_options(params.options)
+        if not opts["sovits_epochs"] and not opts["gpt_epochs"]:
             raise ValueError("Train SoVITS, the GPT or both: set their epochs.")
-        v4 = params.gsv_version == V4
+        v4 = opts["gsv_version"] == V4
         if v4 and not self.settings.model_path("gsv_v4_model"):
             raise ValueError("GPT-SoVITS v4 isn't downloaded yet (Models: GPT-SoVITS v4).")
         from ...data import manifests
@@ -263,25 +316,25 @@ class GptSovitsEngine(Engine):
         audio, text = voices.pick_reference(dataset, manifests.legacy_root(self.settings.data_dir))
         clips = len(manifests.read_manifest(train_manifest)[0])
         sovits_steps, gpt_steps = plan_steps(
-            clips, params.batch_size, params.sovits_epochs, clips, params.gpt_batch_size, params.gpt_epochs
+            clips, params.batch_size, opts["sovits_epochs"], clips, opts["gpt_batch_size"], opts["gpt_epochs"]
         )
         config = {
-            "version": params.gsv_version,
+            "version": opts["gsv_version"],
             "pretrained_path": self.settings.model_path("gsv_model"),
             "g2pw_path": self.settings.model_path("gsv_g2pw_model"),
             "train_manifest": str(train_manifest),
             "val_manifest": str(val_manifest) if val_manifest else "",
             "save_path": str(run_dir / "checkpoints"),
             "num_iters": sovits_steps + gpt_steps,
-            "sovits_epochs": params.sovits_epochs,
+            "sovits_epochs": opts["sovits_epochs"],
             "batch_size": params.batch_size,
             "learning_rate": params.learning_rate,
-            "gpt_epochs": params.gpt_epochs,
-            "gpt_batch_size": params.gpt_batch_size,
+            "gpt_epochs": opts["gpt_epochs"],
+            "gpt_batch_size": opts["gpt_batch_size"],
             "log_interval": params.log_interval,
             "reference": {"audio": str(audio), "text": text, "source": f"{params.dataset}: {audio.name}"},
             # Clip features, shared by the dataset's runs (hidden folders aren't datasets; v4 uses v2ProPlus's).
-            "feature_cache": str(dataset.parent / ".cache" / f"gpt_sovits_{feature_version(params.gsv_version)}.pt"),
+            "feature_cache": str(dataset.parent / ".cache" / f"gpt_sovits_{feature_version(opts['gsv_version'])}.pt"),
         }
         if v4:  # SoVITS as a LoRA on the mel DiT
             config |= {

@@ -4,7 +4,7 @@ UI work the same for each model family."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -13,11 +13,18 @@ import numpy as np
 
 if TYPE_CHECKING:
     from ..training import TrainParams
+    from ..vram import Profile
+
+
+# {another setting's name: the values it may have}: holds when each has one of them.
+Condition = dict[str, tuple]
 
 
 @dataclass(frozen=True)
 class Param:
-    """One synthesis setting an engine accepts; the UI draws its control from this."""
+    """One setting an engine accepts (synthesis: Engine.params; a training run: Engine.train_form);
+    the UI draws its control from this. Labels and hints are message keys the UI translates (a
+    text it doesn't know is shown as it is)."""
 
     name: str
     kind: Literal["float", "int", "bool", "choice"]
@@ -25,15 +32,30 @@ class Param:
     min: float | None = None
     max: float | None = None
     step: float | None = None
-    choices: tuple[str, ...] | None = None  # kind "choice": the allowed values
+    choices: tuple[str | int | float, ...] | None = None  # kind "choice": the allowed values
     base_only: bool = False  # only used with the base model (no voice / LoRA chosen)
     versions: tuple[str, ...] = ()  # only used by these model versions (a voice's, or base_version); () = all
+    # Training forms only:
+    # "run": a TrainParams field; "option": the engine's own (TrainParams.options); "plan": only
+    # sizes the run (Engine.plan, e.g. epochs), never sent to the worker.
+    scope: Literal["run", "option", "plan"] = "run"
+    group: Literal["main", "advanced"] = "main"  # advanced: folded away in a new run
+    shown_if: Condition | None = None  # hidden unless this holds
+    disabled_if: Condition | None = None  # fixed at its value while this holds
+    disabled: str | None = None  # can't be changed here (on this GPU): why, as a message key
+    implies: dict[str, dict] | None = None  # {its value: {setting: value}}: set when it takes that value
+    labels: tuple[tuple[Condition, str], ...] = ()  # (condition, label key): the first that holds names it
+    hint: str | None = None  # message key of a note shown with it
+    config: str | None = None  # its key in a run's train_config.yaml ("lora.r"); None = its name
+    legacy: float | int | bool | str | None = None  # its value for runs whose config lacks it (None: default)
 
     def coerce(self, value) -> float | int | bool | str:
         if self.kind == "choice":
-            if str(value) not in (self.choices or ()):
-                raise ValueError(f"'{self.name}' must be one of {', '.join(self.choices or ())}.")
-            return str(value)
+            # The choice itself (its type kept: a number stays a number).
+            match = next((c for c in self.choices or () if str(c) == str(value)), None)
+            if match is None:
+                raise ValueError(f"'{self.name}' must be one of {', '.join(map(str, self.choices or ()))}.")
+            return match
         if self.kind == "bool":
             if isinstance(value, str):
                 return value.strip().lower() in ("1", "true", "yes", "on")
@@ -257,6 +279,37 @@ class Engine(ABC):
         return config
 
     @classmethod
+    def train_form(cls, profile: Profile | None = None) -> tuple[Param, ...]:
+        """New run's fields for this engine, in order: TrainParams fields (scope "run"), its own
+        settings ("option", in TrainParams.options) and what only sizes the run ("plan"), with
+        the defaults that fit ``profile``'s GPU (None: no GPU known)."""
+        return ()
+
+    @classmethod
+    def train_options(cls, options: dict) -> dict:
+        """``options`` (TrainParams.options) checked against the engine's own settings, the
+        missing ones at their defaults."""
+        own = {p.name: p for p in cls.train_form() if p.scope == "option"}
+        if unknown := set(options) - set(own):
+            raise ValueError(f"{cls.name} has no training setting {', '.join(sorted(unknown))}.")
+        return {name: p.coerce(options[name]) if name in options else p.default for name, p in own.items()}
+
+    @classmethod
+    def plan(cls, values: dict, clips: int, seconds: float, overrides: Iterable[str] = ()) -> dict:
+        """A new run's size from the form's ``values`` (its fields by name) and its training clips
+        (``clips``, ``seconds`` of audio in all): {"values": the fields that follow from them,
+        num_iters etc., except ``overrides`` (set by hand); "summary": {"kind", ...} for the
+        UI's description; "name_tag": the model part of a run name; "samples": {"every",
+        "unit"}: how often validation samples come}."""
+        raise ValueError(f"{cls.name} doesn't train here.")
+
+    @classmethod
+    def values_from_config(cls, config: dict) -> dict:
+        """The form's values a run was started with (its train_config.yaml); a setting its
+        config lacks takes its ``legacy`` value (what runs from before it used), else its default."""
+        return {p.name: config_value(config, p) for p in cls.train_form() if p.scope != "plan"}
+
+    @classmethod
     def base_repo(cls) -> str | None:
         """The Hugging Face repo of its base model (models.MODELS): the model's own, also when it
         is downloaded from a converted copy (Drama 3)."""
@@ -264,7 +317,8 @@ class Engine(ABC):
 
         return next((m.model_repo for m in MODELS if m.setting == cls.model_setting), None)
 
-    def public(self) -> dict:
+    def public(self, profile: Profile | None = None) -> dict:
+        """For /api/engines; ``profile``: the GPU's, for the training form's defaults."""
         return {
             "id": self.id,
             "name": self.name,
@@ -272,10 +326,29 @@ class Engine(ABC):
             "training_unavailable": self.training_unavailable() if self.capabilities.training else None,
             "capabilities": asdict(self.capabilities),
             "params": [asdict(p) for p in self.params],
+            "train_form": [asdict(p) for p in self.train_form(profile)] if self.capabilities.training else [],
             "model_setting": self.model_setting,
             "base_repo": self.base_repo(),
             "loaded": self.loaded,
         }
+
+
+def config_value(config: dict, param: Param):
+    """``param``'s value in a run's config (Param.config: a dotted key), if it is one it can
+    take; else its legacy value or default."""
+    node = config
+    for part in (param.config or param.name).split("."):
+        node = node.get(part) if isinstance(node, dict) else None
+    if param.kind == "bool" and isinstance(node, bool):
+        return node
+    if param.kind in ("int", "float") and isinstance(node, int | float) and not isinstance(node, bool):
+        return node
+    if param.kind == "choice" and node is not None:
+        try:
+            return param.coerce(node)
+        except ValueError:
+            pass
+    return param.legacy if param.legacy is not None else param.default
 
 
 def fuse_settings() -> None:

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from ... import lora_library, models
 from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
+from ..common import train_form
 from . import lora as dots_lora
 
 if TYPE_CHECKING:
@@ -248,6 +249,14 @@ class DotsEngine(Engine):
             self._merger.apply(None)
             raise
         self._lora = key
+
+    @classmethod
+    def train_form(cls, profile=None):
+        return train_form.lora_form(cls.id, profile, layers=("lm", "dit"), workers=True)
+
+    @classmethod
+    def plan(cls, values, clips, seconds, overrides=()):
+        return train_form.epoch_plan(values, clips, overrides, "dots")
 
     def training_config(
         self, params: TrainParams, run_dir: Path, train_manifest: Path, val_manifest: Path | None

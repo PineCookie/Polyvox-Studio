@@ -565,8 +565,11 @@ src/polyvox/
   vram.py          settings per GPU size (batches, which models share the GPU)
   engines/         TTS engines behind one interface (base.py: Engine, Capabilities;
                    __init__.py: the registry). No engine imports another; what several share
-                   is in common/
-    common/        lora.py (LoRA hooks), worker.py (training-worker helpers), cache.py
+                   is in common/. An engine describes its New-run form (Engine.train_form:
+                   fields, defaults per GPU, when they show) and sizes a run (Engine.plan);
+                   the UI draws the form from that
+    common/        train_form.py (shared training fields, runs sized in epochs),
+                   lora.py (LoRA hooks), worker.py (training-worker helpers), cache.py
                    (per-clip dataset caches), reference.py (voices' default references,
                    saved-reference voices), layers.py, fish_codec.py (Fish Audio's codec)
     voxcpm/        engine.py; inference.py (model cache, LoRA hot-swap); worker.py (training)

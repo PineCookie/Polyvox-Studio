@@ -22,7 +22,7 @@ def router(s: Studio) -> APIRouter:
     @api.get("/api/engines")
     def list_engines() -> list[dict]:
         """Each engine: capabilities, synthesis settings (params) and whether it can run here."""
-        return [e.public() for e in s.registry.values()]
+        return [e.public(s.profile) for e in s.registry.values()]
 
     @api.post("/api/model/unload")
     def unload() -> dict:

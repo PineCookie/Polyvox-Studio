@@ -908,7 +908,8 @@ export const zh: Messages = {
   separateDataset: '单独的数据集',
   chooseDatasetOption: '选择数据集…',
   holdoutHint: (every) => `条片段预留用于验证损失和试听样本，每 ${every} 步一次（0 = 不预留）`,
-  rvcHoldoutHint: (every) => `条片段预留，每次保存声音时（每 ${every} 轮）转换成该声音试听（0 = 不预留）`,
+  holdoutEpochsHint: (every) =>
+    `条片段预留用于试听样本，${every === 1 ? '每轮一次' : `每 ${every} 轮一次`}（0 = 不预留）`,
   newPill: '新建',
   starting2: '启动中…',
   startTraining: '开始训练',
@@ -932,7 +933,7 @@ export const zh: Messages = {
   rvcSteps: (steps, pieces) => `约 ${steps} 步 · 约 ${pieces} 个片段`,
   rvcScheduleHint: (epochs, pieces, batch, gpu, steps, every) =>
     `${epochs} 轮，约 ${pieces} 个最长 3.7 秒的片段（按 RVC WebUI 的方式切分训练片段），批大小 ${batch}${gpu ? `（适合这块 ${gpu} GB 显卡）` : ''} = 约 ${steps} 步；每 ${every} 轮保存一个声音。切分后得到准确步数。RVC 与 WebUI 一样，从基础模型训练整个模型；含唱歌的片段能让它唱得更好。`,
-  rvcRate: (khz, usual) => `${khz} kHz${usual ? '（RVC 常用）' : ''}`,
+  stepsFollowEpochs: '由轮数和数据集决定',
   rvcRateHint:
     '声音训练和演唱时的采样率。只有当片段本身含 20 kHz 以上的内容（以 44.1 / 48 kHz 录制）时，48 kHz 才会多出高频；32 kHz 在 16 kHz 处截止。',
 
@@ -979,10 +980,9 @@ export const zh: Messages = {
   s2SlowNeeds16: '需要 16 GB 显卡：在这张显卡上，训练快速 Transformer 时慢速 Transformer 放在内存中。',
   s2SlowHint:
     '在慢速 Transformer 的注意力层上也加 LoRA，使用 AdamW 和它自己的较小学习率（测试过：快速 5e-4，慢速 2e-5；Prodigy 无法只给一部分更小的学习率）。训练约慢一倍；在我们的测试中声音并没有更像，学习率更高时还会把句子截断、留下长时间静音。请与不开此项的训练比较检查点。',
-  optimizers: {
-    adamw: 'AdamW',
-    prodigy: 'Prodigy',
-    prodigy_sf: 'Prodigy-SF',
+  trainChoices: {
+    optimizer: { adamw: 'AdamW', prodigy: 'Prodigy', prodigy_sf: 'Prodigy-SF' },
+    rvc_sample_rate: { 32000: '32 kHz', 40000: '40 kHz（RVC 常用）', 48000: '48 kHz' },
   },
 
   // 模型

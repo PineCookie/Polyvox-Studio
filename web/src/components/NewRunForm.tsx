@@ -1,21 +1,19 @@
 import { useEffect, useState } from 'react'
-import { getStatus, listEngines } from '../api'
-import type { DatasetReport, Engine, GpuProfile, TrainParams } from '../api'
+import { DEFAULT_ENGINE, getStatus, planRun } from '../api'
+import type {
+  DatasetReport,
+  Engine,
+  EngineParam,
+  FormValue,
+  FormValues,
+  GpuProfile,
+  RunPlan,
+  TrainRequest,
+} from '../api'
 import { datasetName, formatStep } from '../format'
 import { useT } from '../i18n'
 import { DatasetReview } from './DatasetReview'
-import {
-  DEFAULT_EPOCHS,
-  DEFAULT_PARAMS,
-  epochsOf,
-  forEngine,
-  forGpu,
-  fullSteps,
-  rvcPieces,
-  rvcSteps,
-  scheduleFor,
-} from '../trainParams'
-import type { Params, Schedule } from '../trainParams'
+import { SCHEDULE_KEYS, allNumbers, formDefaults, withValue } from '../trainParams'
 import { ParamsFields } from './ParamsFields'
 import { SubTabs } from './SubTabs'
 
@@ -24,42 +22,23 @@ interface Props {
   runNames: string[]
   // Name of a run that is currently training, if any; only one job runs at a time.
   activeRun: string | null
-  onStart: (params: TrainParams) => Promise<void>
+  onStart: (params: TrainRequest) => Promise<void>
   // Preselected from the Prepare tab ("Review and train").
   initialDataset?: string
+  // Every engine (those that train are offered).
+  engines: Engine[]
 }
 
 type Tab = 'progress' | 'dataset' | 'parameters'
 
 // Matches training.RUN_NAME: letters of any language, digits, "." "_" "-".
 const NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,79}$/u
+const PLAN_DELAY_MS = 150 // after the last change
 
-const SCHEDULE_KEYS: (keyof Schedule)[] = [
-  'num_iters',
-  'warmup_steps',
-  'save_interval',
-  'valid_interval',
-  'log_interval',
-]
-
-// The model part of a run name; GPT-SoVITS names its version (as imported webui voices do).
-const MODEL_TAGS: Record<string, string> = { voxcpm: 'voxcpm2', dots_tts: 'dots', fish_s2: 's2', rvc: 'rvc' }
-const GSV_TAGS: Record<string, string> = { v2ProPlus: 'v2pp', v2Pro: 'v2pro', v4: 'v4' }
-
-/** dataset-model[-rank], e.g. voice-voxcpm2-r32, voice-dots-r32, voice-v2pp, voice-v4-r32, voice-rvc
- * (voice-rvc48k off RVC's usual 40 kHz); a repeat adds the month and day (voice-dots-r32-1012),
- * then a counter (-1012-2). */
-function suggestName(dataset: string, params: Params, taken: string[], now = new Date()): string {
-  const model =
-    params.engine === 'gpt_sovits'
-      ? (GSV_TAGS[params.gsv_version] ?? params.gsv_version.toLowerCase())
-      : params.engine === 'rvc' && params.rvc_sample_rate !== 40000
-        ? `rvc${params.rvc_sample_rate / 1000}k`
-        : (MODEL_TAGS[params.engine] ?? params.engine.split('_')[0])
-  // Full fine-tuning has no rank, except GPT-SoVITS v4 (a LoRA on its DiT).
-  const lora = params.engine !== 'rvc' && (params.engine !== 'gpt_sovits' || params.gsv_version === 'v4')
-  const parts = [datasetName(dataset).split('/').at(-1), model, ...(lora ? [`r${params.lora_rank}`] : [])]
-  const base = parts.join('-').replace(/[^\p{L}\p{N}_.-]/gu, '_')
+/** dataset-model, the model part from the engine (RunPlan.name_tag: voice-voxcpm2-r32,
+ * voice-v2pp, voice-rvc48k ...); a repeat adds the month and day (-1012), then a counter (-1012-2). */
+function suggestName(dataset: string, tag: string, taken: string[], now = new Date()): string {
+  const base = [datasetName(dataset).split('/').at(-1), tag].join('-').replace(/[^\p{L}\p{N}_.-]/gu, '_')
   if (!taken.includes(base)) return base
   const day = `${base}-${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
   let name = day
@@ -68,122 +47,174 @@ function suggestName(dataset: string, params: Params, taken: string[], now = new
 }
 
 /** A run before it starts: the same page as an existing run, with editable sections. */
-export function NewRunForm({ datasets, runNames, activeRun, onStart, initialDataset }: Props) {
+export function NewRunForm({ datasets, runNames, activeRun, onStart, initialDataset, engines }: Props) {
   const t = useT()
   const [tab, setTab] = useState<Tab>('dataset')
-  const [base, setBase] = useState<Params>(DEFAULT_PARAMS)
-  const [epochTarget, setEpochTarget] = useState(DEFAULT_EPOCHS)
-  // Schedule values set by hand in Advanced; the rest follow from the epochs.
-  const [overrides, setOverrides] = useState<Partial<Schedule>>({})
+  const trainable = engines.filter((e) => e.capabilities.training)
+  const [engineId, setEngineId] = useState(DEFAULT_ENGINE)
+  const engine = trainable.find((e) => e.id === engineId) ?? trainable[0]
+  const form = engine?.train_form ?? []
+  // Values changed so far (null: the engine's defaults), and the sizing fields set by hand.
+  const [edited, setEdited] = useState<FormValues | null>(null)
+  const [overrides, setOverrides] = useState<string[]>([])
+  const values = edited ?? formDefaults(form)
   const [dataset, setDataset] = useState(initialDataset ?? '')
   const [customName, setCustomName] = useState<string | null>(null)
   const [useValDataset, setUseValDataset] = useState(false)
+  const [valDataset, setValDataset] = useState<string | null>(null)
+  const [valHoldout, setValHoldout] = useState(2)
   const [report, setReport] = useState<DatasetReport | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [gpu, setGpu] = useState<GpuProfile | null>(null)
-  const [engines, setEngines] = useState<Engine[]>([])
+  const [plan, setPlan] = useState<{ engine: string; plan: RunPlan } | null>(null)
 
-  // The batch that fits this GPU (the defaults are for 16 GB).
   useEffect(() => {
     getStatus().then(
-      (s) => {
-        if (!s.gpu) return
-        setGpu(s.gpu)
-        setBase((p) => forGpu(p, s.gpu))
-      },
-      () => {},
-    )
-    // Only engines that can train yet.
-    listEngines().then(
-      (list) => setEngines(list.filter((e) => e.capabilities.training)),
+      (s) => setGpu(s.gpu ?? null),
       () => {},
     )
   }, [])
 
-  const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(base.val_holdout, report.valid - 1)) : 0
-  const isFull = (id: string) => !!engines.find((e) => e.id === id)?.capabilities.full_finetune
-  const full = isFull(base.engine)
-  // Full fine-tuning: GPT-SoVITS's steps follow from each stage's epochs, RVC's from its pieces.
-  const rvc = base.engine === 'rvc'
-  const pieces =
-    rvc && report && trainClips > 0 ? rvcPieces(trainClips, (report.total_seconds * trainClips) / report.valid) : 0
-  const stages = full && !rvc && trainClips > 0 ? fullSteps(trainClips, base) : null
-  const params: Params = full
-    ? {
-        ...base,
-        ...(stages ? { num_iters: stages.sovits + stages.gpt } : pieces ? { num_iters: rvcSteps(pieces, base) } : {}),
-        ...overrides,
-      }
-    : {
-        ...base,
-        ...(trainClips > 0 && Number.isFinite(epochTarget) ? scheduleFor(epochTarget, trainClips, base) : {}),
-        ...overrides,
-      }
-  const name = customName ?? (dataset ? suggestName(dataset, params, runNames) : '')
-  const engineName = engines.find((e) => e.id === params.engine)?.name ?? params.engine
-  const set = <K extends keyof Params>(key: K, value: Params[K]) => {
-    if (SCHEDULE_KEYS.includes(key as keyof Schedule)) {
-      setOverrides((o) => ({ ...o, [key]: value }))
-      return
+  const trainClips = report ? report.valid - (useValDataset ? 0 : Math.min(valHoldout, report.valid - 1)) : 0
+  const seconds = report && report.valid > 0 ? (report.total_seconds * trainClips) / report.valid : 0
+
+  // What the run will do (its steps etc. follow from the values and the clips): asked of the server.
+  const planKey = JSON.stringify([engine?.id, values, trainClips, seconds, overrides])
+  useEffect(() => {
+    if (!engine) return
+    let alive = true
+    const id = engine.id
+    const timer = setTimeout(() => {
+      planRun({ engine: id, values, clips: Math.max(0, trainClips), seconds, overrides }).then(
+        (p) => alive && setPlan({ engine: id, plan: p }),
+        () => {}, // an unfinished number: the last plan stays until the values are complete
+      )
+    }, PLAN_DELAY_MS)
+    return () => {
+      alive = false
+      clearTimeout(timer)
     }
-    if (key === 'engine') {
-      // Each model has its own batch that fits the GPU, and optimizer settings.
-      const nextFull = isFull(value as string)
-      setOverrides({})
-      setBase((p) => {
-        const next = forEngine({ ...p, engine: value as string }, nextFull)
-        return gpu ? forGpu(next, gpu, nextFull) : next
-      })
-      return
-    }
-    if (key === 'gsv_version') {
-      // v4's SoVITS stage trains at its own batch; the others at the GPU's.
-      setBase((p) => {
-        const next = { ...p, gsv_version: value as string }
-        return gpu ? forGpu(next, gpu, true) : next
-      })
-      return
-    }
-    setBase((p) => ({ ...p, [key]: value }))
+    // The key holds everything the plan depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planKey])
+  const current = plan && plan.engine === engine?.id ? plan.plan : null
+  const params: FormValues = { ...values, ...(current?.values ?? {}) }
+  const summary = current?.summary
+
+  const name = customName ?? (dataset && current ? suggestName(dataset, current.name_tag, runNames) : '')
+  const change = (p: EngineParam, value: FormValue) => {
+    if (SCHEDULE_KEYS.includes(p.name)) setOverrides((o) => (o.includes(p.name) ? o : [...o, p.name]))
+    if (p.name === 'epochs') setOverrides((o) => o.filter((k) => k !== 'num_iters')) // the steps follow again
+    setEdited(withValue(params, p, value))
+  }
+  const chooseEngine = (id: string) => {
+    // Each model has its own fields and defaults (batch for this GPU, optimizer).
+    setEngineId(id)
+    setEdited(null)
+    setOverrides([])
   }
 
   const nameError = !name ? null : !NAME_PATTERN.test(name) ? t.nameChars : runNames.includes(name) ? t.runExists : null
-  const numbersValid =
-    Number.isFinite(epochTarget) && Object.values(params).every((v) => typeof v !== 'number' || Number.isFinite(v))
-  const valValid = !useValDataset || !!params.val_dataset
+  const numbersValid = allNumbers(params) && Number.isFinite(valHoldout)
+  const valValid = !useValDataset || !!valDataset
   // Unreadable clips would crash the job mid-epoch, so they block the start.
   const datasetValid = !!report && report.valid > 0 && report.errors.length === 0
 
-  const epochs = full ? null : epochsOf(params, trainClips)
-  const perStep = params.batch_size * params.grad_accum_steps
-
   // What still blocks the start, in the order the page is filled in.
-  const blocker = !dataset
-    ? t.chooseDataset
-    : !report
-      ? t.checkingDataset
-      : !datasetValid
-        ? t.unreadableClips
-        : !name || nameError
-          ? t.runNameBlocker(nameError ?? t.requiredLower)
-          : !numbersValid
-            ? t.fillEveryParam
-            : !valValid
-              ? t.chooseValDataset
-              : activeRun
-                ? t.oneRunAtATime(activeRun)
-                : null
+  const blocker = !engine
+    ? t.loading
+    : !dataset
+      ? t.chooseDataset
+      : !report
+        ? t.checkingDataset
+        : !datasetValid
+          ? t.unreadableClips
+          : !name || nameError
+            ? t.runNameBlocker(nameError ?? t.requiredLower)
+            : !numbersValid
+              ? t.fillEveryParam
+              : !valValid
+                ? t.chooseValDataset
+                : activeRun
+                  ? t.oneRunAtATime(activeRun)
+                  : null
 
   async function start() {
-    if (blocker || submitting) return
+    if (blocker || submitting || !engine) return
     setSubmitting(true)
     try {
-      await onStart({ ...params, val_dataset: useValDataset ? params.val_dataset : null, name, dataset })
+      await onStart({
+        ...params,
+        engine: engine.id,
+        name,
+        dataset,
+        val_dataset: useValDataset ? valDataset : null,
+        val_holdout: valHoldout,
+      })
     } finally {
       setSubmitting(false)
     }
   }
 
+  const gpuGb = gpu?.total_gb ? String(gpu.total_gb) : ''
+  const step = (n: number | null | undefined) => formatStep(n ?? 0)
+
+  // One line on what the run does, and the longer note under the fields.
+  const stats = !summary
+    ? null
+    : summary.kind === 'stages'
+      ? t.stageSteps(step(summary.sovits), step(summary.gpt))
+      : summary.kind === 'pieces'
+        ? t.rvcSteps(step(summary.steps), (summary.pieces ?? 0).toLocaleString())
+        : t.stepsTimesClips(step(summary.steps), summary.per_step ?? 1)
+  const model = !summary
+    ? ''
+    : summary.model === 'v4_lora'
+      ? t.v4Lora(summary.rank ?? 0)
+      : summary.model === 'full'
+        ? t.fullFinetune
+        : t.rankAlpha(summary.rank ?? 0, summary.alpha ?? 0)
+  const target = typeof params.epochs === 'number' ? params.epochs : null
+  const note =
+    !summary || trainClips <= 0 ? (
+      <p className="muted hint">{t.stepsFollow}</p>
+    ) : (
+      <p className="muted hint">
+        {summary.kind === 'stages'
+          ? t.fullScheduleHint(
+              step(summary.sovits),
+              summary.batch ?? 1,
+              step(summary.gpt),
+              summary.gpt_batch ?? 1,
+              gpuGb,
+              trainClips.toLocaleString(),
+            )
+          : summary.kind === 'pieces'
+            ? t.rvcScheduleHint(
+                summary.epochs ?? 0,
+                (summary.pieces ?? 0).toLocaleString(),
+                summary.batch ?? 1,
+                gpuGb,
+                step(summary.steps),
+                summary.save_every ?? 0,
+              )
+            : t.scheduleHint(
+                step(summary.steps),
+                summary.per_step ?? 1,
+                summary.batch ?? 1,
+                summary.accum ?? 1,
+                gpuGb,
+                trainClips.toLocaleString(),
+                summary.epochs != null && target !== null && Math.abs(summary.epochs - target) > 0.05
+                  ? summary.epochs.toFixed(1)
+                  : '',
+                step(summary.save_interval),
+                step(summary.warmup_steps),
+              )}
+      </p>
+    )
+
+  const samples = current?.samples ?? { every: Number(params.valid_interval) || 0, unit: 'steps' }
   const validation = (
     <fieldset className="field">
       <legend>{t.validation}</legend>
@@ -196,7 +227,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
         </label>
       </div>
       {useValDataset ? (
-        <select value={params.val_dataset ?? ''} onChange={(e) => set('val_dataset', e.target.value || null)}>
+        <select value={valDataset ?? ''} onChange={(e) => setValDataset(e.target.value || null)}>
           <option value="">{t.chooseDatasetOption}</option>
           {datasets
             .filter((d) => d !== dataset)
@@ -212,11 +243,11 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
             type="number"
             min={0}
             max={50}
-            value={Number.isFinite(params.val_holdout) ? params.val_holdout : ''}
-            onChange={(e) => set('val_holdout', e.target.valueAsNumber)}
+            value={Number.isFinite(valHoldout) ? valHoldout : ''}
+            onChange={(e) => setValHoldout(e.target.valueAsNumber)}
           />
           <span className="muted hint">
-            {rvc ? t.rvcHoldoutHint(params.rvc_save_every) : t.holdoutHint(params.valid_interval)}
+            {samples.unit === 'epochs' ? t.holdoutEpochsHint(samples.every) : t.holdoutHint(samples.every)}
           </span>
         </div>
       )}
@@ -242,21 +273,13 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
           ) : (
             <>
               <span>{t.trainingClipsFrom(trainClips.toLocaleString(), datasetName(dataset))}</span>
-              {epochs !== null && <span>{t.epochsValue(epochs.toFixed(1))}</span>}
+              {summary?.kind === 'epochs' && summary.epochs != null && (
+                <span>{t.epochsValue(summary.epochs.toFixed(1))}</span>
+              )}
+              {stats && <span className="muted">{stats}</span>}
               <span className="muted">
-                {stages
-                  ? t.stageSteps(formatStep(stages.sovits), formatStep(stages.gpt))
-                  : pieces
-                    ? t.rvcSteps(formatStep(params.num_iters), pieces.toLocaleString())
-                    : t.stepsTimesClips(formatStep(params.num_iters), perStep)}
-              </span>
-              <span className="muted">
-                {engines.length > 1 && `${engineName} · `}
-                {full && params.gsv_version === 'v4'
-                  ? t.v4Lora(params.lora_rank)
-                  : full
-                    ? t.fullFinetune
-                    : t.rankAlpha(params.lora_rank, params.lora_alpha)}
+                {trainable.length > 1 && `${engine?.name} · `}
+                {model}
               </span>
             </>
           )}
@@ -294,83 +317,32 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
 
       {tab === 'parameters' && (
         <section className="panel">
-          <ParamsFields
-            params={params}
-            engines={engines}
-            fullFinetune={full}
-            smallGpu={!!gpu?.s2_offload}
-            onChange={set}
-            validation={validation}
-            header={
-              <label className="field">
-                <span>
-                  {t.runName} {nameError && <span className="field-error">{nameError}</span>}
-                </span>
-                <input
-                  value={name}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  placeholder={t.chooseDatasetFirst}
-                />
-              </label>
-            }
-            epochs={
-              full
-                ? undefined
-                : {
-                    value: epochTarget,
-                    onChange: (v) => {
-                      setEpochTarget(v)
-                      // Steps follow the epochs again.
-                      setOverrides((o) => {
-                        const rest = { ...o }
-                        delete rest.num_iters
-                        return rest
-                      })
-                    },
-                  }
-            }
-            hint={
-              stages ? (
-                <p className="muted hint">
-                  {t.fullScheduleHint(
-                    formatStep(stages.sovits),
-                    params.batch_size,
-                    formatStep(stages.gpt),
-                    Math.max(1, Math.min(params.gpt_batch_size, Math.floor(trainClips / 4))),
-                    gpu?.total_gb ? String(gpu.total_gb) : '',
-                    trainClips.toLocaleString(),
-                  )}
-                </p>
-              ) : pieces ? (
-                <p className="muted hint">
-                  {t.rvcScheduleHint(
-                    params.rvc_epochs,
-                    pieces.toLocaleString(),
-                    params.batch_size,
-                    gpu?.total_gb ? String(gpu.total_gb) : '',
-                    formatStep(params.num_iters),
-                    params.rvc_save_every,
-                  )}
-                </p>
-              ) : trainClips > 0 ? (
-                <p className="muted hint">
-                  {t.scheduleHint(
-                    formatStep(params.num_iters),
-                    perStep,
-                    params.batch_size,
-                    params.grad_accum_steps,
-                    gpu?.total_gb ? String(gpu.total_gb) : '',
-                    trainClips.toLocaleString(),
-                    epochs !== null && Math.abs(epochs - epochTarget) > 0.05 ? epochs.toFixed(1) : '',
-                    formatStep(params.save_interval),
-                    formatStep(params.warmup_steps),
-                  )}
-                </p>
-              ) : (
-                <p className="muted hint">{t.stepsFollow}</p>
-              )
-            }
-          />
+          {engine ? (
+            <ParamsFields
+              form={form}
+              values={params}
+              engine={engine.id}
+              engines={trainable}
+              onEngine={chooseEngine}
+              onChange={change}
+              validation={validation}
+              header={
+                <label className="field">
+                  <span>
+                    {t.runName} {nameError && <span className="field-error">{nameError}</span>}
+                  </span>
+                  <input
+                    value={name}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    placeholder={t.chooseDatasetFirst}
+                  />
+                </label>
+              }
+              hint={note}
+            />
+          ) : (
+            <p className="muted empty">{t.loading}</p>
+          )}
         </section>
       )}
     </>
