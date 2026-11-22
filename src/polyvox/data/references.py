@@ -46,6 +46,38 @@ def text_quality(text: str) -> tuple[bool, bool]:
     return not hesitant, content >= MIN_CONTENT_CHARS
 
 
+@dataclass(frozen=True)
+class Usable:
+    clip: Clip
+    flagged: bool  # its check (for this transcript) flagged it
+    score: float | None  # the check's score; None: not checked
+    speaker: float | None = None  # its likeness to the dataset's voice, if the check measured it
+
+
+def usable(manifest: Path, root: Path | None = None) -> list[Usable]:
+    """Every clip of a dataset with readable audio and a transcript, not dropped, in
+    clip_entries order, with what its check (align.json) says of it."""
+    manifest_dir = manifest.resolve().parent
+    checks = manifests.read_sidecar(manifest_dir / manifests.ALIGN_FILE).get("clips", {})
+    dropped = manifests.excluded_keys(manifest_dir)
+    out = []
+    for index, entry in enumerate(manifests.clip_entries(manifest, root)):
+        key = manifests.row_key(entry["audio"], manifest_dir)
+        if key in dropped or not entry["text"].strip():
+            continue
+        try:
+            seconds, _ = audio_io.info(entry["audio"])
+        except (OSError, RuntimeError, ValueError):
+            continue
+        check = checks.get(key)
+        if check and check.get("text") != manifests.text_key(entry["text"]):
+            check = None  # made for an earlier transcript
+        clip = Clip(index, Path(entry["audio"]), entry["text"], seconds)
+        flagged, score = bool(check and check.get("flags")), check.get("score") if check else None
+        out.append(Usable(clip, flagged, score, check.get("speaker") if check else None))
+    return out
+
+
 def pick(
     manifest: Path, count: int = 1, root: Path | None = None, seed: int = 0, exclude: frozenset[int] = frozenset()
 ) -> list[Clip]:
@@ -54,28 +86,13 @@ def pick(
     without hesitations and with enough words (text_quality), then checked
     without flags (align.json) with the best score, then nearest 6 s; ties in a
     random order (``seed``). Raises ValueError when no clip fits."""
-    manifest_dir = manifest.resolve().parent
-    checks = manifests.read_sidecar(manifest_dir / manifests.ALIGN_FILE).get("clips", {})
-    dropped = manifests.excluded_keys(manifest_dir)
     candidates = []
-    for index, entry in enumerate(manifests.clip_entries(manifest, root)):
-        key = manifests.row_key(entry["audio"], manifest_dir)
-        if index in exclude or key in dropped or not entry["text"].strip():
+    for u in usable(manifest, root):
+        clip, score = u.clip, u.score
+        if clip.index in exclude or u.flagged or not PICK_RANGE_S[0] <= clip.seconds <= PICK_RANGE_S[1]:
             continue
-        try:
-            seconds, _ = audio_io.info(entry["audio"])
-        except (OSError, RuntimeError, ValueError):
-            continue
-        if not PICK_RANGE_S[0] <= seconds <= PICK_RANGE_S[1]:
-            continue
-        check = checks.get(key)
-        if check and check.get("text") != manifests.text_key(entry["text"]):
-            check = None  # made for an earlier transcript
-        if check and check.get("flags"):
-            continue
-        score = check.get("score") if check else None
-        rank = (*text_quality(entry["text"]), score is not None, score or 0.0, -abs(seconds - 6.0))
-        candidates.append((rank, Clip(index, Path(entry["audio"]), entry["text"], seconds)))
+        rank = (*text_quality(clip.text), score is not None, score or 0.0, -abs(clip.seconds - 6.0))
+        candidates.append((rank, clip))
     if not candidates:
         raise ValueError(f"No clip of {PICK_RANGE_S[0]:g}-{PICK_RANGE_S[1]:g} s without flags in this dataset.")
     random.Random(seed).shuffle(candidates)

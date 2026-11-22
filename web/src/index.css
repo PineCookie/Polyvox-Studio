@@ -1356,6 +1356,10 @@ select {
   margin-top: 0;
 }
 
+.voice-reference-edit .field-group {
+  gap: 6px;
+}
+
 .voice-meta {
   margin: 0;
   font-size: 0.8rem;
@@ -1514,6 +1518,83 @@ input[type='search']:focus {
 
 .dialog-body .hint {
   margin: 0;
+}
+
+/* Inputs grouped only to disable them together (a running job). */
+.field-group {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.reference-search-result {
+  display: grid;
+  gap: 4px;
+  font-size: 0.88rem;
+}
+
+.reference-search-result ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Name, then the numbers: on one line where there is room, else the numbers below. */
+.reference-search-result li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 10px;
+}
+
+.reference-search-result .set-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reference-search-result li.kept .set-name {
+  font-weight: 600;
+}
+
+.reference-search-result .num {
+  white-space: nowrap;
+}
+
+.reference-search-result .kept-mark {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.reference-clips .pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.pick-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.pick-by select {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+}
+
+.reference-clips .find-best {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .dialog-body p {

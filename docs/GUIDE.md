@@ -35,8 +35,13 @@ checkpoints lets you pick one there. Then:
   Reference (who it sounds like) and a Prompt (speech it continues from, with
   its transcript); dots.tts one clip; GPT-SoVITS a prompt clip and timbre clips;
   S2-Pro and Drama 3 a reference with its transcript. Each can be an upload or **Dataset
-  clips**: three of a dataset's best clips (change them with **Other clips**),
-  joined into one for models that take a single clip. **Transcribe** fills in a
+  clips**: three of a dataset's clips (change them with **Other clips**),
+  joined into one for models that take a single clip. **Pick** chooses how: the
+  clips **most like the voice** (measured with a speaker model in seconds; the
+  default for Drama 3) or those with the **cleanest transcripts** (the default
+  for the others). With Drama 3, **Test by speaking** goes further: a few sets
+  each speak the same sentences and the one that sounds most like the speaker is
+  put in (about a minute; see saved voices below). **Transcribe** fills in a
   transcript. On every model, about 20 s of reference clones clearly better
   than one short clip.
 - **Advanced**: guidance, steps, seed and the model's own settings; for Drama 3
@@ -60,12 +65,26 @@ keep the clips they were trained with: each such voice has a default reference,
 picked from its dataset, that you can change in the settings column.
 
 Drama 3 voices are saved references, with no training: with Drama 3's base
-model chosen, **Save as a voice…** asks for a name and a dataset (its three best
-checked clips are joined, about 20 s) or a clip with its transcript. The voice
+model chosen, **Save as a voice…** asks for a name and a dataset (three of its
+clips are joined, about 20 s, picked as **Pick** says) or a clip with its
+transcript. The voice
 is listed with the others and speaks with its reference whenever no other clip
 is given; change the clips in the settings column. (Training Drama 3 was measured
 first: with a reference its codebook decoder already renders a voice as well as
 the real recordings, so a LoRA there would add little.)
+
+Which clips make the reference matters a lot for Drama 3: it takes the voice's
+pitch and pace from them, and the clips with the cleanest transcripts aren't
+always typical of the speaker. Saving or changing a voice from a dataset has
+the same **Pick** as Synthesize's dataset clips: **Most like the voice** (the
+default for Drama 3, in seconds) or **Cleanest transcripts**, and for Drama 3
+also **Test by speaking**: three sets (the cleanest transcripts, the clips most
+like the voice, and clips like the voice with its usual pace and pauses) each
+speak the same dozen sentences from the dataset, and the set whose takes sound
+most like the speaker is kept: the most similar voice, with the pitch closest to
+the real recordings of those sentences. It takes about a minute and lists the
+sets with their scores. On one mixed dataset this raised the likeness from 0.65
+to 0.75; where the cleanest clips are already typical, it keeps them.
 
 The first generation after a model loads takes longer while the model is
 compiled for your GPU: from a few seconds to about half a minute, depending on

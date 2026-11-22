@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from .. import reference_search
 from ..data import manifests, references
 from ..prep import checks
 from ..prep.asr import SAMPLE_RATE as ASR_RATE
@@ -193,12 +194,19 @@ def router(s: Studio) -> APIRouter:
         id: str,
         count: int = Query(3, ge=1, le=MAX_REFERENCE_CLIPS),
         exclude: Annotated[list[int] | None, Query()] = None,
+        # text: the cleanest transcripts (references.pick); voice: the clips most like the
+        # dataset's voice (reference_search.pick_alike: seconds the first time, then kept).
+        by: Literal["text", "voice"] = "text",
     ) -> list[ReferenceClipOut]:
-        """The ``count`` best clips of a dataset to clone its voice from
-        (references.pick), leaving out the ``exclude`` indices: e.g. others than those shown."""
+        """The ``count`` best clips of a dataset to clone its voice from, leaving out the
+        ``exclude`` indices: e.g. others than those shown."""
         manifest = found(manifests.resolve, settings.data_dir, id)
         root = manifests.legacy_root(settings.data_dir)
-        picked = checked(references.pick, manifest, count, root, 0, frozenset(exclude or ()))
+        left_out = frozenset(exclude or ())
+        if by == "voice":
+            picked = checked(reference_search.pick_alike, manifest, count, s.voices, root, left_out)
+        else:
+            picked = checked(references.pick, manifest, count, root, 0, left_out)
         return [ReferenceClipOut(index=c.index, text=c.text, seconds=round(c.seconds, 2)) for c in picked]
 
     @api.get("/api/dataset-audio")

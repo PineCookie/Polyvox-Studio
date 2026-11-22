@@ -403,6 +403,7 @@ export function SynthesisPanel({
                   other={otherOf(i)}
                   onError={onError}
                   onTranscribed={onTranscribed}
+                  search={!!engine?.capabilities.reference_search}
                 />
               ))}
             </section>

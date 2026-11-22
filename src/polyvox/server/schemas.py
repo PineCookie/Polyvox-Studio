@@ -199,6 +199,20 @@ class ReferenceClipsIn(BaseModel):
     indices: list[int] = Field(min_length=1, max_length=MAX_REFERENCE_CLIPS)
 
 
+class ReferenceSearchIn(BaseModel):
+    """Choose reference clips among a few sets of a dataset's by what the engine makes of them
+    (capabilities.reference_search): for a new voice (``name``), an existing one (``id``), or
+    neither (only returned)."""
+
+    dataset: str
+    # The engine that speaks (needed without ``id``); with ``name`` and none: the first engine
+    # whose voices are references.
+    engine: str | None = None
+    name: str | None = None
+    id: str | None = None
+    count: int | None = Field(None, ge=1, le=MAX_REFERENCE_CLIPS)  # clips per set; none: as the engine's voices
+
+
 class ReferenceClipOut(BaseModel):
     index: int
     text: str

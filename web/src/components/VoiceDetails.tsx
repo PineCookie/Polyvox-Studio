@@ -95,6 +95,7 @@ export function VoiceDetails({ engines, loras, selected, modelId, onSelect, onRe
             <VoiceReference
               lora={current}
               joined={(engine.capabilities.voice_reference_clips ?? 1) > 1}
+              search={engine.capabilities.reference_search}
               onChanged={onRefresh}
               onError={onError}
             />

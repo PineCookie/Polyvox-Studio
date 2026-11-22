@@ -19,11 +19,22 @@ interface Props {
   other: { input: ReferenceInput; state: InputState } | null
   onError: (message: string) => void
   onTranscribed: () => void
+  // Its dataset clips can be chosen by what the engine makes of a few sets (capabilities.reference_search).
+  search?: boolean
 }
 
 /** One of an engine's reference inputs, under the engine's own name for it: where its audio comes
  * from (segmented buttons), then that audio. */
-export function ReferenceInputField({ engineId, input, value, onChange, other, onError, onTranscribed }: Props) {
+export function ReferenceInputField({
+  engineId,
+  input,
+  value,
+  onChange,
+  other,
+  onError,
+  onTranscribed,
+  search = false,
+}: Props) {
   const t = useT()
   const [transcribing, setTranscribing] = useState(false)
   const label = (i: ReferenceInput) => t.referenceInputs[`${engineId}.${i.name}`]?.[0] ?? i.name
@@ -101,6 +112,8 @@ export function ReferenceInputField({ engineId, input, value, onChange, other, o
           value={value.clips}
           onChange={(clips) => onChange({ ...value, clips })}
           onError={onError}
+          engineId={engineId}
+          search={search}
         />
       )}
       {showTranscript && (

@@ -77,6 +77,7 @@ export interface Engine {
     voice_reference_clips: number // how many of a dataset's best clips that reference joins
     package: 'lora' | 'voice' | null // what an export holds: LoRA weights (base model, precision) or whole models
     reference_voices: boolean // its voices are saved references only, made in the Voices panel
+    reference_search: boolean // a dataset reference can be chosen by comparing a few sets (searchReferences)
     training: boolean // New run offers it
     full_finetune: boolean // trains every weight: no LoRA rank or optimizer choice
     reference_inputs: ReferenceInput[] // the audio inputs its cloning takes
@@ -151,9 +152,17 @@ export interface ReferenceClip {
   seconds: number
 }
 
+// How a dataset's reference clips are picked: the cleanest transcripts, or the clips most like its voice.
+export type ReferencePick = 'text' | 'voice'
+
 /** A dataset's best clips to clone its voice from, leaving out `exclude` (indices). */
-export async function pickReferenceClips(dataset: string, count: number, exclude: number[]): Promise<ReferenceClip[]> {
-  const q = new URLSearchParams({ id: dataset, count: String(count) })
+export async function pickReferenceClips(
+  dataset: string,
+  count: number,
+  exclude: number[],
+  by: ReferencePick = 'text',
+): Promise<ReferenceClip[]> {
+  const q = new URLSearchParams({ id: dataset, count: String(count), by })
   for (const index of exclude) q.append('exclude', String(index))
   return (await request(`/api/dataset-references?${q}`)).json()
 }
@@ -362,12 +371,13 @@ export function voiceReferenceUrl(id: string, version: string | null = null): st
 /** A new default reference: the best clip of a dataset, or a clip and its transcript. */
 export async function setVoiceReference(
   id: string,
-  source: { dataset: string } | { audio: File; text: string },
+  source: { dataset: string; by?: ReferencePick } | { audio: File; text: string },
 ): Promise<Lora> {
   const form = new FormData()
   form.set('id', id)
   if ('dataset' in source) {
     form.set('dataset', source.dataset)
+    form.set('by', source.by ?? 'text')
   } else {
     form.set('audio', source.audio)
     form.set('text', source.text)
@@ -379,18 +389,48 @@ export async function setVoiceReference(
 export async function createReferenceVoice(
   engine: string,
   name: string,
-  source: { dataset: string } | { audio: File; text: string },
+  source: { dataset: string; by?: ReferencePick } | { audio: File; text: string },
 ): Promise<{ id: string; engine: string }> {
   const form = new FormData()
   form.set('engine', engine)
   form.set('name', name)
   if ('dataset' in source) {
     form.set('dataset', source.dataset)
+    form.set('by', source.by ?? 'text')
   } else {
     form.set('audio', source.audio)
     form.set('text', source.text)
   }
   return (await request('/api/loras/reference-voice', { method: 'POST', body: form })).json()
+}
+
+/** One set of clips a reference search compared (likeness of its takes to the speaker, pitch off the speaker's in semitones). */
+export interface ReferenceSearchTried {
+  name: string // clean | alike | typical
+  indices: number[]
+  likeness: number
+  pitch: number | null
+  score: number
+}
+
+export type ReferenceSearchJob = Job<{
+  id?: string // the voice it was saved to (with `name` or `id`)
+  engine: string
+  chosen: string
+  clips: ReferenceClip[] // the kept set
+  tried: ReferenceSearchTried[]
+}>
+
+/** A job: a few sets of a dataset's clips speak the same sentences; the one most like the speaker becomes
+ * the reference of a new voice (`name`), of an existing one (`id`), or is only returned (neither). */
+export async function searchReferences(body: {
+  dataset: string
+  engine?: string
+  name?: string
+  id?: string
+  count?: number
+}): Promise<ReferenceSearchJob> {
+  return (await postJson('/api/reference-search', body)).json()
 }
 
 export async function unloadModel(): Promise<Status> {

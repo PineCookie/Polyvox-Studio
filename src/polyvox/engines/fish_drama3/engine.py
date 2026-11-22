@@ -308,6 +308,9 @@ class FishDrama3Engine(Engine):
         voice_reference=True,  # its voices: saved references (common.reference.create_voice)
         voice_reference_clips=3,
         reference_voices=True,
+        # Its references carry the voice's pitch and pace: chosen by output, they cloned far
+        # better on a mixed dataset than the cleanest transcripts.
+        reference_search=True,
         # A clip with its transcript (several are joined into one).
         reference_inputs=(ReferenceInput("reference", "prompt", "required"),),
         speech_edit=True,  # edit.py: changed words spoken again by infilling

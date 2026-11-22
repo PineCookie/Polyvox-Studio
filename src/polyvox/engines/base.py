@@ -95,6 +95,9 @@ class Capabilities:
     # Its voices are saved references only (no training): made in the Voices panel from a
     # dataset's clips or an uploaded clip (lora_library.VOICE_FILE marks the folder).
     reference_voices: bool = False
+    # A voice's reference from a dataset can be chosen by what it makes of a few candidate sets
+    # (reference_search.py) rather than by the cleanest transcripts alone.
+    reference_search: bool = False
     training: bool = True  # New run offers it
     # Training updates every weight (no LoRA rank, no optimizer choice).
     full_finetune: bool = False
