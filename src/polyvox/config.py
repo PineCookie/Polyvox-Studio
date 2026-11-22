@@ -90,6 +90,9 @@ class Settings:
     # Ask GitHub once a day whether a newer release is out (updates.py); from_env: on unless
     # POLYVOX_UPDATE_CHECK=0.
     update_check: bool = False
+    # Host names the server answers to besides localhost and IP addresses (server/guard.py), e.g. a
+    # machine name when it listens on the network; from_env: POLYVOX_ALLOWED_HOSTS, comma-separated.
+    allowed_hosts: tuple[str, ...] = ()
 
     def configured(self, setting: str) -> bool:
         """The setting was changed from its default (e.g. by an environment variable)."""
@@ -140,4 +143,5 @@ class Settings:
             models_dir=Path(_env("MODELS_DIR", str(cls.models_dir))),
             hf_endpoint=_env("HF_ENDPOINT", cls.hf_endpoint).rstrip("/"),
             update_check=_parse_bool(_env("UPDATE_CHECK", "1")),
+            allowed_hosts=tuple(h.strip().lower() for h in _env("ALLOWED_HOSTS", "").split(",") if h.strip()),
         )

@@ -443,7 +443,9 @@ models) needs a C compiler (`apt install build-essential`).
 
 To reach the studio from another machine, start it with
 `./run.sh --host 0.0.0.0`. It has no login: use it on a trusted network or
-through an SSH tunnel.
+through an SSH tunnel. It answers to `localhost` and IP addresses; to open it by
+a machine name, add the name to `POLYVOX_ALLOWED_HOSTS`. Changes sent from
+other websites open in the browser are refused.
 
 ## Models
 
@@ -492,6 +494,7 @@ Environment variables, all optional:
 | `POLYVOX_HF_ENDPOINT` | | Hugging Face mirror for downloads, e.g. `https://hf-mirror.com` (until one is chosen in the Models tab) |
 | `POLYVOX_MIRROR` | (`.mirror`) | `run.bat` / `run.sh`: `cn` installs from mirrors in mainland China, `off` doesn't (see [Hardware](#hardware)) |
 | `POLYVOX_UPDATE_CHECK` | `1` | ask GitHub at startup and once a day whether a newer release is out (`0`: never) |
+| `POLYVOX_ALLOWED_HOSTS` | | host names the server answers to besides `localhost` and IP addresses, comma-separated (e.g. a machine name when it listens on the network) |
 | `POLYVOX_LORA_DIR` | `lora` | training runs, LoRAs and voices |
 | `POLYVOX_DATA_DIR` | `data` | datasets |
 | `POLYVOX_DEVICE` | `auto` | synthesis device: `cuda`, `cuda:1`, `cpu`, ... |

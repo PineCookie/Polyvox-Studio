@@ -30,6 +30,7 @@ from ..updates import UpdateCheck
 from . import clips, convert, datasets, loras, status, tts
 from . import training as training_routes
 from .context import Studio, free_gpu_for_training
+from .guard import RequestGuard
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 
@@ -108,6 +109,7 @@ def create_app(
         studio.training.shutdown()  # saves a checkpoint
 
     app = FastAPI(title="Polyvox Studio", lifespan=lifespan)
+    app.add_middleware(RequestGuard, allowed_hosts=settings.allowed_hosts)
 
     @app.exception_handler(TrainingConflict)
     def conflict(request: Request, exc: TrainingConflict) -> JSONResponse:

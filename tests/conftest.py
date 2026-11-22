@@ -247,6 +247,14 @@ def no_automatic_downloads(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def test_client_host(monkeypatch):
+    """The server answers only to its own host names (server/guard.py); TestClient's is "testserver"."""
+    from polyvox.server import guard
+
+    monkeypatch.setattr(guard, "LOCAL_HOSTS", {*guard.LOCAL_HOSTS, "testserver"})
+
+
+@pytest.fixture(autouse=True)
 def keep_download_source(monkeypatch):
     """create_app and the Models tab's source set huggingface_hub's endpoint for the process (and
     HF_ENDPOINT): put both back after each test."""
