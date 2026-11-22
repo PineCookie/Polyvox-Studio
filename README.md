@@ -9,7 +9,7 @@
 ![Python 3.13](https://img.shields.io/badge/python-3.13-3776ab?logo=python&logoColor=white)
 ![Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-555)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76b900?logo=nvidia&logoColor=white)
-![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS%20%7C%20S2--Pro%20%7C%20Drama%203-5b5bd6)
+![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS%20%7C%20S2--Pro%20%7C%20Drama%203%20%7C%20RVC-5b5bd6)
 ![UI](https://img.shields.io/badge/UI-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-e67e22)
 ![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
@@ -23,7 +23,9 @@ A web app that turns raw audio into a clean dataset, fine-tunes a voice on
 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) or
 [Fish Audio S2-Pro](https://huggingface.co/fishaudio/s2-pro), and speaks with it.
 It also clones voices zero-shot with
-[Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3).
+[Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3), and sings songs
+again in a voice trained with
+[RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI).
 
 ![Synthesize: a trained voice with its own reference clip, inline tags and the session's history](docs/images/screenshots/synthesize-en.png)
 
@@ -36,6 +38,10 @@ It also clones voices zero-shot with
 - ✏️ **Fix a word without starting over.** Change the text of a generated clip
   and Drama 3 speaks only the changed words again, in the clip's own voice; the
   rest of the clip stays as it was.
+- 🎤 **Covers in a voice you trained.** The Convert tab sings a song again in an
+  RVC voice: the vocals are taken out, reverb removed, lead and backing vocals
+  split, and the converted voice mixed back over the music. Train RVC voices from
+  the same datasets, or bring the ones from the RVC WebUI.
 - ✂️ **Raw recordings in, clean dataset out.** Hours of audio, even m4a or video
   files, are cut into clips between words and transcribed automatically. Music,
   reverb and noise can be removed.
@@ -81,7 +87,8 @@ It also clones voices zero-shot with
   </tr>
 </table>
 
-**4. Synthesize:** choose your voice, type, and generate (the screenshot at the top).
+**4. Synthesize:** choose the model and your voice, type, and generate (the
+screenshot at the top). Or **Convert** a song or recording into an RVC voice.
 
 ## ⚡ Speed
 
@@ -121,7 +128,8 @@ replaced and your models, datasets and voices stay.
   32 GB of RAM. AMD GPUs on Linux should work but are untested. Without a GPU
   you can only prepare datasets.
 - 💾 Disk space for models: about 5 GB per TTS model (S2-Pro 11 GB, Drama 3
-  22 GB), plus about 6 GB for the dataset tools (speech recognition and alignment).
+  22 GB), about 1.3 GB for RVC, plus about 6 GB for the dataset tools (speech
+  recognition and alignment).
 
 ## 📖 Learn more
 

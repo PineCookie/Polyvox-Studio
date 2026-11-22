@@ -9,7 +9,7 @@
 ![Python 3.13](https://img.shields.io/badge/python-3.13-3776ab?logo=python&logoColor=white)
 ![Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-555)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76b900?logo=nvidia&logoColor=white)
-![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS%20%7C%20S2--Pro%20%7C%20Drama%203-5b5bd6)
+![Models](https://img.shields.io/badge/models-VoxCPM2%20%7C%20dots.tts%20%7C%20GPT--SoVITS%20%7C%20S2--Pro%20%7C%20Drama%203%20%7C%20RVC-5b5bd6)
 ![UI](https://img.shields.io/badge/UI-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-e67e22)
 ![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
@@ -22,7 +22,8 @@
 [dots.tts](https://github.com/rednote-hilab/dots.tts)、
 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 或
 [Fish Audio S2-Pro](https://huggingface.co/fishaudio/s2-pro) 上微调音色，再用它说话。
-也可以用 [Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3) 零样本克隆声音。
+也可以用 [Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3) 零样本克隆声音，
+还能用 [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) 训练的音色翻唱歌曲。
 
 ![合成：训练好的音色、它自带的参考音频、行内标签和本次的历史记录](docs/images/screenshots/synthesize-zh.png)
 
@@ -33,6 +34,8 @@
   可以零样本克隆（**Built with Fish Audio**）。
 - ✏️ **改一个词，不用重新生成。** 修改已生成音频的文字，Drama 3 只用这段音频本身的声音重新说改动的词，
   其余部分保持不变。
+- 🎤 **用自己训练的音色翻唱。** “转换”页用 RVC 音色重新唱一首歌：分离人声、去除混响、分开主唱与和声，
+  再把转换后的声音混回伴奏。RVC 音色可以用同样的数据集训练，也可以导入 RVC 网页界面训练的音色。
 - ✂️ **放进原始录音，得到干净的数据集。** 几个小时的音频（m4a、视频文件也可以）会自动在词与词之间
   切成片段并转写成文字；还可以去除音乐、混响和噪声。
 - 🔍 **自动找出有问题的片段。** 文本写错、字被截断、混进别人的声音、失真和唱歌都会被标记出来，
@@ -69,7 +72,7 @@
   </tr>
 </table>
 
-**4. 合成**：选择你的音色，输入文字，生成（见顶部的截图）。
+**4. 合成**：选择模型和你的音色，输入文字，生成（见顶部的截图）。也可以在“转换”页把歌曲或录音转换成 RVC 音色。
 
 ## ⚡ 速度
 
@@ -106,7 +109,7 @@
 - 🖥️ Windows 或 Linux。
 - 🎮 8 GB 及以上显存的 NVIDIA 显卡；16 GB 可以全速训练。S2-Pro 合成需要 16 GB，训练需要 12 GB；Drama 3 需要 12 GB 显存和 32 GB 内存。Linux 上的 AMD 显卡
   应该可用，但未经测试。没有显卡时只能准备数据集。
-- 💾 模型所需磁盘空间：每个 TTS 模型约 5 GB（S2-Pro 11 GB；Drama 3 22 GB），
+- 💾 模型所需磁盘空间：每个 TTS 模型约 5 GB（S2-Pro 11 GB；Drama 3 22 GB），RVC 约 1.3 GB，
   数据集工具（语音识别和对齐）另需约 6 GB。
 
 ## 📖 了解更多

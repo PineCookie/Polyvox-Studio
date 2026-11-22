@@ -4,6 +4,7 @@ The details behind the [README](../README.md): how each part works, what the
 settings do, and how to configure and develop the studio.
 
 - [Synthesizing](#synthesizing)
+- [Converting voices (RVC)](#converting-voices-rvc): covers of songs, voices from the RVC WebUI
 - [Preparing datasets](#preparing-datasets): sources, steps, clean-up, checks, review, export
 - [Training](#training)
 - [Sharing voices](#sharing-voices)
@@ -15,8 +16,11 @@ settings do, and how to configure and develop the studio.
 
 ## Synthesizing
 
-The **Voice** panel lists the base models and every trained voice, grouped by
-model; a voice with several checkpoints lets you pick one. Then:
+At the top of the editor, choose the **model**, then its **voice**: the base model,
+or a voice trained or saved for it. Choosing a model again brings back the voice
+you last used with it, and a model that can't run on this computer says why in the
+list. The settings column shows the chosen voice; a voice with several
+checkpoints lets you pick one there. Then:
 
 - **Text**, with the model's inline tags a click away: VoxCPM2's sounds and
   reactions (laugh, sigh, ...); S2-Pro's emotions, sounds, delivery and pauses,
@@ -49,13 +53,13 @@ model; a voice with several checkpoints lets you pick one. Then:
 
 GPT-SoVITS always speaks from a reference clip, and S2-Pro voices trained here
 keep the clips they were trained with: each such voice has a default reference,
-picked from its dataset, that you can change in the Voice panel.
+picked from its dataset, that you can change in the settings column.
 
 Drama 3 voices are saved references, with no training: with Drama 3's base
 model chosen, **Save as a voice…** asks for a name and a dataset (its three best
 checked clips are joined, about 20 s) or a clip with its transcript. The voice
 is listed with the others and speaks with its reference whenever no other clip
-is given; change the clips in the Voice panel. (Training Drama 3 was measured
+is given; change the clips in the settings column. (Training Drama 3 was measured
 first: with a reference its codebook decoder already renders a voice as well as
 the real recordings, so a LoRA there would add little.)
 
@@ -91,6 +95,45 @@ Drama 3 holds the aligner's GPU). A new part that comes out much longer than
 the words it replaces has run on into the words after it: it is made again
 with one more word, and once more; when all three run on, the edit is refused
 with a hint to change a few more words. An edit takes about 2 s.
+
+## Converting voices (RVC)
+
+The **Convert** tab sings or speaks a recording again in another voice, with
+[RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)
+(Retrieval-based Voice Conversion, v2 with pitch). No text is involved: the melody,
+timing and words come from the recording, the timbre from the voice. The typical
+use is a cover of a song in a trained voice.
+
+Choose a recording (a **song**, or **vocals or speech only**) and a voice, then
+**Convert**. The side panel lists the steps, each with its option:
+
+1. **Take the vocals out of the music** (songs): the vocal separation model of the
+   Clean up step; the instrumental is kept for the mix.
+2. **Remove reverb** (on by default): reverb tails turn into noise in the converted
+   voice, and most studio vocals have some.
+3. **Split lead and backing vocals** (songs; on by default): UVR's MDX-Net
+   Karaoke 2 model. RVC follows one pitch at a time, so harmonies sung over the lead
+   would blur into it; split, the lead is converted on its own, and the backing
+   vocals are kept as sung or converted separately.
+4. **Convert** with the voice's settings: **Key change** in semitones (e.g. +12 for
+   a voice an octave above the singer), **Index strength** (how much of the voice's
+   own training features replace the singer's: more like the voice, slightly less
+   clear words), **Protect consonants**, **Pitch clean-up** (folds back the pitch
+   tracker's octave jumps on reverb, harmonies and breathy notes; ours, not part of
+   RVC) and **Loudness of the voice**.
+5. **Mix back** over the instrumental, which moves with a key change so the song
+   stays in tune.
+
+The results list the cover and the parts it was made from (converted vocals,
+instrumental, the vocals used, lead and backing), to play and download. A voice
+trained on speech alone often can't follow a singer's high or low notes: singing
+in its training clips helps, and so does a key change towards its range.
+
+Voices come from three places: trained in the Train tab (see [Training](#training)),
+imported from the RVC WebUI or Applio (**From the RVC WebUI…**: the voice's `.pth`,
+v2 with pitch at 32, 40 or 48 kHz), or added as a voice package. An imported voice's
+index is rebuilt here, from the dataset it was trained on or from the WebUI's logs
+folder (its `total_fea.npy`); the WebUI's `.index` files aren't read.
 
 ## Preparing datasets
 
@@ -241,6 +284,7 @@ training settings; the name is suggested from the dataset and model.
 | GPT-SoVITS v2Pro / v2ProPlus | both models in full, SoVITS then GPT, as the webui does | 8 + 15 epochs |
 | GPT-SoVITS v4 | a LoRA on the SoVITS diffusion model, then the GPT in full | 8 + 15 epochs |
 | Fish Audio S2-Pro | a LoRA (rank 32) on the fast transformer, which adds each audio frame's detail | 4 epochs, Prodigy Schedule-Free |
+| RVC v2 | the whole voice model, from RVC's base models, as the WebUI does | 100 epochs, a voice saved every 25 |
 
 - **Stop** saves a checkpoint first; **Resume** continues from it, and
   **Continue to** adds more steps to a finished run.
@@ -279,17 +323,28 @@ resumed or continued. Runs and voices lying directly in `lora/` (from older
 versions, or copied in) are moved into their model's folder when the server
 starts.
 
+**RVC** cuts the training clips into pieces of up to 3.7 s, as the WebUI does, at 32,
+40 or 48 kHz (**Sample rate**, 40 kHz by default), and caches their content
+features and pitch per clip in the dataset. It reads only the audio, but like the
+other models it trains on the dataset's transcribed clips. Each saved voice comes
+with samples: held-out clips converted into it. **Try** opens it in the Convert
+tab. Singing clips in the dataset help the voice sing.
+
 ## Sharing voices
 
-Select a voice in the Voice panel and choose **Export**. A LoRA zip holds only
+Select a voice and choose **Export** in the settings column (an RVC voice: in the
+Convert tab). A LoRA zip holds only
 the weights (bfloat16 by default: half the size, same output), its configuration
 with the base model as a Hugging Face id, and a README with usage. A GPT-SoVITS
 voice exports both models in the GPT-SoVITS webui's format, with its reference
 clip and transcript; an S2-Pro voice includes its reference too, and its README
-states the weights' non-commercial license. Local paths, optimizer state, logs
-and other dataset audio are left out.
+states the weights' non-commercial license. An RVC voice exports its voice file in
+the RVC WebUI's format (usable there and in Applio) and its index as content
+features (no audio). Local paths, optimizer state, logs and other dataset audio are
+left out.
 
-**Import** in the Voice panel adds such a zip. **GPT-SoVITS…** imports a pair
+**Voice package…** at the foot of the voice list adds such a zip (RVC packages also
+in the Convert tab). **GPT-SoVITS…** imports a pair
 of weights trained in the GPT-SoVITS webui (v2, v2Pro, v2ProPlus or v4), with a
 reference clip from a dataset or a file.
 
@@ -371,7 +426,7 @@ through an SSH tunnel.
 ## Models
 
 The **Models** tab lists every model the studio uses, grouped into text to speech,
-dataset tools and audio clean-up, with its size, license and whether it is
+voice conversion, dataset tools and audio clean-up, with its size, license and whether it is
 downloaded, and downloads the missing ones with progress into `models/`. None is
 required: download the speech models you want to use, and the others for what
 they do (until one speech model is there, the other tabs point to the Models tab):
@@ -388,7 +443,10 @@ they do (until one speech model is there, the other tabs point to the Models tab
 | Qwen3-ForcedAligner 0.6B | slicing and checking clips | 1.9 GB |
 | wav2vec2 Chinese | second aligner for checks | 1.3 GB |
 | CAM++, ZipEnhancer, AST | speaker similarity and Other voice; denoising reference clips; singing detection | 0.4 GB |
-| RoFormer vocals / de-reverb / denoise | the optional Clean up step | 0.9 GB each |
+| RVC pitch tracker (RMVPE), ContentVec | voice conversion (Convert tab) | 0.2 + 0.4 GB |
+| RVC v2 base models | training RVC voices (32, 40 and 48 kHz) | 0.65 GB |
+| RoFormer vocals / de-reverb / denoise | the optional Clean up step; the Convert tab's vocals and de-reverb steps | 0.9 GB each |
+| UVR MDX-Net Karaoke 2 | splitting lead and backing vocals (Convert tab) | 53 MB |
 
 Downloads come from Hugging Face, a mirror of it (hf-mirror.com, or any URL) or
 ModelScope, fetch only the files that are used, and resume when interrupted. The
@@ -494,11 +552,13 @@ src/polyvox/
                    lora.py, train.py, worker.py (training)
     fish_drama3/   engine.py; model.py + decode.py + kernels.py (4-bit Triton kernels);
                    prompt.py; edit.py (speech editing); convert.py (FP8 -> 4 bits, experts as HIGGS)
+    rvc/           engine.py; model.py (the voice model); pitch.py (RMVPE); convert.py
+                   (conversion, index); train.py + worker.py (training); voices.py (import, packages)
   data/            manifests.py (training manifests); record.py (dataset.json);
                    audio_io.py (audio without a system FFmpeg)
   prep/            dataset preparation: steps.py (the dataset page's steps), importer.py,
                    slicer.py, asr.py, aligner.py, checks.py, separation.py, singing.py,
-                   fillers.py, loudness.py, exporter.py
+                   fillers.py, loudness.py, exporter.py, karaoke.py (lead / backing split)
   lora_library.py  checkpoint discovery and metadata
   jobs.py          background jobs with progress and cancel
   training.py      training runs: config, job control, metrics
