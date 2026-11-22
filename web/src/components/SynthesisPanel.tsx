@@ -8,7 +8,7 @@ import { formatDuration, formatSize } from '../format'
 import { useT } from '../i18n'
 import { emptyInput, inputAudio, lacksTranscript } from '../referenceInputs'
 import type { InputState } from '../referenceInputs'
-import { scoped, unknownTags } from '../tags'
+import { outsideTags, scoped, unknownTags } from '../tags'
 import { useTakes } from '../useTakes'
 import { CloseIcon, SparkIcon, SplitIcon, TagIcon } from './icons'
 import { Info } from './Info'
@@ -229,21 +229,40 @@ export function SynthesisPanel({
   const cloning = !isBase || Object.keys(references).length > 0
   const takes = useTakes(caps?.takes && engine ? engine.id : null, text, cloning)
 
-  /** A blank line at the cursor: the text after it (or typed next, at the end) starts a new take. */
+  /** A blank line at the cursor: the text after it (or typed next, at the end) starts a new take.
+   * Inside a tag pair (the cursor where a scoped tag left it) the take starts after its closing tag. */
   function newTake() {
     const el = textArea.current
-    const at = el?.selectionStart ?? text.length
+    const start = el?.selectionStart ?? text.length
+    const at = outsideTags(text, start)
+    const end = Math.max(at, el?.selectionEnd ?? start)
     const before = text.slice(0, at).replace(/\s+$/, '')
-    const after = text.slice(el?.selectionEnd ?? at).replace(/^\s+/, '')
+    const after = text.slice(end).replace(/^\s+/, '')
     const gap = before ? '\n\n' : ''
     replaceText(before + gap + after, before.length + gap.length)
   }
 
-  /** New text with the cursor at `cursor`, the box focused at once (so typing goes on there). */
+  /** New text with the cursor at `cursor`, the box focused at once (so typing goes on there). The
+   * change goes in as the browser's own edit (only the part that differs), so Ctrl+Z undoes it like
+   * typing; setting the value from code would drop the box's undo history. */
   function replaceText(next: string, cursor: number) {
-    flushSync(() => setText(next))
-    textArea.current?.focus()
-    textArea.current?.setSelectionRange(cursor, cursor)
+    const el = textArea.current
+    const old = el?.value ?? text
+    let start = 0
+    while (start < old.length && start < next.length && old[start] === next[start]) start++
+    let tail = 0
+    while (tail < old.length - start && tail < next.length - start && old.at(-1 - tail) === next.at(-1 - tail)) tail++
+    if (old !== next) {
+      el?.focus()
+      el?.setSelectionRange(start, old.length - tail)
+      const inserted = next.slice(start, next.length - tail)
+      // execCommand is deprecated but still the only edit that joins a text box's undo history.
+      const edited =
+        el && (inserted ? document.execCommand('insertText', false, inserted) : document.execCommand('delete'))
+      if (!edited || el.value !== next) flushSync(() => setText(next)) // (no such command: as before, not undoable)
+    }
+    el?.focus()
+    el?.setSelectionRange(cursor, cursor)
   }
 
   function onKeyDown(e: KeyboardEvent) {

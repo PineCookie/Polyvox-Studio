@@ -1,4 +1,4 @@
-import { forwardRef, useRef } from 'react'
+import { forwardRef, Fragment, useRef } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { splitTags } from '../tags'
 
@@ -41,10 +41,13 @@ export const TaggedText = forwardRef<HTMLTextAreaElement, Props>(function Tagged
         {splitTags(value).map((piece, i) => {
           const start = offset
           offset += piece.text.length
+          // A take can end right after a tag ("…</whisper>"): its mark goes after the tag (the
+          // text that follows starts at the cut, and marks only go inside or at the end of text).
           return piece.tag ? (
-            <mark key={i} className={unknown.includes(piece.text) ? 'unknown' : undefined}>
-              {piece.text}
-            </mark>
+            <Fragment key={i}>
+              <mark className={unknown.includes(piece.text) ? 'unknown' : undefined}>{piece.text}</mark>
+              {cuts.includes(offset) && <i className="take-cut" />}
+            </Fragment>
           ) : (
             <span key={i}>{withCuts(piece.text, start, cuts)}</span>
           )
