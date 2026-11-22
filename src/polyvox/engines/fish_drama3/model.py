@@ -58,10 +58,20 @@ class Sampling:
     temperature: float = 1.0
     top_p: float = 0.9
     top_k: int = 30
+    # Reference guidance (``guided``); 0: none. Needs the prompt without its references too.
+    guidance: float = 0.0
 
 
 DEFAULT_SAMPLING = Sampling()  # Fish's defaults
 REDRAW = Sampling(1.0, 0.95, 30)  # a repeated semantic token is drawn again with these
+
+
+def guided(with_references: torch.Tensor, without: torch.Tensor, weight) -> torch.Tensor:
+    """The main token's scores pushed away from what the model would say with no reference:
+    log p + weight x (log p - log p without). What the references make likelier gets likelier
+    still, so the take leans harder on the voice they show."""
+    a, b = with_references.float().log_softmax(-1), without.float().log_softmax(-1)
+    return a + weight * (a - b)
 
 
 def sample(logits: torch.Tensor, temperature: float, top_k: int, top_p: float) -> torch.Tensor:
@@ -486,6 +496,14 @@ class Drama3(nn.Module):
         self.tower(before, torch.arange(head - 1, n - 1, device=self.device), rows[head - 1 : -1], rows[head:], n - 1)
         return hidden[-1:], cache
 
+    def read_plain(self, rows: torch.Tensor):
+        """A prompt without references through the backbone alone (the second state reference
+        guidance compares with; the tower never sees it): (its last hidden state, the cache)."""
+        from transformers.cache_utils import DynamicCache
+
+        cache = DynamicCache(config=self.text_config)
+        return self._pass(rows.to(self.device), 0, cache)[-1:], cache
+
     def plan_experts(self) -> float:
         """Refresh the experts held on the GPU from their use; the mean share of use they cover."""
         shares = [layer.mlp.experts.plan() for layer in self.backbone.layers]
@@ -499,12 +517,14 @@ class Drama3(nn.Module):
         max_frames: int = 1024,
         on_frame: Callable[[], None] | None = None,
         head: int = 0,
+        plain: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """``head``: the rows the references make up (prompt.parts): their states are kept."""
+        """``head``: the rows the references make up (prompt.parts): their states are kept.
+        ``plain``: the same prompt without references, for ``sampling.guidance``."""
         from .decode import Decoder
 
         try:
-            return self.decoder.generate(rows, sampling, max_frames, on_frame, head)
+            return self.decoder.generate(rows, sampling, max_frames, on_frame, head, plain)
         except Exception as e:  # fusing failed (torch.compile: no working Triton, say): decode unfused
             if not self.decoder.fused or isinstance(e, torch.OutOfMemoryError):
                 raise
@@ -512,22 +532,27 @@ class Drama3(nn.Module):
             graphs = self.decoder.graphs
             self.decoder = None
             self.decoder = Decoder(self, graphs=graphs)
-            return self.decoder.generate(rows, sampling, max_frames, on_frame, head)
+            return self.decoder.generate(rows, sampling, max_frames, on_frame, head, plain)
 
     @torch.inference_mode()
     def generate_reference(
-        self, rows, sampling: Sampling = DEFAULT_SAMPLING, max_frames: int = 1024, head: int = 0
+        self, rows, sampling: Sampling = DEFAULT_SAMPLING, max_frames: int = 1024, head: int = 0, plain=None
     ) -> torch.Tensor:
         """Plain decoding through transformers' modules (tests compare the decoder with it)."""
         dev = self.device
         rows = rows.to(dev)
         n = rows.shape[0]
+        guide = sampling.guidance > 0 and plain is not None
+        if guide:
+            other, other_cache = self.read_plain(plain)
         h, cache = self.prefill(rows, head)
         t, k, p = sampling.temperature, sampling.top_k, sampling.top_p
         recent = torch.full((RECENT,), -1, device=dev)
         frames, frame_in, pos = [], rows[-1:], n - 1
         for _ in range(max_frames):
             logits = F.linear(h, self.head)[0]
+            if guide:
+                logits = guided(logits, F.linear(other, self.head)[0], sampling.guidance)
             first = self.candidates[sample(logits, t, k, p)]
             again = self.candidates[sample(logits, REDRAW.temperature, REDRAW.top_k, REDRAW.top_p)]
             main = again if (bool(self.is_semantic(first)) and bool((recent == first).any())) else first
@@ -542,8 +567,10 @@ class Drama3(nn.Module):
             recent = torch.cat([recent[1:], main.view(1)])
             pos += 1
             frame_in = frame
-            out = self.backbone(inputs_embeds=self.backbone_input(frame)[None], past_key_values=cache, use_cache=True)
-            h = out.last_hidden_state[0]
+            x = self.backbone_input(frame)[None]
+            h = self.backbone(inputs_embeds=x, past_key_values=cache, use_cache=True).last_hidden_state[0]
+            if guide:
+                other = self.backbone(inputs_embeds=x, past_key_values=other_cache, use_cache=True).last_hidden_state[0]
         if not frames:
             return torch.zeros(CODES, 0, dtype=torch.long)
         return torch.cat(frames)[:, 1:].T.cpu()

@@ -43,6 +43,7 @@ ENGINE = "fish_drama3"
 MIN_GB = 11.0  # a 12 GB card (fewer experts cached: slower)
 MIN_RAM_GB = 30.0  # the experts in pinned memory, the rest while loading (a 32 GB computer)
 RESERVE_GB = 2.5  # left free after the expert caches: prompt pass, codec decode
+GUIDANCE = 0.0  # off: a little closer to the voice by a speaker model's score, not in blind listening
 FRAMES_PER_CHAR = 4.5  # first guess (21.5 frames per second of audio); then learned
 MIN_FRAMES = 10
 LEARN_MIN_CHARS = 10
@@ -316,6 +317,9 @@ class FishDrama3Engine(Engine):
         Param("temperature", "float", 1.0, 0.1, 1.5, 0.05),
         Param("top_p", "float", 0.9, 0.1, 1.0, 0.05),
         Param("top_k", "int", 30, 1, 100, 1),
+        # How much harder a take leans on its reference (model.guided); 0: off. Above 0 each
+        # frame takes the backbone twice.
+        Param("guidance", "float", GUIDANCE, 0.0, 1.0, 0.05),
         Param("language", "choice", "auto", choices=LANGUAGES),  # a hint: the main language
         Param("duration", "float", 0.0, 0.0, 60.0, 0.5),  # seconds, for a one-line text; 0 = its own
     )
@@ -398,7 +402,10 @@ class FishDrama3Engine(Engine):
         if clip is not None and not transcript:
             raise ValueError("Fish Audio Drama 3 needs the reference clip's transcript.")
         options = self.options(req.options)
-        sampling = model.Sampling(float(options["temperature"]), float(options["top_p"]), int(options["top_k"]))
+        guidance = float(options["guidance"]) if clip is not None else 0.0  # nothing to lean on without one
+        sampling = model.Sampling(
+            float(options["temperature"]), float(options["top_p"]), int(options["top_k"]), guidance
+        )
         language = str(options["language"])
         seconds = float(options["duration"])
         timed = seconds > 0 and len(parts) == 1  # a length only for a text spoken in one take
@@ -429,11 +436,13 @@ class FishDrama3Engine(Engine):
                     cap = frame_cap(want)
                     head, tail = prompt.parts(m.tokenizer, part, references, m.semantic_begin, hints)
                     rows = torch.cat((head, tail))
+                    # (guidance: the same turn as the model reads it with no reference)
+                    more = {"plain": prompt.build(m.tokenizer, part, [], m.semantic_begin, hints)} if guidance else {}
                     for attempt in range(2):  # a take that runs to its cap is drawn again once
                         self._progress.attempt = attempt
                         start = self._progress.step
                         torch.manual_seed(seed + attempt)
-                        codes = m.generate(rows, sampling, cap, self._count, head=len(head))
+                        codes = m.generate(rows, sampling, cap, self._count, head=len(head), **more)
                         if codes.shape[1] < cap:
                             break
                         logger.warning("Drama 3: a take ran to its cap (%d frames for ~%d); drawing again", cap, want)

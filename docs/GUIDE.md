@@ -40,8 +40,12 @@ checkpoints lets you pick one there. Then:
   transcript. On every model, about 20 s of reference clones clearly better
   than one short clip.
 - **Advanced**: guidance, steps, seed and the model's own settings; for Drama 3
-  a language hint and a length in seconds (it keeps to it closely; for a text
-  short enough for one take).
+  a language hint, a length in seconds (it keeps to it closely; for a text
+  short enough for one take) and **Reference strength**: each frame is predicted
+  with and without the reference, and what the reference adds is strengthened,
+  which can bring a take a little closer to the voice. It is off (0) by default: it
+  costs speed (the backbone runs twice per frame), and in a blind listening test
+  it was not preferred.
 - **History** keeps this session's clips to compare and download. **Edit
   words** changes what a clip says without generating it again: change, add or
   remove words in its text and **Apply**. With Fish Audio Drama 3 downloaded,

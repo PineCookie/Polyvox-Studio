@@ -172,6 +172,7 @@ export const en = {
   paramLabels: {
     cfg_value: 'Guidance',
     guidance_scale: 'Guidance',
+    guidance: 'Reference strength',
     inference_timesteps: 'Steps',
     num_steps: 'Steps',
     speaker_scale: 'Reference voice strength',
@@ -211,6 +212,8 @@ export const en = {
     cfg_value:
       'Lower sounds more natural and closer to the voice; raise toward 2.0 if words get dropped or sounds added. Above 2 the voice drifts away.',
     guidance_scale: 'Changes a trained voice little (1.0–2.5 all close); 1.2 was the steadiest.',
+    guidance:
+      'How much harder each take leans on the reference clips. It can sound a little closer to the voice on some voices, and makes takes slower. 0 is off. Without a reference it does nothing.',
     inference_timesteps: 'Detail passes per sound chunk: 10 is enough; more is slower and rarely better.',
     num_steps: 'Detail passes per sound chunk: below 10 loses some likeness; 16 is a touch closer at +25% time.',
     speaker_scale:

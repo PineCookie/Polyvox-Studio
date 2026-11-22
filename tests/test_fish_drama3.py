@@ -313,9 +313,11 @@ class FakeModel:
     def __init__(self, runaway=False):
         self.runaway = runaway
         self.calls = []
+        self.guided = []  # per call: (the guidance weight, rows of the prompt without references)
 
-    def generate(self, rows, sampling, max_frames, on_frame, head=0):
+    def generate(self, rows, sampling, max_frames, on_frame, head=0, plain=None):
         self.calls.append(max_frames)
+        self.guided.append((sampling.guidance, None if plain is None else (len(plain), len(rows))))
         n = max_frames if self.runaway and len(self.calls) % 2 == 1 else 20
         for _ in range(n):
             on_frame()
@@ -364,6 +366,19 @@ def test_the_engine_needs_its_model_and_a_transcript(settings, monkeypatch, tmp_
         tts.synthesize(SynthesisRequest(text="你好。", reference_wav=clip))
     with pytest.raises(KeyError):  # no such voice (saved voices: test_drama3_voices)
         tts.synthesize(SynthesisRequest(text="你好。", lora_id="voxcpm/someone"))
+
+
+def test_takes_lean_on_a_reference_only_when_there_is_one(settings, monkeypatch, tmp_path):
+    m = FakeModel()
+    tts = drama3(settings, monkeypatch, m)
+    clip = tmp_path / "ref.wav"
+    leaning = {"guidance": 0.5}
+    tts.synthesize(SynthesisRequest(text="你好。", reference_wav=clip, prompt_text="参考。", options=leaning))
+    weight, (plain, rows) = m.guided[-1]
+    assert weight == 0.5 and plain < rows  # the same turn, without the reference
+    tts.synthesize(SynthesisRequest(text="你好。", reference_wav=clip, prompt_text="参考。"))  # off unless asked
+    tts.synthesize(SynthesisRequest(text="你好。", options=leaning))  # no reference: nothing to lean on
+    assert m.guided[-2:] == [(0.0, None), (0.0, None)]
     assert engine.frame_cap(1000) == engine.MAX_FRAMES and engine.frame_cap(50) == 150
 
 
@@ -454,6 +469,19 @@ def test_the_decoder_speaks_as_plain_decoding(monkeypatch, higgs):
     want = m.generate_reference(rows, greedy, 6)
     got = m.generate(rows, greedy, 6)
     assert got.shape == want.shape == (10, 6) and torch.equal(got, want)
+    # Reference guidance: a second state that read the prompt without its references.
+    plain, leaning = rows[3:], model.Sampling(1.0, 0.9, 1, guidance=2.0)
+    want_guided = m.generate_reference(rows, leaning, 6, plain=plain)
+    assert torch.equal(m.generate(rows, leaning, 6, plain=plain), want_guided)
+    assert not torch.equal(want_guided, want)  # (it changes what is said)
+    assert torch.equal(m.generate(rows, leaning, 6), want)  # nothing to compare with: unguided
+
+
+def test_guidance_strengthens_what_the_references_add():
+    with_refs, without = torch.tensor([2.0, 1.0, 0.0]), torch.tensor([0.0, 1.0, 2.0])
+    assert torch.allclose(model.guided(with_refs, without, 0.0), with_refs.log_softmax(-1))
+    pushed = model.guided(with_refs, without, 1.0).softmax(-1)
+    assert pushed[0] > with_refs.softmax(-1)[0] and pushed[2] < with_refs.softmax(-1)[2]
 
 
 def test_planning_holds_the_most_used_experts():

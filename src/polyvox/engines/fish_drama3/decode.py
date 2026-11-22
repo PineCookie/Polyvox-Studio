@@ -25,7 +25,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from .model import CAPACITY, CODES, DEFAULT_SAMPLING, RECENT, REDRAW, Drama3, Sampling, linear
+from .model import CAPACITY, CODES, DEFAULT_SAMPLING, RECENT, REDRAW, Drama3, Sampling, guided, linear
 
 WINDOWS = (512, 1024, 2048, CAPACITY)
 REPLAN = 128  # frames between refreshes of the experts held on the GPU
@@ -274,7 +274,13 @@ class Decoder:
             scalar(REDRAW.top_k),
         )
         self.no_codes = torch.zeros(CODES - 1, dtype=torch.long, device=dev)
-        self._graphs: dict[int, torch.cuda.CUDAGraph] = {}
+        # Reference guidance: a second backbone state that read the prompt without references
+        # (made when first asked for), stepped with the same frames at its own positions.
+        self.plain: Backbone | None = None
+        self.h_plain = torch.zeros_like(self.h)
+        self.pos_plain = torch.zeros(1, dtype=torch.long, device=dev)
+        self.guidance = scalar(0.0, torch.float32)
+        self._graphs: dict[tuple[int, bool], torch.cuda.CUDAGraph] = {}
 
     # ------------------------------------------------------------ one frame
     def _tower_layer(self, layer, hidden: Tensor, emb: Tensor, pos: Tensor, window: int) -> Tensor:
@@ -314,9 +320,11 @@ class Decoder:
             codes.append(pick(linear(h, head)[0].float(), self.temperature, self.top_p, self.top_k))
         return torch.stack(codes, -1)
 
-    def _step(self, window: int) -> None:
+    def _step(self, window: int, guide: bool = False) -> None:
         m = self.m
         logits = F.linear(self.h, m.head)[0].float()
+        if guide:
+            logits = guided(logits, F.linear(self.h_plain, m.head)[0], self.guidance)
         first = m.candidates.index_select(0, pick(logits, self.temperature, self.top_p, self.top_k))[0]
         again = m.candidates.index_select(0, pick(logits, *self.redraw))[0]
         main = torch.where(m.is_semantic(first) & (self.recent == first).any(), again, first)
@@ -327,7 +335,11 @@ class Decoder:
         frame = torch.cat([main.view(1), codes[0]]).view(1, CODES + 1)
         self.frame.copy_(frame)
         self.pos.add_(1)
-        self.h.copy_(self.backbone.step(m.backbone_input(frame, audio_only=True), self.pos, window))
+        x = m.backbone_input(frame, audio_only=True)
+        self.h.copy_(self.backbone.step(x, self.pos, window))
+        if guide:
+            self.pos_plain.add_(1)
+            self.h_plain.copy_(self.plain.step(x, self.pos_plain, window))
 
     # ------------------------------------------------------------ graphs
     @property
@@ -335,39 +347,40 @@ class Decoder:
         """False until the first frame graph is recorded (it waits for torch.compile)."""
         return not self.graphs or bool(self._graphs)
 
-    def _run(self, window: int) -> None:
+    def _run(self, window: int, guide: bool = False) -> None:
         if not self.graphs:
-            self._step(window)
+            self._step(window, guide)
             return
-        if window not in self._graphs:
-            self._capture(window)
-        self._graphs[window].replay()
+        if (window, guide) not in self._graphs:
+            self._capture(window, guide)
+        self._graphs[window, guide].replay()
 
-    def _state(self) -> list[Tensor]:
+    def _state(self, guide: bool = False) -> list[Tensor]:
         m = self.m
         tower = [t for layer in (*m.shared, *m.residual) for t in (layer.k, layer.v)]
         counts = [layer.mlp.experts.counts for layer in m.backbone.layers]
-        return [self.h, self.frame, self.pos, self.recent, *self.backbone.states(), *tower, *counts]
+        plain = [self.h_plain, self.pos_plain, *self.plain.states()] if guide else []
+        return [self.h, self.frame, self.pos, self.recent, *self.backbone.states(), *tower, *counts, *plain]
 
-    def _capture(self, window: int) -> None:
+    def _capture(self, window: int, guide: bool = False) -> None:
         """Record one step; the state and the random generator are put back afterwards, so a
         seed samples the same whether or not a call captured."""
-        state = self._state()
+        state = self._state(guide)
         saved = [t.clone() for t in state]
         rng = torch.cuda.get_rng_state(self.device)
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side):
             for _ in range(2):
-                self._step(window)
+                self._step(window, guide)
         torch.cuda.current_stream().wait_stream(side)
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
-            self._step(window)
+            self._step(window, guide)
         for t, s in zip(state, saved, strict=True):
             t.copy_(s)
         torch.cuda.set_rng_state(rng, self.device)
-        self._graphs[window] = graph
+        self._graphs[window, guide] = graph
 
     # ------------------------------------------------------------ decoding
     @torch.inference_mode()
@@ -378,6 +391,7 @@ class Decoder:
         max_frames: int = 1024,
         on_frame: Callable[[], None] | None = None,
         head: int = 0,
+        plain: Tensor | None = None,
     ) -> Tensor:
         """As Drama3.generate_reference: codes [10, n] after the prompt ``rows``."""
         m = self.m
@@ -388,6 +402,15 @@ class Decoder:
         self.temperature.fill_(sampling.temperature)
         self.top_p.fill_(sampling.top_p)
         self.top_k.fill_(sampling.top_k)
+        guide = sampling.guidance > 0 and plain is not None
+        if guide:
+            if self.plain is None:
+                self.plain = Backbone(m, self.steps)
+            h, cache = m.read_plain(plain)
+            self.plain.load(cache, plain.shape[0])
+            self.h_plain.copy_(h)
+            self.pos_plain.fill_(plain.shape[0] - 1)
+            self.guidance.fill_(sampling.guidance)
         h, cache = m.prefill(rows, head)
         self.backbone.load(cache, n)
         del cache
@@ -399,7 +422,7 @@ class Decoder:
         frames: list[Tensor] = []
         for step in range(max_frames):
             window = next(w for w in WINDOWS if w > n + step)
-            self._run(window)
+            self._run(window, guide)
             frame = self.frame[0].clone()
             if int(frame[0]) == m.eos:
                 break

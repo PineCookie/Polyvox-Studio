@@ -75,7 +75,7 @@ class FakeModel:
     def __init__(self):
         self.prompts = []
 
-    def generate(self, rows, sampling, max_frames, on_frame, head=0):
+    def generate(self, rows, sampling, max_frames, on_frame, head=0, plain=None):
         self.prompts.append("".join(chr(r) for r in rows[:, 0].tolist() if r < self.semantic_begin))
         return torch.zeros(10, 20, dtype=torch.long)
 

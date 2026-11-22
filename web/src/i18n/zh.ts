@@ -196,6 +196,7 @@ export const zh: Messages = {
   paramLabels: {
     cfg_value: '引导强度',
     guidance_scale: '引导强度',
+    guidance: '参考强度',
     inference_timesteps: '步数',
     num_steps: '步数',
     speaker_scale: '参考音色强度',
@@ -233,6 +234,8 @@ export const zh: Messages = {
   paramHints: {
     cfg_value: '较低更自然、更像目标声音；若出现漏字或多出声音，可调高到 2.0。高于 2 时声音会偏离。',
     guidance_scale: '对训练好的音色影响很小（1.0–2.5 都接近）；1.2 最稳定。',
+    guidance:
+      '每一段更多地依靠参考音频。在某些音色上会略微更像目标声音，但生成更慢。0 为关闭。没有参考音频时不起作用。',
     inference_timesteps: '每段声音的细化次数：10 已足够；更多会更慢，几乎没有提升。',
     num_steps: '每段声音的细化次数：低于 10 会损失相似度；16 略更像，耗时多 25%。',
     speaker_scale: '仅在使用参考音频时有效（对单独训练的音色无影响）。低于 1 时克隆音色变弱；高于 1.5 提升很小。',
