@@ -96,30 +96,15 @@ class TrainParams(BaseModel):
     enable_dit: bool = True
     enable_proj: bool = False
     # The engine's own settings (Engine.train_form, scope "option"), by name; missing ones take
-    # their defaults (Engine.train_options). Given at the top level too (as before engines had
-    # their own: e.g. gsv_version), they are moved here.
+    # their defaults (Engine.train_options).
     options: dict = Field(default_factory=dict)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _engine_settings(cls, data):
-        """The engine's own settings given at the top level go into ``options`` (checked);
-        sizing-only values (epochs) and other engines' settings are dropped."""
-        if not isinstance(data, dict):
-            return data
-        engine = engines.classes().get(str(data.get("engine") or engines.DEFAULT))
-        if engine is None:
-            return data
-        form = {p.name: p for p in engine.train_form()}
-        options = dict(data.get("options") or {})
-        rest = {}
-        for key, value in data.items():
-            if key in cls.model_fields:
-                rest[key] = value
-            elif form.get(key) is not None and form[key].scope == "option":
-                options[key] = value
-        rest["options"] = {name: value for name, value in engine.train_options(options).items() if name in options}
-        return rest
+    @model_validator(mode="after")
+    def _check_options(self):
+        if engine := engines.classes().get(self.engine):
+            checked = engine.train_options(self.options)
+            self.options = {name: checked[name] for name in self.options}
+        return self
 
 
 class RunSummary(BaseModel):

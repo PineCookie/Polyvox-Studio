@@ -143,8 +143,11 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
     if (blocker || submitting || !engine) return
     setSubmitting(true)
     try {
+      const scoped = (scope: EngineParam['scope']) =>
+        Object.fromEntries(form.filter((p) => p.scope === scope).map((p) => [p.name, params[p.name]]))
       await onStart({
-        ...params,
+        ...scoped('run'),
+        options: scoped('option'),
         engine: engine.id,
         name,
         dataset,

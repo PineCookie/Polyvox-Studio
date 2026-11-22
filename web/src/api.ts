@@ -581,15 +581,16 @@ export interface RunDetail extends RunSummary {
 
 const CONSOLE_LINES = 200 // as many as the server's tail
 
-// A new run: what it trains on, and the training form's values (Engine.train_form) by name; the
-// server puts the engine's own settings into its options.
+// A new run: what it trains on, the training form's TrainParams fields (scope "run") by name, and
+// the engine's own settings (scope "option") in options.
 export interface TrainRequest {
   name: string
   engine: string
   dataset: string
   val_dataset: string | null
   val_holdout: number
-  [field: string]: FormValue | null
+  options: FormValues
+  [field: string]: FormValue | FormValues | null
 }
 
 // What a run of these settings will do (POST /api/training/plan; Engine.plan).

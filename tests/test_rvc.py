@@ -364,14 +364,19 @@ def test_a_training_run_is_planned_from_the_dataset(settings, monkeypatch, tmp_p
     manifest = tmp_path / "train.jsonl"
     manifest.write_text("".join(f'{{"audio": "{w.as_posix()}", "text": "clip"}}\n' for w in wavs), encoding="utf-8")
     engine = RvcEngine(settings, fake_runtime)
-    params = TrainParams(name="run_a", engine="rvc", dataset="speaker_a/train.jsonl", batch_size=2, rvc_epochs=3)
+    params = TrainParams(
+        name="run_a", engine="rvc", dataset="speaker_a/train.jsonl", batch_size=2, options={"rvc_epochs": 3}
+    )
     config = engine.training_config(params, tmp_path / "run", manifest, None)
     assert config["pretrained_g"].endswith("f0G40k.pth") and config["rmvpe"].endswith("rmvpe.pt")
     assert config["epochs"] == 3 and config["save_every"] == 25 and config["save_path"].endswith("checkpoints")
     assert config["num_iters"] % 3 == 0 and config["num_iters"] >= 3
     assert config["feature_cache"].endswith(str(Path(".cache") / "rvc_v2_40k.pt")) and config["sample_rate"] == 40000
     config = engine.training_config(
-        TrainParams(**{**params.model_dump(), "rvc_sample_rate": 48000}), tmp_path / "run", manifest, None
+        params.model_copy(update={"options": {**params.options, "rvc_sample_rate": 48000}}),
+        tmp_path / "run",
+        manifest,
+        None,
     )
     assert config["pretrained_d"].endswith("f0D48k.pth") and config["feature_cache"].endswith("rvc_v2_48k.pt")
     assert config["sample_rate"] == 48000 and config["rmvpe"] == str(tmp_path / "rvc" / "rmvpe.pt")

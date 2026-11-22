@@ -320,7 +320,7 @@ def test_training_config_is_full_finetuning_in_two_stages(engine, data_dir, tmp_
     assert GptSovitsEngine.capabilities.training and GptSovitsEngine.capabilities.full_finetune
     with pytest.raises(ValueError, match="epochs"):
         engine.training_config(
-            TrainParams(**{**params.model_dump(), "sovits_epochs": 0, "gpt_epochs": 0}), tmp_path, run_manifest, None
+            params.model_copy(update={"options": {"sovits_epochs": 0, "gpt_epochs": 0}}), tmp_path, run_manifest, None
         )
 
 
@@ -660,7 +660,9 @@ def test_training_can_start_from_v2pro(engine, data_dir, tmp_path):
     dataset(data_dir, [("good", 6.0, "我们今天就先说到这里，下次再见吧。", None)])
     run_manifest = tmp_path / "train.jsonl"
     manifests.write_manifest([{"audio": "wavs/0.wav", "text": "示例。"}], run_manifest)
-    params = TrainParams(name="run_v", engine="gpt_sovits", dataset="speaker_a/train.jsonl", gsv_version="v2Pro")
+    params = TrainParams(
+        name="run_v", engine="gpt_sovits", dataset="speaker_a/train.jsonl", options={"gsv_version": "v2Pro"}
+    )
     config = engine.training_config(params, tmp_path / "run_v", run_manifest, None)
     assert config["version"] == "v2Pro" and config["feature_cache"].endswith("gpt_sovits_v2Pro.pt")
 
@@ -674,7 +676,7 @@ def test_v4_training_is_a_lora_on_v2proplus_features(engine, data_dir, tmp_path)
     run_manifest = tmp_path / "train.jsonl"
     manifests.write_manifest([{"audio": "wavs/0.wav", "text": "示例。"}], run_manifest)
     params = TrainParams(
-        name="run_v4", engine="gpt_sovits", dataset="speaker_a/train.jsonl", gsv_version="v4", lora_rank=16
+        name="run_v4", engine="gpt_sovits", dataset="speaker_a/train.jsonl", options={"gsv_version": "v4"}, lora_rank=16
     )
     with pytest.raises(ValueError, match="v4 isn't downloaded"):
         engine.training_config(params, tmp_path / "run_v4", run_manifest, None)

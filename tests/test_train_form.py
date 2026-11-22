@@ -67,17 +67,14 @@ def test_full_fine_tuning_runs_are_sized_by_their_own_epochs():
     )
 
 
-def test_engine_settings_go_into_options_and_are_checked():
-    params = TrainParams(name="a", engine="gpt_sovits", dataset="d/train.jsonl", gsv_version="v4", lora_rank=8)
-    assert params.options == {"gsv_version": "v4"} and params.lora_rank == 8
-    # Another engine's settings and sizing-only values are dropped (a form sends what it shows).
-    params = TrainParams(name="a", engine="voxcpm", dataset="d/train.jsonl", gsv_version="v4", epochs=3)
-    assert params.options == {}
+def test_engine_settings_are_checked_options():
+    params = TrainParams(name="a", engine="gpt_sovits", dataset="d/train.jsonl", options={"gsv_version": "v4"})
+    assert params.options == {"gsv_version": "v4"}
     with pytest.raises(ValidationError, match="must be one of"):
-        TrainParams(name="a", engine="gpt_sovits", dataset="d/train.jsonl", gsv_version="v9")
-    with pytest.raises(ValidationError, match="no training setting"):
-        TrainParams(name="a", engine="rvc", dataset="d/train.jsonl", options={"nope": 1})
-    rate = TrainParams(name="a", engine="rvc", dataset="d/train.jsonl", rvc_sample_rate="48000")
+        TrainParams(name="a", engine="gpt_sovits", dataset="d/train.jsonl", options={"gsv_version": "v9"})
+    with pytest.raises(ValidationError, match="no training setting"):  # another engine's
+        TrainParams(name="a", engine="voxcpm", dataset="d/train.jsonl", options={"gsv_version": "v4"})
+    rate = TrainParams(name="a", engine="rvc", dataset="d/train.jsonl", options={"rvc_sample_rate": "48000"})
     assert rate.options == {"rvc_sample_rate": 48000}  # a choice keeps its type
     assert engines.classes()["rvc"].train_options(rate.options)["rvc_epochs"] == 100  # defaults filled in
 
