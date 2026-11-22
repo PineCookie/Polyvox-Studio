@@ -100,22 +100,6 @@ def test_the_quick_pick_takes_the_clips_most_like_the_voice(settings, service, t
     assert len(alike) == 3 and not set(alike) & {0, 1, 2}
     assert not set(picked("voice", alike)) & (set(alike) | {0, 1, 2})
 
-    # Saving a voice, or changing its reference, picks the same way.
-    def joined_texts(voice_id):
-        folder = lora_library.resolve(settings.lora_dir, voice_id).path
-        return reference.read_reference(folder)[1]
-
-    def first_texts(indices):
-        return [f"这是第{TEXTS[i]}句" for i in indices]
-
-    form = {"name": "voice_q", "dataset": "speaker_a/train.jsonl", "by": "voice"}
-    assert client.post("/api/loras/reference-voice", data=form).status_code == 200
-    saved = joined_texts("fish_drama3/voice_q")
-    assert all(t in saved for t in first_texts(alike)) and not any(t in saved for t in first_texts([0, 1, 2]))
-    change = {"id": "fish_drama3/voice_q", "dataset": "speaker_a/train.jsonl", "by": "text"}
-    assert client.post("/api/loras/reference", data=change).status_code == 200
-    assert all(t in joined_texts("fish_drama3/voice_q") for t in first_texts([0, 1, 2]))
-
     # A checked dataset's own likeness scores are used as they are: nothing is measured.
     align = manifest.parent / manifests.ALIGN_FILE
     data = json.loads(align.read_text(encoding="utf-8"))
@@ -141,11 +125,10 @@ def finished(client, job):
     raise AssertionError("the job didn't finish")
 
 
-def test_voices_get_the_searched_reference_through_the_api(settings, service, training, data_dir, monkeypatch):
+def test_a_search_returns_clips_that_a_voice_is_then_saved_with(settings, service, training, data_dir, monkeypatch):
     monkeypatch.setattr(reference_search, "TESTS", 4)
     monkeypatch.setattr(engine.FishDrama3Engine, "unavailable", lambda self: None)
-    spoken = []
-    fake = echo(spoken)
+    fake = echo([])
 
     def synthesize(self, req):
         audio, rate = fake(req.text, req.prompt_wav, req.prompt_text, req.seed)
@@ -154,34 +137,38 @@ def test_voices_get_the_searched_reference_through_the_api(settings, service, tr
     monkeypatch.setattr(engine.FishDrama3Engine, "synthesize", synthesize)
     mixed_dataset(data_dir)
     client = TestClient(create_app(settings, service, training))
-    body = {"dataset": "speaker_a/train.jsonl", "name": "voice_a"}
+    dataset = "speaker_a/train.jsonl"
 
-    job = finished(client, client.post("/api/reference-search", json=body).json())
+    job = finished(
+        client, client.post("/api/reference-search", json={"dataset": dataset, "engine": "fish_drama3"}).json()
+    )
     assert job["state"] == "done", job["error"]
     result = job["result"]
-    assert result["id"] == "fish_drama3/voice_a" and result["chosen"] != "clean"
-    assert [t["name"] for t in result["tried"]][0] == "clean"
-    chosen = next(t for t in result["tried"] if t["name"] == result["chosen"])
-    folder = lora_library.resolve(settings.lora_dir, "fish_drama3/voice_a").path
-    wav, text = reference.read_reference(folder)
-    assert sf.info(wav).frames > 0 and text.count("示例句子") == 3
-    assert not set(chosen["indices"]) & {0, 1, 2}
+    assert result["chosen"] != "clean" and [t["name"] for t in result["tried"]][0] == "clean"
+    kept = [c["index"] for c in result["clips"]]
+    assert len(kept) == 3 and not set(kept) & {0, 1, 2} and all(c["text"] for c in result["clips"])
+    assert not (settings.lora_dir / "fish_drama3").exists()  # a search saves nothing
 
-    assert client.post("/api/reference-search", json=body).status_code == 409  # the name is taken
-    again = client.post("/api/reference-search", json={"dataset": body["dataset"], "id": "fish_drama3/voice_a"})
-    assert finished(client, again.json())["state"] == "done"
-    assert client.post("/api/reference-search", json={**body, "id": "fish_drama3/voice_a"}).status_code == 422
-    other = client.post("/api/reference-search", json={**body, "name": "x", "engine": "fish_s2"})
-    assert other.status_code == 422  # S2-Pro voices are trained
+    def texts(voice_id):
+        return reference.read_reference(lora_library.resolve(settings.lora_dir, voice_id).path)[1]
+
+    def said(indices):
+        return [f"这是第{TEXTS[i]}句" for i in indices]
+
+    # The clips shown are the clips saved.
+    form = {"name": "voice_a", "dataset": dataset, "indices": json.dumps(kept)}
+    assert client.post("/api/loras/reference-voice", data=form).status_code == 200
+    assert all(t in texts("fish_drama3/voice_a") for t in said(kept))
+    change = {"id": "fish_drama3/voice_a", "dataset": dataset, "indices": "[0, 1]"}
+    assert client.post("/api/loras/reference", data=change).status_code == 200
+    saved = texts("fish_drama3/voice_a")
+    assert all(t in saved for t in said([0, 1])) and not any(t in saved for t in said(kept))
+    assert client.post("/api/loras/reference", data={**change, "indices": "[999]"}).status_code == 404
+    assert client.post("/api/loras/reference", data={**change, "indices": "[]"}).status_code == 422
+    assert client.post("/api/loras/reference", data={**change, "indices": "x"}).status_code == 422
+
+    other = client.post("/api/reference-search", json={"dataset": dataset, "engine": "fish_s2"})
+    assert other.status_code == 422  # S2-Pro can't test sets by speaking
+    assert client.post("/api/reference-search", json={"dataset": dataset}).status_code == 422  # which engine?
     listed = {e["id"]: e["capabilities"]["reference_search"] for e in client.get("/api/engines").json()}
     assert listed["fish_drama3"] and not listed["fish_s2"]
-
-    # Only the clips (Synthesize's dataset clips): nothing saved
-    voices = sorted(p.name for p in folder.parent.iterdir())
-    only = client.post("/api/reference-search", json={"dataset": body["dataset"], "engine": "fish_drama3", "count": 2})
-    done = finished(client, only.json())
-    assert done["state"] == "done" and "id" not in done["result"]
-    kept = done["result"]["clips"]
-    assert len(kept) == 2 and {c["index"] for c in kept}.isdisjoint({0, 1, 2}) and all(c["text"] for c in kept)
-    assert sorted(p.name for p in folder.parent.iterdir()) == voices
-    assert client.post("/api/reference-search", json={"dataset": body["dataset"]}).status_code == 422  # which engine?

@@ -300,7 +300,6 @@ export const en = {
   gsvGptExample: 'e.g. D:\\GPT-SoVITS\\GPT_weights_v2ProPlus\\voice-e15.ckpt',
   gsvReference: 'Reference clip',
   gsvReferenceFromDataset: 'Best clip of a dataset',
-  referenceClipsFromDataset: 'Best clips of a dataset, joined',
   gsvReferenceClip: 'A clip',
   gsvReferenceLater: 'Later',
   noReference: 'no reference',
@@ -312,8 +311,7 @@ export const en = {
   referenceVoiceTitle: (engine: string) => `New ${engine} voice`,
   referenceVoiceIntro:
     'A name and the clips it clones from: the voice then appears in this list and speaks with them whenever no other clip is given. Nothing is trained.',
-  referenceSearchWhat: 'Choosing the clips',
-  referenceSearchDone: 'Sets compared',
+  referenceSearchWhat: 'The test by speaking',
   referenceSearchSets: {
     clean: 'Cleanest transcripts',
     alike: 'Most like the voice',
@@ -321,11 +319,12 @@ export const en = {
   } as Record<string, string>,
   referenceSearchRow: (likeness: string, pitch: string) => `likeness ${likeness} · pitch ${pitch}`,
   semitones: (n: string) => `${n} st`,
-  referenceSearchKept: 'kept',
-  referencePickBy: 'Pick',
+  testedNote: (set: string) => `Tested by speaking: kept “${set}”`,
+  referencePickBy: 'Choose clips by',
   referencePickVoice: 'Most like the voice',
   referencePickText: 'Cleanest transcripts',
-  referencePickTest: 'Test by speaking (about a minute)',
+  findingAlikeClips: 'Finding the clips most like the voice… (the first time for a dataset takes a few seconds)',
+  findingClips: 'Picking clips…',
   findBestClips: 'Test by speaking',
   findBestClipsHint:
     'Slower (about a minute): a few sets of clips each speak the same sentences of the dataset, and the set that sounds most like the speaker is kept.',

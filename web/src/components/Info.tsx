@@ -37,7 +37,7 @@ function placeFor(anchor: DOMRect, width: number, height: number): Place {
 }
 
 /** A small ⓘ beside a label: its explanation shows on hover, focus or a tap. The bubble is drawn
- * over the whole page (so no panel around the label can cut it off or cover it), points at its ⓘ,
+ * over the whole page or its dialog (so no panel around the label can cut it off or cover it), points at its ⓘ,
  * stays inside the window and follows the ⓘ while open. */
 export function Info({ text }: { text: string }) {
   const t = useT()
@@ -121,7 +121,9 @@ export function Info({ text }: { text: string }) {
               {text}
             </span>
           </span>,
-          document.body,
+          // A modal dialog is drawn in the browser's top layer, over everything in the page: an ⓘ
+          // inside one puts its bubble in the dialog, else it would show behind it.
+          wrap.current?.closest('dialog') ?? document.body,
         )}
     </span>
   )

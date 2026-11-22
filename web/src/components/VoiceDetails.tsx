@@ -94,7 +94,7 @@ export function VoiceDetails({ engines, loras, selected, modelId, onSelect, onRe
           {!!engine?.capabilities.voice_reference && (
             <VoiceReference
               lora={current}
-              joined={(engine.capabilities.voice_reference_clips ?? 1) > 1}
+              count={engine.capabilities.voice_reference_clips ?? 1}
               search={engine.capabilities.reference_search}
               onChanged={onRefresh}
               onError={onError}
