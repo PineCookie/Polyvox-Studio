@@ -25,12 +25,13 @@ checkpoints lets you pick one there. Then:
 - **Text**, with the model's inline tags a click away: VoxCPM2's sounds and
   reactions (laugh, sigh, ...); S2-Pro's emotions, sounds, delivery and pauses,
   plus any description in brackets (**Custom…**), which acts on the words after
-  it; Drama 3's point tags ("[sighs]", at that spot) and tags around words
-  ("<whisper>…</whisper>": select the words, then pick the tag). Tags a model
+  it; Drama 3's emotions and sounds ("[excited]", "[sighs]", at that spot: one or
+  two plain words work best) and tags around words ("<whisper>…</whisper>":
+  select the words, then pick the tag; this is the way to whisper). Tags a model
   doesn't know are marked in the text.
 - **Style**: VoxCPM2 takes a description of the voice, e.g. "a calm, warm
-  voice, speaking slowly"; Drama 3 a direction for how to say the text, e.g.
-  "with bright eager excitement".
+  voice, speaking slowly"; Drama 3 how to say the text, in a word or two, e.g.
+  "excited" (short words direct it more than long descriptions).
 - **Reference audio**: each model shows its own inputs. VoxCPM2 has a
   Reference (who it sounds like) and a Prompt (speech it continues from, with
   its transcript); dots.tts one clip; GPT-SoVITS a prompt clip and timbre clips;
