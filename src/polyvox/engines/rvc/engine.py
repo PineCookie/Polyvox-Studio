@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import logging
 import random
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -83,6 +84,7 @@ class RvcEngine(Engine):
     )
     model_setting = "rvc_model"
     worker_module = "polyvox.engines.rvc.worker"
+    checkpoint_files = (voices.INFO, voices.WEIGHTS)
 
     def __init__(self, settings: Settings, loader: RuntimeLoader = load_runtime):
         self.settings = settings
@@ -233,6 +235,65 @@ class RvcEngine(Engine):
             kept = voices.save_index(self.settings.lora_dir / ckpt.voice_path, features.to(self.device))
             self._index = None
             return kept
+
+    def index_from(
+        self, lora_id: str, dataset: str | None, logs: str | None, make_room: Callable[[], None]
+    ) -> int | None:
+        """The voice's index built from a dataset's clips (``make_room`` first: ContentVec on the
+        GPU), or an RVC WebUI logs folder's features; neither: None."""
+        from ...data import manifests
+        from ...prep.importer import clean_path
+
+        if dataset:
+            manifest = manifests.resolve(self.settings.data_dir, dataset)
+            entries = manifests.training_entries(manifest)[0]
+            if not entries:
+                raise ValueError(f"'{dataset}' has no clips to build an index from.")
+            make_room()
+            return self.build_index(lora_id, [Path(e["audio"]) for e in entries])
+        if logs:
+            path = Path(clean_path(logs))
+            if not (path / "total_fea.npy").is_file() and not (path.is_file() and path.suffix == ".npy"):
+                raise ValueError("That folder has no total_fea.npy (an RVC WebUI logs/<run> folder has one).")
+            return self.save_index_from(lora_id, voices.webui_features(path))
+        return None
+
+    def import_voice(self, body, make_room):
+        """An RVC WebUI voice file (voices.WebuiImport: a server path), its index built from a dataset
+        or a WebUI logs folder (the WebUI's faiss .index isn't read). An index that fails leaves the
+        voice imported (ValueError saying so)."""
+        from ...prep.importer import clean_path
+
+        data = voices.WebuiImport.model_validate(body)
+        name = data.name.strip()
+        if not re.fullmatch(voices.VOICE_NAME, name):
+            raise ValueError("Use letters, digits, '.', '-' or '_' for the name (up to 80).")
+        folder = lora_library.engine_dir(self.settings.lora_dir, voices.ENGINE) / name
+        if folder.exists():
+            raise FileExistsError(f"A voice named '{name}' already exists.")
+        voices.import_webui(folder, Path(clean_path(data.path)))
+        lora_id = f"{voices.ENGINE}/{name}"
+        try:
+            rows = self.index_from(lora_id, data.index_dataset, data.index_logs, make_room)
+        except (ValueError, OSError, KeyError) as e:  # the voice stays; its index can be built later
+            raise ValueError(f"Imported '{name}', but its index failed: {e}") from e
+        return {"id": lora_id, "engine": voices.ENGINE, "index_rows": rows}
+
+    @classmethod
+    def package_files(cls, ckpt, name, base_model, half):
+        """The voice file as RVC saves it and its index (base_model and half don't apply)."""
+        files = voices.package_files(ckpt.path)
+        header = voices.check_voice_file(ckpt.path / voices.WEIGHTS)
+        index = files.get(voices.PACKAGE_INDEX)
+        rows = voices.package_index(index).shape[0] if index else None
+        files["README.md"] = voices.readme(name, header["sample_rate"], rows, header["info"], ckpt.step).encode()
+        return files
+
+    @classmethod
+    def import_package(cls, folder, name, files):
+        if voices.WEIGHTS not in files:
+            raise ValueError(f"An RVC package needs {voices.WEIGHTS}.")
+        return voices.import_package(folder, name, {f: d for f, d in files.items() if f in voices.PACKAGE_FILES})
 
     def unload(self) -> None:
         with self._lock:

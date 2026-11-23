@@ -23,6 +23,7 @@ from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from ..common import train_form
 from . import lora as dots_lora
+from . import package
 
 if TYPE_CHECKING:
     from ...training import TrainParams
@@ -88,6 +89,15 @@ class DotsEngine(Engine):
     )
     model_setting = "dots_model"
     worker_module = "polyvox.engines.dots.worker"
+    checkpoint_files = (lora_library.WEIGHTS_FILE,)
+
+    @classmethod
+    def package_files(cls, ckpt, name, base_model, half):
+        return package.files(ckpt, name, base_model, half)
+
+    @classmethod
+    def import_package(cls, folder, name, files):
+        return package.unpack(folder, name, files)
 
     def __init__(self, settings: Settings, loader: RuntimeLoader = load_runtime):
         self.settings = settings

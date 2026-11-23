@@ -1,5 +1,5 @@
-"""Voice conversion (the Convert tab): songs or vocals sung again in an RVC voice, as a job;
-importing RVC WebUI voices and building their index."""
+"""Voice conversion (the Convert tab): songs or vocals sung again in a voice, as a job; rebuilding
+a voice's index."""
 
 from __future__ import annotations
 
@@ -17,15 +17,13 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .. import engines, lora_library
-from ..data import audio_io, manifests
+from .. import engines
+from ..data import audio_io
 from ..jobs import Job
-from ..prep import importer
 from ..prep.karaoke import Karaoke
-from .context import Studio, found, save_upload
+from .context import Studio, save_upload
 from .schemas import JobOut
 
-VOICE_NAME = r"^[^\W_][\w.-]{0,79}$"  # as run and package names
 SONG_RATE = 44_100  # separation runs at this rate; covers are written at it
 RESULTS = Path(tempfile.gettempdir()) / "polyvox-convert"  # one folder per job; older ones pruned
 KEEP_RESULTS = 8
@@ -33,14 +31,7 @@ FILES = ("cover", "vocals_converted", "instrumental", "vocals", "lead", "backing
 BACKING = ("keep", "convert")  # the backing vocals of a split: as sung, or converted on their own
 
 
-class RvcImportIn(BaseModel):
-    name: str
-    path: str  # the voice's .pth on this computer
-    index_dataset: str | None = None  # build its index from a dataset's clips
-    index_logs: str | None = None  # or from an RVC WebUI logs folder (its total_fea.npy)
-
-
-class RvcIndexIn(BaseModel):
+class IndexIn(BaseModel):
     id: str
     index_dataset: str | None = None
     index_logs: str | None = None
@@ -83,66 +74,22 @@ def router(s: Studio) -> APIRouter:
     karaoke = Karaoke()  # on the CPU; kept loaded between songs (a small model)
 
     def rvc():
-        engine = s.registry.get("rvc")
+        """The engine that converts recordings (capabilities.conversion)."""
+        engine = next((e for e in s.registry.values() if e.capabilities.conversion), None)
         if engine is None:
-            raise HTTPException(404, "RVC isn't available here.")
+            raise HTTPException(404, "No voice conversion here.")
         if reason := engine.unavailable():
-            raise HTTPException(503, f"RVC can't run here: {reason}")
+            raise HTTPException(503, f"{engine.name} can't run here: {reason}")
         return engine
 
-    def dataset_clips(dataset: str) -> list[Path]:
-        manifest = found(manifests.resolve, settings.data_dir, dataset)
-        entries = manifests.training_entries(manifest)[0]
-        if not entries:
-            raise HTTPException(422, f"'{dataset}' has no clips to build an index from.")
-        return [Path(e["audio"]) for e in entries]
-
-    def build_index(engine, lora_id: str, dataset: str | None, logs: str | None) -> int | None:
-        from ..engines.rvc import voices
-
-        if dataset:
-            clips = dataset_clips(dataset)
-            s.make_room_for_tts(engine)
-            return engine.build_index(lora_id, clips)
-        if logs:
-            path = Path(importer.clean_path(logs))
-            if not (path / "total_fea.npy").is_file() and not (path.is_file() and path.suffix == ".npy"):
-                raise HTTPException(422, "That folder has no total_fea.npy (an RVC WebUI logs/<run> folder has one).")
-            return engine.save_index_from(lora_id, voices.webui_features(path))
-        return None
-
-    @api.post("/api/rvc/import")
-    def import_voice(body: RvcImportIn) -> dict:
-        """An RVC WebUI voice (.pth, v2, 40 kHz), its index rebuilt from a dataset or a WebUI
-        logs folder (the WebUI's faiss .index isn't read)."""
-        from ..engines.rvc import voices
-
-        engine = rvc()
-        name = body.name.strip()
-        if not re.match(VOICE_NAME, name):
-            raise HTTPException(422, "Use letters, digits, '.', '-' or '_' for the name (up to 80).")
-        folder = lora_library.engine_dir(settings.lora_dir, voices.ENGINE) / name
-        if folder.exists():
-            raise HTTPException(409, f"A voice named '{name}' already exists.")
-        try:
-            voices.import_webui(folder, Path(importer.clean_path(body.path)))
-        except (ValueError, OSError) as e:
-            raise HTTPException(422, str(e)) from e
-        lora_id = f"{voices.ENGINE}/{name}"
-        try:
-            rows = build_index(engine, lora_id, body.index_dataset, body.index_logs)
-        except (ValueError, OSError) as e:  # the voice stays; its index can be built later
-            raise HTTPException(422, f"Imported '{name}', but its index failed: {e}") from e
-        return {"id": lora_id, "engine": voices.ENGINE, "index_rows": rows}
-
-    @api.post("/api/rvc/index")
-    def rebuild_index(body: RvcIndexIn) -> dict:
-        """A voice's index (its training features) built again from a dataset or WebUI logs folder."""
+    @api.post("/api/convert/index")
+    def rebuild_index(body: IndexIn) -> dict:
+        """A voice's index (its training features) built again from a dataset or RVC WebUI logs folder."""
         engine = rvc()
         if not body.index_dataset and not body.index_logs:
             raise HTTPException(422, "Give a dataset or an RVC WebUI logs folder.")
         try:
-            rows = build_index(engine, body.id, body.index_dataset, body.index_logs)
+            rows = engine.index_from(body.id, body.index_dataset, body.index_logs, lambda: s.make_room_for_tts(engine))
         except KeyError as e:
             raise HTTPException(404, str(e)) from e
         except (ValueError, OSError) as e:

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { importRvc, listDatasets } from '../api'
+import { importVoice, listDatasets } from '../api'
 import { useT } from '../i18n'
 
 interface Props {
@@ -46,7 +46,7 @@ export function RvcImportDialog({ onImported, onError, onClose }: Props) {
     try {
       const index =
         source === 'dataset' ? { index_dataset: dataset } : source === 'logs' ? { index_logs: logs.trim() } : {}
-      const { id } = await importRvc({ name: voiceName, path: path.trim(), ...index })
+      const { id } = await importVoice('rvc', { name: voiceName, path: path.trim(), ...index })
       onImported(id)
       onClose()
     } catch (err) {

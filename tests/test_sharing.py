@@ -186,7 +186,7 @@ def test_import_rejects_unknown_engines_and_bad_dots_configs(lora_dir, tmp_path)
     files = read_zip(sharing.export_package(make_dots_checkpoint(lora_dir), "d", "rednote-hilab/dots.tts-soar"))
     weights = files["d/lora_weights.safetensors"]
     for info, message in (
-        ({"engine": "nope", "lora_config": {"r": 8, "alpha": 8}}, "unknown engine"),
+        ({"engine": "nope", "lora_config": {"r": 8, "alpha": 8}}, "Unknown engine"),
         ({"engine": "dots_tts", "lora_config": {"alpha": 8}}, "rank"),
     ):
         package = tmp_path / "p.zip"

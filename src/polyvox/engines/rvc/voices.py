@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from pydantic import BaseModel
 
 ENGINE = "rvc"
 BASE_REPO = "lj1995/VoiceConversionWebUI"
@@ -28,6 +29,16 @@ PACKAGE_FILES = (WEIGHTS, INFO, PACKAGE_INDEX)
 VOICE_KEYS = ("weight", "config", "info", "sr", "f0", "version")
 MAX_INDEX_ROWS = 2_000_000
 RATES = (32000, 40000, 48000)  # RVC v2's (train.RATES)
+VOICE_NAME = r"^[^\W_][\w.-]{0,79}$"  # as run and package names
+
+
+class WebuiImport(BaseModel):
+    """An RVC WebUI voice on this computer (Engine.import_voice)."""
+
+    name: str
+    path: str  # the voice's .pth
+    index_dataset: str | None = None  # build its index from a dataset's clips
+    index_logs: str | None = None  # or from an RVC WebUI logs folder (its total_fea.npy)
 
 
 def check_voice_file(path: Path) -> dict:
@@ -150,3 +161,58 @@ def webui_features(logs_run: Path) -> torch.Tensor:
     if array.ndim != 2 or array.shape[1] != 768:
         raise ValueError(f"{path.name} isn't an RVC v2 feature file (shape {array.shape}).")
     return torch.from_numpy(array.astype(np.float16))
+
+
+def readme(name: str, sample_rate: int, index_rows: int | None, info: str, step: int | None) -> str:
+    training = re.fullmatch(r"(\d+)epoch", info)
+    trained = f"{training.group(1)} epochs" if training else "unknown"
+    if step is not None:
+        trained += f" ({step} steps)"
+    index = (
+        f"`rvc_index.npy`: {index_rows:,} rows of content features (ContentVec, 768 numbers per 20 ms)\n"
+        "of the voice's training audio. Conversion pulls the sung or spoken features toward them\n"
+        '("index strength"), which brings the result closer to the voice. The index holds no audio,\n'
+        "but it is made from the training recordings."
+        if index_rows
+        else "It comes without an index: conversion works, a little less like the voice."
+    )
+    faiss = (
+        f"""
+
+The WebUI and Applio read faiss `.index` files: build one from the features and choose it as
+the index file (`pip install faiss-cpu numpy`):
+
+```python
+import faiss
+import numpy as np
+
+features = np.load("rvc_index.npy").astype("float32")
+index = faiss.IndexFlatL2(features.shape[1])
+index.add(features)
+faiss.write_index(index, "added_{name}.index")
+```"""
+        if index_rows
+        else ""
+    )
+    return f"""# {name}
+
+An [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) v2 voice: it sings or
+speaks recordings again in this voice (voice conversion; it doesn't read text). Trained from RVC's
+pretrained v2 base models ([{BASE_REPO}](https://huggingface.co/{BASE_REPO})).
+
+| | |
+|---|---|
+| Version | v2, {sample_rate // 1000} kHz, with pitch |
+| Voice file | `rvc_voice.pth` (the WebUI's format) |
+| Training | {trained} |
+
+{index}
+
+## Use
+
+**Polyvox Studio:** Convert tab -> Voice package…, then choose this zip.
+
+**RVC WebUI / Applio:** load `rvc_voice.pth` as the voice model (WebUI: copy it into
+`assets/weights/`). Content features come from ContentVec (the WebUI's `hubert_base.pt`),
+pitch from RMVPE.{faiss}
+"""

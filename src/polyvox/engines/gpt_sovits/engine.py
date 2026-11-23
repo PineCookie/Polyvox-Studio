@@ -103,6 +103,45 @@ class GptSovitsEngine(Engine):
     )
     model_setting = "gsv_model"
     worker_module = "polyvox.engines.gpt_sovits.worker"
+    checkpoint_files = (voices.SOVITS_FILE, voices.GPT_FILE)
+
+    @classmethod
+    def package_files(cls, ckpt, name, base_model, half):
+        """Whole models (base_model and half don't apply), as the webui saves them."""
+        import json
+
+        files = voices.package_files(ckpt.path, name)
+        version = json.loads(files[voices.CONFIG_FILE])["version"]
+        has_gpt, has_reference = voices.GPT_FILE in files, voices.REFERENCE_WAV in files
+        files["README.md"] = voices.readme(name, version, has_gpt, has_reference, ckpt.step).encode()
+        return files
+
+    @classmethod
+    def import_package(cls, folder, name, files):
+        if voices.SOVITS_FILE not in files:
+            raise ValueError(f"A GPT-SoVITS package needs {voices.SOVITS_FILE}.")
+        known = (voices.SOVITS_FILE, voices.GPT_FILE, voices.REFERENCE_WAV, voices.REFERENCE_JSON)
+        return voices.import_package(folder, name, {f: d for f, d in files.items() if f in known})
+
+    def import_voice(self, body, make_room):
+        """Weights the GPT-SoVITS webui trained (voices.WebuiImport: server paths), with a default
+        reference picked from a dataset, or a given clip, or none yet."""
+        from ...data import manifests
+        from ...prep.importer import clean_path
+
+        data = voices.WebuiImport.model_validate(body)
+        if data.dataset:
+            manifest = manifests.resolve(self.settings.data_dir, data.dataset)
+            reference = voices.pick_reference(manifest, manifests.legacy_root(self.settings.data_dir))
+            origin = f"dataset {data.dataset}"
+        elif data.reference:
+            reference, origin = (clean_path(data.reference), data.reference_text), "file"
+        else:
+            reference, origin = None, ""  # added later in the Voices panel
+        folder = lora_library.engine_dir(self.settings.lora_dir, voices.ENGINE)
+        gpt = clean_path(data.gpt) if data.gpt else None
+        name = voices.import_webui(folder, data.name.strip(), clean_path(data.sovits), gpt, reference, origin)
+        return {"id": f"{voices.ENGINE}/{name}", "engine": voices.ENGINE}
 
     def __init__(self, settings: Settings, loader: PipelineLoader = load_pipeline):
         self.settings = settings

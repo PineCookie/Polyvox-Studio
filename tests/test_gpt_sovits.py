@@ -279,7 +279,7 @@ def test_voice_api_import_reference_and_list(settings, service, training, engine
     sovits, gpt = webui_weights(tmp_path / "webui")
 
     r = client.post(
-        "/api/loras/import-gpt-sovits",
+        "/api/loras/import/gpt_sovits",
         json={"name": "voice_b", "sovits": f'"{sovits}"', "gpt": str(gpt), "dataset": "speaker_a/train.jsonl"},
     )
     assert r.status_code == 200 and r.json() == {"id": "gpt_sovits/voice_b", "engine": "gpt_sovits"}
@@ -296,7 +296,7 @@ def test_voice_api_import_reference_and_list(settings, service, training, engine
     )
     assert r.status_code == 200 and r.json()["reference_text"] == "新的参考。"
     assert client.post("/api/loras/reference", data={"id": "gpt_sovits/voice_b"}).status_code == 422
-    assert client.post("/api/loras/import-gpt-sovits", json={"name": "x", "sovits": "a", "gpt": "b"}).status_code == 422
+    assert client.post("/api/loras/import/gpt_sovits", json={"name": "x", "sovits": "a", "gpt": "b"}).status_code == 422
 
 
 # --------------------------------------------------------------------------- training

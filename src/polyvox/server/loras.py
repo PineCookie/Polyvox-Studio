@@ -1,5 +1,5 @@
-"""The LoRA / voice list, export / import of shareable packages, and GPT-SoVITS
-voices (import of webui weights, default reference clips)."""
+"""The LoRA / voice list, export / import of shareable packages, voices from other tools
+(Engine.import_voice), voices' default reference clips."""
 
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ from ..data import manifests, references
 from ..engines.common import reference
 from ..engines.gpt_sovits import voices
 from ..jobs import Job
-from ..prep import importer
 from .context import Studio, checked, found, save_upload
-from .schemas import MAX_REFERENCE_CLIPS, GptSovitsImportIn, JobOut, LoraConfigOut, LoraOut, ReferenceSearchIn
+from .schemas import MAX_REFERENCE_CLIPS, JobOut, LoraConfigOut, LoraOut, ReferenceSearchIn
 
 
 def keeps_reference(engine: str) -> bool:
@@ -47,7 +46,7 @@ def router(s: Studio) -> APIRouter:
                 voice=c.voice,
                 base_model=c.base_model,
                 base_model_id=sharing.hub_id(c.base_model),
-                step=sharing.checkpoint_step(c),
+                step=c.step,
                 rank=c.rank,
                 alpha=c.alpha,
                 config=LoraConfigOut(**c.config.model_dump()) if c.config else None,
@@ -88,29 +87,21 @@ def router(s: Studio) -> APIRouter:
         manifest = found(manifests.resolve, settings.data_dir, dataset)
         return checked(voices.pick_reference, manifest, manifests.legacy_root(settings.data_dir))
 
-    @api.post("/api/loras/import-gpt-sovits")
-    def import_gpt_sovits(body: GptSovitsImportIn) -> dict:
-        """A voice from the GPT-SoVITS webui's trained weights (v2Pro / v2ProPlus)."""
-        if body.dataset:
-            reference, origin = dataset_reference(body.dataset), f"dataset {body.dataset}"
-        elif body.reference:
-            reference, origin = (importer.clean_path(body.reference), body.reference_text), "file"
-        else:
-            reference, origin = None, ""  # added later in the Voices panel
+    @api.post("/api/loras/import/{engine}")
+    def import_voice(engine: str, body: dict) -> dict:
+        """A voice from files another tool made (Engine.import_voice: e.g. GPT-SoVITS webui
+        weights, an RVC WebUI voice); ``body`` holds the engine's own fields."""
+        tts = s.registry.get(engine)
+        if tts is None:
+            raise HTTPException(404, f"Unknown engine '{engine}'.")
         try:
-            name = voices.import_webui(
-                lora_library.engine_dir(settings.lora_dir, voices.ENGINE),
-                body.name.strip(),
-                importer.clean_path(body.sovits),
-                importer.clean_path(body.gpt),
-                reference,
-                origin,
-            )
+            return tts.import_voice(body, lambda: s.make_room_for_tts(tts))
+        except KeyError as e:
+            raise HTTPException(404, str(e.args[0])) from e
         except FileExistsError as e:
             raise HTTPException(409, str(e)) from e
         except (ValueError, OSError) as e:
             raise HTTPException(422, str(e)) from e
-        return {"id": f"{voices.ENGINE}/{name}", "engine": voices.ENGINE}
 
     @api.get("/api/loras/reference")
     def voice_reference(id: str) -> FileResponse:

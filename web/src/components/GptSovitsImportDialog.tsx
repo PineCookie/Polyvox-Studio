@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { importGptSovits, listDatasets } from '../api'
+import { importVoice, listDatasets } from '../api'
 import { useT } from '../i18n'
 
 interface Props {
@@ -52,7 +52,7 @@ export function GptSovitsImportDialog({ onImported, onError, onClose }: Props) {
           : source === 'dataset'
             ? { dataset }
             : { reference: clip.trim(), reference_text: clipText.trim() }
-      const { id, engine } = await importGptSovits({ name: voiceName, sovits, gpt, ...reference })
+      const { id, engine } = await importVoice('gpt_sovits', { name: voiceName, sovits, gpt, ...reference })
       onImported(id, engine)
       onClose()
     } catch (err) {

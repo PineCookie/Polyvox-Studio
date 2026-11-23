@@ -30,6 +30,7 @@ from ...config import Settings
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 from ..common import train_form
 from . import lora as s2lora
+from . import package
 
 if TYPE_CHECKING:
     from ...training import TrainParams
@@ -208,6 +209,15 @@ class FishS2Engine(Engine):
     )
     model_setting = "s2_model"
     worker_module = "polyvox.engines.fish_s2.worker"
+    checkpoint_files = (lora_library.WEIGHTS_FILE,)
+
+    @classmethod
+    def package_files(cls, ckpt, name, base_model, half):
+        return package.files(ckpt, name, base_model, half)
+
+    @classmethod
+    def import_package(cls, folder, name, files):
+        return package.unpack(folder, name, files)
 
     def __init__(self, settings: Settings, loader=Runtime):
         self.settings = settings

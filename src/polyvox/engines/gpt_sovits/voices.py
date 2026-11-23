@@ -20,6 +20,8 @@ import re
 import shutil
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from ...data import references
 from ...data.references import text_quality  # noqa: F401  (part of this module's API)
 from ..common import reference
@@ -32,6 +34,19 @@ SOVITS_FILE = "sovits_weights.pth"
 GPT_FILE = "gpt_weights.ckpt"
 CONFIG_FILE = "lora_config.json"  # as lora_library reads it for every engine
 VOICE_NAME = r"^[^\W_][\w.-]{0,79}$"  # as run and package names
+
+
+class WebuiImport(BaseModel):
+    """Weights the GPT-SoVITS webui trained, as server-local paths (Engine.import_voice)."""
+
+    name: str
+    sovits: str  # SoVITS_weights_*/<voice>.pth
+    gpt: str = ""  # GPT_weights_*/<voice>.ckpt; none: the base GPT
+    # The default reference: picked from this dataset (manifest id), or this clip + transcript;
+    # neither: none yet.
+    dataset: str | None = None
+    reference: str | None = None
+    reference_text: str = ""
 
 
 def write_reference(voice_dir: Path, source: Path, text: str, origin: str = "") -> None:
@@ -189,3 +204,43 @@ def import_package(lora_dir: Path, name: str, files: dict[str, bytes]) -> str:
             reference = (tmp / REFERENCE_WAV, str(text))
         gpt = tmp / GPT_FILE if GPT_FILE in files else None
         return import_webui(lora_dir, name, tmp / SOVITS_FILE, gpt, reference, "package")
+
+
+def readme(name: str, version: str, has_gpt: bool, has_reference: bool, step: int | None) -> str:
+    gpt_row = f"`{GPT_FILE}`" if has_gpt else "none: the base GPT (`s1v3.ckpt`) speaks for it"
+    reference = (
+        "`reference.wav` is the voice's default reference clip; `reference.json` holds its transcript."
+        if has_reference
+        else "It comes without a reference clip: give one (3-10 s of the voice, with its transcript) when synthesizing."
+    )
+    trained = (
+        "the GPT fine-tuned in full, SoVITS as the webui trains v4 (a LoRA of its mel DiT plus\n"
+        "the parts around it; it loads over the v4 base, `gsv-v4-pretrained/s2Gv4.pth`)"
+        if version == "v4"
+        else "both models fine-tuned\nin full"
+    )
+    return f"""# {name}
+
+A [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) {version} voice: {trained} from the official
+{version} base models ([lj1995/GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS)).
+
+| | |
+|---|---|
+| Version | {version} |
+| SoVITS weights | `sovits_weights.pth` |
+| GPT weights | {gpt_row} |
+| Training steps | {step if step is not None else "unknown"} |
+
+{reference} GPT-SoVITS always clones a reference clip: the closer it is to how the
+voice should sound, the better.
+
+## Use
+
+**Polyvox Studio:** Voice panel -> Import, then choose this zip. It appears as the
+GPT-SoVITS voice "{name}", with its reference.
+
+**GPT-SoVITS webui:** copy `sovits_weights.pth` into `SoVITS_weights_{version}/` and
+`{GPT_FILE if has_gpt else "s1v3.ckpt (from the pretrained models)"}` into `GPT_weights_{version}/` (rename them
+if you like), refresh the model lists and choose them; use the reference clip and
+transcript as the reference audio and text.
+"""

@@ -42,19 +42,6 @@ class TakesIn(BaseModel):
     cloning: bool = True  # spoken with a reference or a voice
 
 
-class GptSovitsImportIn(BaseModel):
-    """Weights the GPT-SoVITS webui trained, as server-local paths."""
-
-    name: str
-    sovits: str  # SoVITS_weights_*/<voice>.pth
-    gpt: str  # GPT_weights_*/<voice>.ckpt
-    # The default reference: picked from this dataset (manifest id), or this clip + transcript;
-    # neither: none yet.
-    dataset: str | None = None
-    reference: str | None = None
-    reference_text: str = ""
-
-
 class DatasetReportOut(BaseModel):
     id: str
     samples: int

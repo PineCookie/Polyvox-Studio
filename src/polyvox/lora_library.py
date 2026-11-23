@@ -1,6 +1,6 @@
-"""Discovery and metadata for trained checkpoints: LoRAs (VoxCPM, dots.tts), GPT-SoVITS
-voices (full weights; engines/gpt_sovits/voices.py) and saved-reference voices (Drama 3;
-engines/common/reference.create_voice), all in the LoRA folder.
+"""Discovery and metadata for trained checkpoints and voices of every engine, all in the LoRA
+folder: a folder holding a file one of the engines names first in its checkpoint_files (a LoRA's
+weights, a GPT-SoVITS SoVITS file, a voice.json) is one; its config file names its engine.
 
 The LoRA folder has one folder per engine (``voxcpm/``, ``dots_tts/``,
 ``gpt_sovits/``) holding its runs and voices; a checkpoint's id is its path
@@ -11,6 +11,7 @@ moves them into their engine's folder (still found where they are until then).
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
@@ -23,16 +24,21 @@ from .engines import DEFAULT as DEFAULT_ENGINE
 
 logger = logging.getLogger(__name__)
 
-WEIGHTS_FILE = "lora_weights.safetensors"
-# A GPT-SoVITS voice's weights (its folder also holds a GPT checkpoint).
-VOICE_WEIGHTS_FILES = ("sovits_weights.pth", "gpt_weights.ckpt")
-# A voice that is only a saved reference (engines with capabilities.reference_voices):
-# {"engine": ..., "base_model": ...}, read like lora_config.json.
+WEIGHTS_FILE = "lora_weights.safetensors"  # a LoRA's weights (VoxCPM, dots.tts, S2-Pro)
+# A voice's config when it isn't a LoRA (RVC, saved-reference voices): {"engine": ..., "base_model": ...},
+# read like lora_config.json.
 VOICE_FILE = "voice.json"
-MARKERS = (WEIGHTS_FILE, VOICE_WEIGHTS_FILES[0], VOICE_FILE)  # a folder holding one of these is a checkpoint
-RVC_WEIGHTS_FILE = "rvc_voice.pth"  # an RVC voice (beside its voice.json; engines/rvc/voices.py)
 # {"lora_config": {...}, "base_model": ..., "engine": ...}; no engine: VoxCPM.
 CONFIG_FILE = "lora_config.json"
+
+
+@functools.cache
+def _files() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(files that mark a checkpoint folder, every engine's weight files): Engine.checkpoint_files."""
+    from . import engines
+
+    kinds = [cls.checkpoint_files for cls in engines.classes().values() if cls.checkpoint_files]
+    return tuple(dict.fromkeys(files[0] for files in kinds)), tuple(dict.fromkeys(f for fs in kinds for f in fs))
 
 
 @dataclass(frozen=True)
@@ -61,8 +67,18 @@ class LoraCheckpoint:
     @property
     def weights_mtime(self) -> float:
         """When its weights last changed (any of its weight files; a saved-reference voice: its file)."""
-        files = [self.path / f for f in (WEIGHTS_FILE, *VOICE_WEIGHTS_FILES, VOICE_FILE, RVC_WEIGHTS_FILE)]
+        files = [self.path / f for f in _files()[1]]
         return max((f.stat().st_mtime for f in files if f.is_file()), default=0.0)
+
+    @property
+    def step(self) -> int | None:
+        """Its training step: from its folder name (step_N), else its training_state.json."""
+        if m := re.search(r"step_(\d+)$", self.id):
+            return int(m.group(1))
+        try:
+            return int(json.loads((self.path / "training_state.json").read_text(encoding="utf-8"))["step"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
 
     @property
     def rank(self) -> int | None:
@@ -151,7 +167,7 @@ def scan(lora_dir: Path) -> list[LoraCheckpoint]:
     lora_dir = lora_dir.resolve()
     if not lora_dir.is_dir():
         return []
-    folders = {marker.parent for name in MARKERS for marker in lora_dir.rglob(name)}
+    folders = {marker.parent for name in _files()[0] for marker in lora_dir.rglob(name)}
     ckpts = [_load(lora_dir, folder) for folder in folders if not folder.name.startswith(".")]
     return sorted(ckpts, key=lambda c: c.id, reverse=True)
 
@@ -160,7 +176,7 @@ def resolve(lora_dir: Path, lora_id: str) -> LoraCheckpoint:
     """Look up one checkpoint by id, refusing paths outside ``lora_dir``."""
     lora_dir = lora_dir.resolve()
     ckpt_dir = (lora_dir / lora_id).resolve()
-    if not ckpt_dir.is_relative_to(lora_dir) or not any((ckpt_dir / m).is_file() for m in MARKERS):
+    if not ckpt_dir.is_relative_to(lora_dir) or not any((ckpt_dir / m).is_file() for m in _files()[0]):
         raise KeyError(f"Unknown LoRA checkpoint: {lora_id}")
     return _load(lora_dir, ckpt_dir)
 

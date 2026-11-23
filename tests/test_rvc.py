@@ -167,9 +167,9 @@ def wait_job(client, job_id, timeout=60):
 
 def test_voices_import_and_recordings_convert_through_the_api(rvc_app, tmp_path):
     pth = tiny_voice(tmp_path / "speaker_a.pth")
-    r = rvc_app.post("/api/rvc/import", json={"name": "speaker_a", "path": str(pth)})
+    r = rvc_app.post("/api/loras/import/rvc", json={"name": "speaker_a", "path": str(pth)})
     assert r.status_code == 200 and r.json()["id"] == "rvc/speaker_a"
-    assert rvc_app.post("/api/rvc/import", json={"name": "speaker_a", "path": str(pth)}).status_code == 409
+    assert rvc_app.post("/api/loras/import/rvc", json={"name": "speaker_a", "path": str(pth)}).status_code == 409
     (listed,) = [v for v in rvc_app.get("/api/loras").json() if v["engine"] == "rvc"]
     assert listed["id"] == "rvc/speaker_a"
     caps = {e["id"]: e["capabilities"] for e in rvc_app.get("/api/engines").json()}
@@ -226,7 +226,7 @@ def test_a_split_converts_the_lead_and_keeps_or_converts_the_backing(
     from polyvox.prep import karaoke
 
     pth = tiny_voice(tmp_path / "speaker_a.pth")
-    assert rvc_app.post("/api/rvc/import", json={"name": "speaker_a", "path": str(pth)}).status_code == 200
+    assert rvc_app.post("/api/loras/import/rvc", json={"name": "speaker_a", "path": str(pth)}).status_code == 200
     buf = io.BytesIO()
     sf.write(buf, np.sin(np.arange(44100 * 2) / 44100 * 2 * np.pi * 220) * 0.3, 44100, format="WAV")
     files = {"audio": ("song.wav", buf.getvalue(), "audio/wav")}
@@ -261,11 +261,11 @@ def test_an_index_comes_from_a_webui_feature_file(rvc_app, tmp_path):
     logs = tmp_path / "logs" / "speaker_b"
     logs.mkdir(parents=True)
     np.save(logs / "total_fea.npy", np.random.default_rng(0).standard_normal((300, 768)).astype(np.float32))
-    r = rvc_app.post("/api/rvc/import", json={"name": "speaker_b", "path": str(pth), "index_logs": str(logs)})
+    r = rvc_app.post("/api/loras/import/rvc", json={"name": "speaker_b", "path": str(pth), "index_logs": str(logs)})
     assert r.status_code == 200 and r.json()["index_rows"] == 300
     saved = torch.load(tmp_path / "lora" / "rvc" / "speaker_b" / voices.INDEX, weights_only=True)
     assert saved.dtype == torch.float16 and saved.shape == (300, 768)
-    assert rvc_app.post("/api/rvc/index", json={"id": "rvc/speaker_b"}).status_code == 422
+    assert rvc_app.post("/api/convert/index", json={"id": "rvc/speaker_b"}).status_code == 422
 
 
 def applio_voice(path, **extra):
@@ -292,7 +292,7 @@ def test_a_voice_travels_as_a_package_with_its_index(rvc_app, tmp_path):
     features = np.random.default_rng(1).standard_normal((300, 768)).astype(np.float32)
     np.save(logs / "total_fea.npy", features)
     body = {"name": "speaker_c", "path": str(pth), "index_logs": str(logs)}
-    assert rvc_app.post("/api/rvc/import", json=body).status_code == 200
+    assert rvc_app.post("/api/loras/import/rvc", json=body).status_code == 200
     assert {e["id"]: e for e in rvc_app.get("/api/engines").json()}["rvc"]["capabilities"]["package"] == "voice"
 
     r = rvc_app.get("/api/loras/export", params={"id": "rvc/speaker_c", "name": "shared_c"})

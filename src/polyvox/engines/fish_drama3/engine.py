@@ -27,6 +27,7 @@ from pathlib import Path
 
 from ... import vram
 from ...config import Settings
+from ...lora_library import VOICE_FILE
 from ..base import (
     Capabilities,
     EditRequest,
@@ -328,6 +329,7 @@ class FishDrama3Engine(Engine):
         Param("duration", "float", 0.0, 0.0, 60.0, 0.5),  # seconds, for a one-line text; 0 = its own
     )
     model_setting = "drama3_model"
+    checkpoint_files = (VOICE_FILE,)  # its voices are saved references (common.reference.create_voice)
 
     def __init__(self, settings: Settings, loader=Runtime):
         self.settings = settings

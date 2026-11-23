@@ -298,15 +298,12 @@ export interface GptSovitsImport {
   reference_text?: string
 }
 
-/** A voice from weights the GPT-SoVITS webui trained (v2Pro / v2ProPlus). */
-export async function importGptSovits(body: GptSovitsImport): Promise<{ id: string; engine: string }> {
-  return (
-    await request('/api/loras/import-gpt-sovits', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-  ).json()
+/** A voice from files another tool made (the engine's own fields: GptSovitsImport, RvcImport). */
+export async function importVoice<R extends { id: string; engine: string }>(
+  engine: string,
+  body: GptSovitsImport | RvcImport,
+): Promise<R> {
+  return (await postJson(`/api/loras/import/${encodeURIComponent(engine)}`, body)).json()
 }
 
 export interface RvcImport {
@@ -317,18 +314,13 @@ export interface RvcImport {
   index_logs?: string
 }
 
-/** A voice the RVC WebUI trained (v2, 40 kHz); index_rows: rows in its index (null: none). */
-export async function importRvc(body: RvcImport): Promise<{ id: string; engine: string; index_rows: number | null }> {
-  return (await postJson('/api/rvc/import', body)).json()
-}
-
 /** A voice's index built again from a dataset or a WebUI logs folder. */
 export async function rebuildRvcIndex(body: {
   id: string
   index_dataset?: string
   index_logs?: string
 }): Promise<{ index_rows: number }> {
-  return (await postJson('/api/rvc/index', body)).json()
+  return (await postJson('/api/convert/index', body)).json()
 }
 
 export type ConvertFile = 'cover' | 'vocals_converted' | 'instrumental' | 'vocals' | 'lead' | 'backing'

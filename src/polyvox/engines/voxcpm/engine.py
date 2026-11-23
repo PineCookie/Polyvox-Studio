@@ -7,11 +7,12 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ... import vram
+from ... import lora_library, vram
 from ...config import Settings
 from ...data import manifests
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 from ..common import train_form
+from . import package
 from .inference import InferenceService
 from .inference import SynthesisRequest as VoxRequest
 
@@ -125,6 +126,15 @@ class VoxCPMEngine(Engine):
     )
     model_setting = "model"
     worker_module = "polyvox.engines.voxcpm.worker"
+    checkpoint_files = (lora_library.WEIGHTS_FILE,)
+
+    @classmethod
+    def package_files(cls, ckpt, name, base_model, half):
+        return package.files(ckpt, name, base_model, half)
+
+    @classmethod
+    def import_package(cls, folder, name, files):
+        return package.unpack(folder, name, files)
 
     def __init__(self, settings: Settings, service: InferenceService | None = None):
         self.settings = settings

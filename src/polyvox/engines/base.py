@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 if TYPE_CHECKING:
+    from ..lora_library import LoraCheckpoint
     from ..training import TrainParams
     from ..vram import Profile
 
@@ -215,6 +216,27 @@ class Engine(ABC):
     params: tuple[Param, ...]
     model_setting: str  # Settings field (and models.MODELS entry) of the base model
     worker_module: str  # run as `python -m <module> <config> --samples-dir ... --stop-file ...`
+    # The files of one of its checkpoints / voices in the LoRA folder (lora_library): the first
+    # marks such a folder; all of them count for when its weights last changed.
+    checkpoint_files: tuple[str, ...] = ()
+
+    @classmethod
+    def package_files(cls, ckpt: LoraCheckpoint, name: str, base_model: str, half: bool) -> dict[str, bytes]:
+        """A checkpoint's shareable package (capabilities.package; sharing.py zips it): its files by
+        name, a README and a config naming the engine (lora_config.json or voice.json) among them.
+        ``base_model``: the Hugging Face id a LoRA was trained on; ``half``: LoRA weights in bfloat16."""
+        raise ValueError(f"{cls.name}'s voices can't be exported.")
+
+    @classmethod
+    def import_package(cls, folder: Path, name: str, files: dict[str, bytes]) -> str:
+        """A package's files (package_files) checked and written into ``folder/<name>/`` (``folder``:
+        the engine's in the LoRA folder); returns the name used. FileExistsError when it is taken."""
+        raise ValueError(f"{cls.name}'s voices can't be imported.")
+
+    def import_voice(self, body: dict, make_room: Callable[[], None]) -> dict:
+        """A voice from files another tool made (``body``: the engine's own fields, server paths);
+        ``make_room`` frees the GPU before work on it. Returns {"id", "engine", ...}."""
+        raise ValueError(f"{self.name} imports no voices from other tools.")
 
     @property
     @abstractmethod

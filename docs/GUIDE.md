@@ -568,17 +568,21 @@ src/polyvox/
                    __init__.py: the registry). No engine imports another; what several share
                    is in common/. An engine describes its New-run form (Engine.train_form:
                    fields, defaults per GPU, when they show) and sizes a run (Engine.plan);
-                   the UI draws the form from that
+                   the UI draws the form from that. It also owns its voices' files: which
+                   mark a checkpoint (checkpoint_files), its packages (package_files /
+                   import_package) and voices from other tools (import_voice)
     common/        train_form.py (shared training fields, runs sized in epochs),
+                   lora_package.py (LoRA packages: weights, config, README),
                    lora.py (LoRA hooks), worker.py (training-worker helpers), cache.py
                    (per-clip dataset caches), reference.py (voices' default references,
                    saved-reference voices), layers.py, fish_codec.py (Fish Audio's codec)
-    voxcpm/        engine.py; inference.py (model cache, LoRA hot-swap); worker.py (training)
-    dots/          engine.py; lora.py (LoRA layers, merging); worker.py (training)
+    voxcpm/        engine.py; inference.py (model cache, LoRA hot-swap); worker.py (training);
+                   package.py (its packages)
+    dots/          engine.py; lora.py (LoRA layers, merging); worker.py (training); package.py
     gpt_sovits/    engine.py; synth.py (synthesis); voices.py (voice folders, webui import);
                    features.py + worker.py (training: SoVITS then GPT)
     fish_s2/       engine.py; model.py (our implementation); decode.py (CUDA graphs);
-                   lora.py, train.py, worker.py (training)
+                   lora.py, train.py, worker.py (training); package.py
     fish_drama3/   engine.py; model.py + decode.py + kernels.py (4-bit Triton kernels);
                    prompt.py; edit.py (speech editing); convert.py (FP8 -> 4 bits, experts as HIGGS)
     rvc/           engine.py; model.py (the voice model); pitch.py (RMVPE); convert.py
@@ -588,11 +592,11 @@ src/polyvox/
   prep/            dataset preparation: steps.py (the dataset page's steps), importer.py,
                    slicer.py, asr.py, aligner.py, checks.py, separation.py, singing.py,
                    fillers.py, loudness.py, exporter.py, karaoke.py (lead / backing split)
-  lora_library.py  checkpoint discovery and metadata
+  lora_library.py  checkpoint discovery (by the engines' checkpoint files) and metadata
   jobs.py          background jobs with progress and cancel
   training.py      training runs: config, job control, metrics
   speaker.py       speaker similarity (CAM++)
-  sharing.py       export / import of voice packages
+  sharing.py       voice packages: zips in and out, each handed to its engine
   vendor/          train_voxcpm_finetune.py (unmodified); roformer/ (MSST, MIT);
                    dots_tts/ (Apache-2.0); gpt_sovits/ (MIT; rebuilt by
                    tools/vendor_gpt_sovits.py from a pinned upstream commit)
