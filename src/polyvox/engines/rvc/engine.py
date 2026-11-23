@@ -103,6 +103,7 @@ class RvcEngine(Engine):
     id = voices.ENGINE
     name = "RVC"
     capabilities = Capabilities(
+        voice_import=True,  # import_voice: its webui's trained files
         sample_rate=40_000,  # each voice's own (32, 40 or 48 kHz); 40 kHz is RVC's usual
         training_rate=40_000,
         languages=(),  # any: it converts sound, not text

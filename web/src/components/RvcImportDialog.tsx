@@ -4,7 +4,7 @@ import { importVoice, listDatasets } from '../api'
 import { useT } from '../i18n'
 
 interface Props {
-  onImported: (id: string) => void
+  onImported: (id: string, engine: string) => void
   onError: (message: string) => void
   onClose: () => void
 }
@@ -46,8 +46,8 @@ export function RvcImportDialog({ onImported, onError, onClose }: Props) {
     try {
       const index =
         source === 'dataset' ? { index_dataset: dataset } : source === 'logs' ? { index_logs: logs.trim() } : {}
-      const { id } = await importVoice('rvc', { name: voiceName, path: path.trim(), ...index })
-      onImported(id)
+      const { id, engine } = await importVoice('rvc', { name: voiceName, path: path.trim(), ...index })
+      onImported(id, engine)
       onClose()
     } catch (err) {
       onError((err as Error).message)

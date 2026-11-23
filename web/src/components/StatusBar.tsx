@@ -1,23 +1,24 @@
 import { useState } from 'react'
-import type { Status } from '../api'
+import type { Engine, Status } from '../api'
 import { engineName } from '../engines'
 import { useT } from '../i18n'
 import { Popover } from './Popover'
 
 interface Props {
   status: Status | null
+  engines: Engine[] // for their names
   onUnload: () => void
 }
 
 /** Whether a model is loaded, as one pill; the machine's details and Unload in its pop-up. */
-export function StatusBar({ status, onUnload }: Props) {
+export function StatusBar({ status, engines, onUnload }: Props) {
   const t = useT()
   const [open, setOpen] = useState(false)
   if (!status) return <span className="status-pill muted">{t.connecting}</span>
-  // Any TTS engine (VoxCPM's own `loaded` predates engines).
-  const ttsLoaded = (status.loaded_engines ?? []).length > 0 || status.loaded
+
+  const ttsLoaded = status.loaded_engines.length > 0
   const loaded = [
-    ...(status.loaded_engines ?? []).map((id) => engineName(id)),
+    ...status.loaded_engines.map((id) => engineName(id, engines)),
     status.asr_loaded && t.asrLoaded,
     status.aligner_loaded && t.alignerLoaded,
     status.separation_loaded && t.separationLoaded,

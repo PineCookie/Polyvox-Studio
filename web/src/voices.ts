@@ -58,9 +58,16 @@ export function shortModel(id: string): string {
   return id.split('/').at(-1) ?? id
 }
 
-/** Only VoxCPM records a base model the server could differ from; other engines have one model each. */
-export function incompatible(v: Voice, modelId: string | null): boolean {
-  return v.engine === DEFAULT_ENGINE && !!modelId && !!v.baseModelId && v.baseModelId !== modelId
+/** The model a voice's engine runs here, when its voices are LoRAs of it (their recorded base must match). */
+export function engineModel(v: Voice, engines: Engine[]): string | null {
+  const engine = engines.find((e) => e.id === v.engine)
+  return engine?.capabilities.package === 'lora' ? engine.model_id : null
+}
+
+/** A LoRA trained on another base model than its engine runs here. */
+export function incompatible(v: Voice, engines: Engine[]): boolean {
+  const model = engineModel(v, engines)
+  return !!model && !!v.baseModelId && v.baseModelId !== model
 }
 
 export function unknownEngine(v: Voice, engines: Engine[]): boolean {

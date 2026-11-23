@@ -252,7 +252,7 @@ export default function App() {
           ))}
         </nav>
         <span className="spacer" />
-        <StatusBar status={status} onUnload={unload} />
+        <StatusBar status={status} engines={engines} onUnload={unload} />
         <LanguageToggle />
         <ThemeToggle />
       </header>
@@ -307,7 +307,6 @@ export default function App() {
               engines={ttsEngines}
               loras={ttsLoras}
               selected={voice}
-              modelId={status?.model_id ?? null}
               onSelect={setVoice}
               onRefresh={refreshLoras}
               onImport={importPackage}
@@ -321,7 +320,6 @@ export default function App() {
               engines={ttsEngines}
               loras={ttsLoras}
               selected={voice}
-              modelId={status?.model_id ?? null}
               onSelect={setVoice}
               onRefresh={refreshLoras}
               onImported={voiceMade}

@@ -127,6 +127,7 @@ class GptSovitsEngine(Engine):
     id = voices.ENGINE
     name = "GPT-SoVITS"
     capabilities = Capabilities(
+        voice_import=True,  # import_voice: its webui's trained files
         sample_rate=32_000,
         training_rate=32_000,
         languages=("zh", "en"),
@@ -165,6 +166,8 @@ class GptSovitsEngine(Engine):
     model_specs = MODEL_SPECS
     worker_module = "polyvox.engines.gpt_sovits.worker"
     checkpoint_files = (voices.SOVITS_FILE, voices.GPT_FILE)
+    # Each stage's main loss up front: SoVITS mel (v4: flow matching), then the GPT's.
+    chart_losses = ("loss/mel", "loss/cfm", "loss/gpt")
 
     @classmethod
     def package_files(cls, ckpt, name, base_model, half):

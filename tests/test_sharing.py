@@ -7,7 +7,7 @@ import torch
 from fastapi.testclient import TestClient
 from safetensors.torch import load, save_file
 
-from polyvox import lora_library, sharing
+from polyvox import lora_library, models, sharing
 from polyvox.engines.common.lora import write_config
 from polyvox.server import create_app
 
@@ -53,7 +53,7 @@ def make_zip(entries: dict[str, bytes]) -> bytes:
     ],
 )
 def test_hub_id(base, expected):
-    assert sharing.hub_id(base) == expected
+    assert models.hub_id(base) == expected
 
 
 def test_export_contains_only_the_essentials_without_local_info(lora_dir):
@@ -154,7 +154,7 @@ LOCAL_DOTS = r"C:\Users\someone\models\rednote-hilab__dots.tts-soar"
 
 def test_dots_export_and_round_trip(lora_dir, tmp_path):
     ckpt = make_dots_checkpoint(lora_dir)
-    assert sharing.hub_id(ckpt.base_model) == "rednote-hilab/dots.tts-soar"
+    assert models.hub_id(ckpt.base_model) == "rednote-hilab/dots.tts-soar"
 
     package = sharing.export_package(ckpt, "dots_voice", "rednote-hilab/dots.tts-soar")
     files = read_zip(package)

@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 def create_app(
     settings: Settings | None = None,
-    service: InferenceService | None = None,
+    service: InferenceService | None = None,  # VoxCPM's (tests give a fake one)
     training: TrainingManager | None = None,
     asr: AsrService | None = None,
     jobs: JobRunner | None = None,
@@ -56,19 +56,19 @@ def create_app(
     models.use_endpoint(settings.hf_endpoint if saved is None else saved)
     audio_io.patch_torchaudio()  # voxcpm's torchaudio.load calls, without a system FFmpeg
     lora_library.migrate(settings.lora_dir)  # runs and voices from before the engine folders
-    service = service or InferenceService(settings)
-    # Every engine; VoxCPM's wraps ``service`` (the status fields and GPU rules use it).
-    registry = engines_ or engines.create(settings, voxcpm=VoxCPMEngine(settings, service))
-    others = [e for e in registry.values() if e.id != "voxcpm"]
+    registry = engines_ or engines.create(
+        settings, voxcpm=VoxCPMEngine(settings, service or InferenceService(settings))
+    )
     asr = asr or AsrService(settings)
     align = align or AlignService(settings)
     slicer.vad_device = lambda: asr.device  # VAD of long recordings runs where ASR does
     # Batch sizes and model sharing for the GPU's memory (vram.py).
     gpu_gb, profile = vram.detect(asr.device)
-    for device in {asr.device, service.device}:
+    for device in {asr.device, *(e.device for e in registry.values())}:
         vram.apply_limit(device)
     asr.batch_seconds, align.batch_seconds = profile.asr_batch_seconds, profile.align_batch_seconds
-    service.denoise_on_cpu = profile.denoise_on_cpu
+    for engine in registry.values():
+        engine.use_profile(profile)
     logger.info("GPU memory %s GB: profile '%s'", f"{gpu_gb:.1f}" if gpu_gb else "-", profile.name)
     # Compiled on CUDA unless POLYVOX_OPTIMIZE is off (as the TTS model).
     load_separation = functools.partial(
@@ -79,13 +79,12 @@ def create_app(
     training = training or TrainingManager(
         settings,
         before_start=lambda: free_gpu_for_training(
-            service, settings.train_gpu, *others, asr, align, separation, singing
+            settings.train_gpu, *registry.values(), asr, align, separation, singing
         ),
         engines_=registry,
     )
     studio = Studio(
         settings=settings,
-        service=service,
         registry=registry,
         asr=asr,
         align=align,

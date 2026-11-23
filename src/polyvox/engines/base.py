@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 if TYPE_CHECKING:
+    from ..config import Settings
     from ..lora_library import LoraCheckpoint
     from ..models import ModelSpec
     from ..training import TrainParams
@@ -138,6 +139,8 @@ class Capabilities:
     # A long text is spoken as separate takes, each from the reference again (Engine.takes says
     # where); a blank line in the text starts one.
     takes: bool = False
+    # Voices from files another tool made (Engine.import_voice; the UI has a dialog for each).
+    voice_import: bool = False
 
     def reference_input(self, slot: str) -> ReferenceInput | None:
         return next((i for i in self.reference_inputs if i.slot == slot), None)
@@ -215,9 +218,12 @@ class Engine(ABC):
     name: str
     capabilities: Capabilities
     params: tuple[Param, ...]
+    settings: Settings
     model_setting: str  # its base model's setting (one of model_specs)
     model_specs: tuple[ModelSpec, ...] = ()  # the models it uses (models.all_specs collects them)
     worker_module: str  # run as `python -m <module> <config> --samples-dir ... --stop-file ...`
+    # The losses a run's charts show first (the rest follow as its worker logs them).
+    chart_losses: tuple[str, ...] = ("loss/diff", "loss/stop")
     # The files of one of its checkpoints / voices in the LoRA folder (lora_library): the first
     # marks such a folder; all of them count for when its weights last changed.
     checkpoint_files: tuple[str, ...] = ()
@@ -339,8 +345,15 @@ class Engine(ABC):
         is downloaded from a converted copy (Drama 3)."""
         return next((m.model_repo for m in cls.model_specs if m.setting == cls.model_setting), None)
 
+    def use_profile(self, profile: Profile) -> None:
+        """Settings that follow the GPU's size (vram.Profile), told once at startup."""
+        return None  # most engines have none
+
     def public(self, profile: Profile | None = None) -> dict:
-        """For /api/engines; ``profile``: the GPU's, for the training form's defaults."""
+        """For /api/engines; ``profile``: the GPU's, for the training form's defaults. ``model_id``:
+        the Hugging Face id of the model it runs (LoRAs record theirs: the UI flags a mismatch)."""
+        from ..models import hub_id
+
         return {
             "id": self.id,
             "name": self.name,
@@ -350,6 +363,10 @@ class Engine(ABC):
             "params": [asdict(p) for p in self.params],
             "train_form": [asdict(p) for p in self.train_form(profile)] if self.capabilities.training else [],
             "model_setting": self.model_setting,
+            "model_id": hub_id(settings.model_path(self.model_setting))
+            if (settings := getattr(self, "settings", None))
+            else None,
+            "chart_losses": list(self.chart_losses),
             "base_repo": self.base_repo(),
             "loaded": self.loaded,
         }

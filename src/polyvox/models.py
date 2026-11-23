@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 import shutil
 import threading
 import zipfile
@@ -212,6 +213,23 @@ SHARED: tuple[ModelSpec, ...] = (
         group="cleanup",
     ),
 )
+
+
+HUB_ID = re.compile(r"[A-Za-z0-9][\w.-]*/[\w.-]+")
+
+
+def hub_id(base_model: str | None) -> str | None:
+    """Best guess at the Hugging Face id of a recorded base model.
+
+    ``...\\models\\openbmb__VoxCPM2`` (a downloaded snapshot) -> ``openbmb/VoxCPM2``.
+    """
+    if not base_model:
+        return None
+    last = re.split(r"[\\/]", base_model.rstrip("\\/"))[-1]
+    if "__" in last:
+        org, _, repo = last.partition("__")
+        return f"{org}/{repo}"
+    return base_model if HUB_ID.fullmatch(base_model) else None
 
 
 @functools.cache

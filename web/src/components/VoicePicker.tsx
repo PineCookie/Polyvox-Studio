@@ -2,11 +2,11 @@ import { useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { Engine, Lora } from '../api'
 import type { VoiceChoice } from '../engines'
+import { importDialog } from '../importDialogs'
 import { formatStep } from '../format'
 import { useT } from '../i18n'
-import { groupVoices, incompatible, shortModel, unknownEngine, voiceHue } from '../voices'
+import { engineModel, groupVoices, incompatible, shortModel, unknownEngine, voiceHue } from '../voices'
 import type { Voice } from '../voices'
-import { GptSovitsImportDialog } from './GptSovitsImportDialog'
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, RefreshIcon, SearchIcon } from './icons'
 import { Popover } from './Popover'
 
@@ -17,8 +17,6 @@ interface Props {
   engines: Engine[]
   loras: Lora[]
   selected: VoiceChoice
-  // Hub id of the VoxCPM model the server runs; VoxCPM LoRAs for another base model can't load.
-  modelId: string | null
   onSelect: (choice: VoiceChoice) => void
   onRefresh: () => void
   onImport: (file: File) => Promise<void>
@@ -62,7 +60,6 @@ export function VoicePicker({
   engines,
   loras,
   selected,
-  modelId,
   onSelect,
   onRefresh,
   onImport,
@@ -75,13 +72,14 @@ export function VoicePicker({
   const [opened, setOpened] = useState<'model' | 'voice' | null>(null)
   const [filter, setFilter] = useState('')
   const [importing, setImporting] = useState(false)
-  const [importingGsv, setImportingGsv] = useState(false)
+  const [importingVoice, setImportingVoice] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const engine = engines.find((e) => e.id === selected.engine) ?? null
+  const importer = importDialog(engine)
   const engineName = engine?.name ?? selected.engine
   const keepsReference = !!engine?.capabilities.voice_reference
-  const usable = (v: Voice) => !incompatible(v, modelId) && !unknownEngine(v, engines)
+  const usable = (v: Voice) => !incompatible(v, engines) && !unknownEngine(v, engines)
   const voicesOf = (id: string) => voices.filter((v) => v.engine === id)
   const own = voicesOf(selected.engine)
   const shown = own.filter((v) => v.name.toLowerCase().includes(filter.trim().toLowerCase()))
@@ -176,11 +174,13 @@ export function VoicePicker({
         className={`voice-row${active ? ' active' : ''}`}
         onClick={() => choose({ engine: best.lora.engine, lora: best.lora.id })}
         disabled={!usable(voice)}
-        title={incompatible(voice, modelId) ? t.trainedOn(voice.baseModelId!, modelId!) : best.lora.id}
+        title={
+          incompatible(voice, engines) ? t.trainedOn(voice.baseModelId!, engineModel(voice, engines)!) : best.lora.id
+        }
       >
         <VoiceAvatar name={voice.name} />
         <span className="voice-row-name">{voice.name}</span>
-        {incompatible(voice, modelId) ? (
+        {incompatible(voice, engines) ? (
           <span className="tag subtle">{shortModel(voice.baseModelId!)}</span>
         ) : (
           <span className="muted">
@@ -295,17 +295,17 @@ export function VoicePicker({
           >
             <PlusIcon /> {importing ? t.importing : t.importPackage}
           </button>
-          {selected.engine === 'gpt_sovits' && (
+          {importer && (
             <button
               type="button"
               className="ghost small"
               onClick={() => {
                 close()
-                setImportingGsv(true)
+                setImportingVoice(true)
               }}
-              title={t.gsvImportButtonTitle}
+              title={importer.title?.(t)}
             >
-              <PlusIcon /> {t.gsvImportButton}
+              <PlusIcon /> {importer.label(t)}
             </button>
           )}
           <span className="spacer" />
@@ -321,8 +321,8 @@ export function VoicePicker({
           </button>
         </div>
       </Popover>
-      {importingGsv && (
-        <GptSovitsImportDialog onImported={onImported} onError={onError} onClose={() => setImportingGsv(false)} />
+      {importingVoice && importer && (
+        <importer.Dialog onImported={onImported} onError={onError} onClose={() => setImportingVoice(false)} />
       )}
     </div>
   )

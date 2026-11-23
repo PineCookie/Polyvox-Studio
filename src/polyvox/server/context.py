@@ -12,11 +12,10 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
-from .. import models, sharing, timing, vram
+from .. import models, timing, vram
 from ..config import Settings
 from ..data import manifests
 from ..engines import Engine
-from ..engines.voxcpm.inference import InferenceService
 from ..jobs import JobRunner
 from ..prep import checks
 from ..prep import separation as separation_mod
@@ -48,14 +47,9 @@ def same_gpu(a: str, b: str) -> bool:
 
 
 def free_gpu_for_training(
-    service: InferenceService,
-    train_gpu: int | None,
-    *helpers: Engine | AsrService | AlignService | SeparationService | SingingService,
+    train_gpu: int | None, *helpers: Engine | AsrService | AlignService | SeparationService | SingingService
 ) -> None:
-    """Unload the models that sit on the GPU a training job will use (``service``:
-    VoxCPM's; other engines among the helpers)."""
-    if cuda_index(service.device) == (train_gpu or 0):
-        service.unload()
+    """Unload the models (engines, preparation models) that sit on the GPU a training job will use."""
     for helper in helpers:
         if helper.loaded and cuda_index(helper.device) == (train_gpu or 0):
             helper.unload()
@@ -64,7 +58,6 @@ def free_gpu_for_training(
 @dataclasses.dataclass
 class Studio:
     settings: Settings
-    service: InferenceService  # VoxCPM's (status fields predate engines)
     registry: dict[str, Engine]
     asr: AsrService
     align: AlignService
@@ -88,12 +81,14 @@ class Studio:
 
     def status(self) -> dict:
         settings = self.settings
-        # The hub id lets the UI flag LoRAs trained on a different base model.
+        devices = sorted({e.device for e in self.registry.values()})
         return {
-            **self.service.status(),
+            "device": ", ".join(devices),  # the speech engines'
+            "optimize": settings.optimize
+            if settings.optimize is not None
+            else any(d.startswith("cuda") for d in devices),
             # Engines with a model in memory (one per GPU at a time).
             "loaded_engines": [e.id for e in self.registry.values() if e.loaded],
-            "model_id": sharing.hub_id(settings.model_path("model")),
             # The PyTorch build (e.g. 2.14.1+cu130): which of run.bat / run.sh's variants runs.
             "torch": importlib.metadata.version("torch"),
             "version": current_version(),

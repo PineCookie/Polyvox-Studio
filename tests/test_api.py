@@ -52,15 +52,16 @@ def test_tts_reference_upload_is_passed_and_cleaned_up(client, loader):
 def test_tts_errors_map_to_http_codes(client):
     assert client.post("/api/tts", data={"text": "  "}).status_code == 422
     assert client.post("/api/tts", data={"text": "hi", "lora_id": "../x"}).status_code == 404
-    assert client.post("/api/tts", data={"text": "hi", "cfg_value": "99"}).status_code == 422
+    assert client.post("/api/tts", data={"text": "hi", "options": '{"cfg_value": 99}'}).status_code == 422
 
 
 def test_status_reports_loaded_model(client, settings):
-    assert client.get("/api/status").json()["loaded"] is False
-    assert client.get("/api/status").json()["model_id"] is None  # tmp model dir has no hub-style name
+    assert client.get("/api/status").json()["loaded_engines"] == []
+    voxcpm = next(e for e in client.get("/api/engines").json() if e["id"] == "voxcpm")
+    assert voxcpm["model_id"] is None  # tmp model dir has no hub-style name
     client.post("/api/tts", data={"text": "hello"})
-    assert client.get("/api/status").json()["loaded"] is True
-    assert client.post("/api/model/unload").json()["loaded"] is False
+    assert client.get("/api/status").json()["loaded_engines"] == ["voxcpm"]
+    assert client.post("/api/model/unload").json()["loaded_engines"] == []
 
 
 def test_datasets_list_and_inspect(client, data_dir):
@@ -132,6 +133,6 @@ def test_training_frees_the_inference_gpu_it_needs(service, device, train_gpu, u
     service.synthesize(SynthesisRequest(text="hi"))
     service.device = device
 
-    free_gpu_for_training(service, train_gpu)
+    free_gpu_for_training(train_gpu, service)
 
     assert service.status()["loaded"] is not unloaded

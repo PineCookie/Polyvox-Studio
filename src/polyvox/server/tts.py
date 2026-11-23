@@ -50,11 +50,6 @@ def router(s: Studio) -> APIRouter:
         control: Annotated[str, Form()] = "",  # style / voice description
         lora_id: Annotated[str | None, Form()] = None,
         prompt_text: Annotated[str | None, Form()] = None,
-        # VoxCPM's settings as separate fields (as before engines); override ``options``.
-        cfg_value: Annotated[float | None, Form(ge=0.5, le=5.0)] = None,
-        inference_timesteps: Annotated[int | None, Form(ge=1, le=50)] = None,
-        normalize: Annotated[bool | None, Form()] = None,
-        denoise: Annotated[bool | None, Form()] = None,
         seed: Annotated[int | None, Form()] = None,
         # The engine's reference inputs (capabilities.reference_inputs) by slot, each an
         # upload or dataset clips as JSON (ReferenceClipsIn). An upload in reference_audio
@@ -75,10 +70,6 @@ def router(s: Studio) -> APIRouter:
                 raise ValueError("options must be a JSON object.")
         except ValueError as e:
             raise HTTPException(422, f"Invalid options: {e}") from e
-        legacy = dict(
-            cfg_value=cfg_value, inference_timesteps=inference_timesteps, normalize=normalize, denoise=denoise
-        )
-        values |= {k: v for k, v in legacy.items() if v is not None}
         given = {
             "reference": (reference_audio, dataset_clips(reference_clips) if reference_clips else []),
             "prompt": (prompt_audio, dataset_clips(prompt_clips) if prompt_clips else []),
@@ -241,8 +232,8 @@ def router(s: Studio) -> APIRouter:
         if (fetching := models.active_download()) is not None:
             return {"phase": "downloading", "model": fetching["name"], "step": fetching["done"],
                     "expected": fetching["total"], "attempt": 1, "elapsed": 0.0}  # fmt: skip
-        busy = next(((e, p) for e in s.registry.values() if (p := e.progress())["phase"] != "idle"), None)
-        engine_id, progress = (busy[0].id, busy[1]) if busy else (engines.DEFAULT, s.service.progress_public())
+        progresses = [(e.id, e.progress()) for e in s.registry.values()]
+        engine_id, progress = next((p for p in progresses if p[1]["phase"] != "idle"), progresses[0])
         if progress["phase"] in ONE_OFF:
             now = phase_times.current(engine_id)
             progress = {

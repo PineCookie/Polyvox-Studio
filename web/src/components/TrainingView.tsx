@@ -144,6 +144,7 @@ export function TrainingView({ loras, onError, onTryCheckpoint, newRunDataset }:
           onSelect={setSelected}
           onNew={() => setSelected(NEW_RUN)}
           loading={!runsLoaded}
+          engines={engines}
         />
       </aside>
     </main>

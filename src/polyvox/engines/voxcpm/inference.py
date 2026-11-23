@@ -211,6 +211,10 @@ class InferenceService:
         self._steps_per_token = STEPS_PER_TOKEN
         self._fresh = False  # loaded but not generated yet: the first steps compile
 
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None
+
     def status(self) -> dict:
         return {
             "device": self.device,

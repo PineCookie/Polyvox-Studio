@@ -105,14 +105,13 @@ def test_engines_are_listed_with_their_settings(client):
     }
 
 
-def test_tts_options_reach_the_engine_and_old_fields_still_work(client, loader):
-    resp = client.post("/api/tts", data={"text": "hi", "options": json.dumps({"cfg_value": 1.6, "denoise": False})})
+def test_tts_options_reach_the_engine(client, loader):
+    resp = client.post("/api/tts", data={"text": "hi", "options": json.dumps({"cfg_value": 2.5, "denoise": False})})
     assert resp.status_code == 200
     call = loader.models[0].generate_calls[-1]
-    assert (call["cfg_value"], call["denoise"], call["inference_timesteps"]) == (1.6, False, 10)
-
-    client.post("/api/tts", data={"text": "hi", "options": json.dumps({"cfg_value": 1.6}), "cfg_value": "2.5"})
-    assert loader.models[0].generate_calls[-1]["cfg_value"] == 2.5
+    assert (call["cfg_value"], call["denoise"], call["inference_timesteps"]) == (2.5, False, 10)
+    client.post("/api/tts", data={"text": "hi"})
+    assert loader.models[0].generate_calls[-1]["cfg_value"] == 1.6  # the engine's default
 
 
 def test_tts_option_errors(client):

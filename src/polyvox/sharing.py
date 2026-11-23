@@ -17,7 +17,6 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from . import engines
-from .engines.common.lora_package import HUB_ID
 from .lora_library import CONFIG_FILE, VOICE_FILE, LoraCheckpoint, engine_dir
 
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)  # zip's earliest date: entries carry no export time
@@ -26,20 +25,6 @@ FILE_NAME = re.compile(r"[\w.-]{1,80}")
 MAX_FILES = 16
 MAX_PACKAGE_BYTES = 2 * 1024**3
 STORED = (".safetensors", ".pth", ".ckpt", ".npy")  # weights and features don't compress
-
-
-def hub_id(base_model: str | None) -> str | None:
-    """Best guess at the Hugging Face id of a recorded base model.
-
-    ``...\\models\\openbmb__VoxCPM2`` (a downloaded snapshot) -> ``openbmb/VoxCPM2``.
-    """
-    if not base_model:
-        return None
-    last = re.split(r"[\\/]", base_model.rstrip("\\/"))[-1]
-    if "__" in last:
-        org, _, repo = last.partition("__")
-        return f"{org}/{repo}"
-    return base_model if HUB_ID.fullmatch(base_model) else None
 
 
 def _engine(engine_id: str) -> type[engines.Engine]:

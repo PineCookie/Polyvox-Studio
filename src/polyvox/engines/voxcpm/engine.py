@@ -156,7 +156,8 @@ class VoxCPMEngine(Engine):
         ),
     )
     params = (
-        Param("cfg_value", "float", 2.0, 0.5, 5.0, 0.1),
+        # Below VoxCPM's own 2.0: with a voice LoRA, 1.6 sounded more natural and closer to the voice.
+        Param("cfg_value", "float", 1.6, 0.5, 5.0, 0.1),
         Param("inference_timesteps", "int", 10, 1, 50, 1),
         Param("normalize", "bool", True),
         Param("denoise", "bool", True),
@@ -217,6 +218,9 @@ class VoxCPMEngine(Engine):
     def unload(self) -> None:
         if self._service is not None:
             self._service.unload()
+
+    def use_profile(self, profile) -> None:
+        self.service.denoise_on_cpu = profile.denoise_on_cpu  # the reference denoiser (ZipEnhancer)
 
     @classmethod
     def train_form(cls, profile=None):

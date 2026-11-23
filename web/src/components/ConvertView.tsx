@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileUrl, convertRecording, importLora } from '../api'
 import type { BackingMode, ConvertJob, Engine, EngineOptions, Lora, Status } from '../api'
 import { formatDuration, formatStep } from '../format'
+import { importDialog } from '../importDialogs'
 import { useT } from '../i18n'
 import { useJob } from '../useJob'
 import { AudioPlayer } from './AudioPlayer'
@@ -10,7 +11,6 @@ import { FilePicker } from './FilePicker'
 import { DownloadIcon, PlusIcon } from './icons'
 import { Info } from './Info'
 import { JobProgress } from './JobProgress'
-import { RvcImportDialog } from './RvcImportDialog'
 import { ParamSlider } from './SynthesisPanel'
 
 interface Result {
@@ -42,6 +42,7 @@ function defaults(engine: Engine | null): EngineOptions {
 export function ConvertView({ engine, loras, status, onVoicesChanged, onError, onOpenModels, hidden, pick }: Props) {
   const t = useT()
   const voices = useMemo(() => loras.filter((l) => l.engine === engine?.id), [loras, engine])
+  const importer = importDialog(engine)
   const [voice, setVoice] = useState<string>(() => localStorage.getItem(VOICE_KEY) ?? '')
   const [file, setFile] = useState<File | null>(null)
   const [song, setSong] = useState(true)
@@ -239,9 +240,16 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
               </select>
             )}
             <div className="convert-imports">
-              <button type="button" className="ghost small" onClick={() => setImporting(true)} disabled={!engine}>
-                <PlusIcon /> {t.rvcImportButton}
-              </button>
+              {importer && (
+                <button
+                  type="button"
+                  className="ghost small"
+                  onClick={() => setImporting(true)}
+                  title={importer.title?.(t)}
+                >
+                  <PlusIcon /> {importer.label(t)}
+                </button>
+              )}
               <input
                 ref={packageInput}
                 type="file"
@@ -383,8 +391,8 @@ export function ConvertView({ engine, loras, status, onVoicesChanged, onError, o
         </div>
       </aside>
 
-      {importing && (
-        <RvcImportDialog
+      {importing && importer && (
+        <importer.Dialog
           onImported={(id) => {
             onVoicesChanged()
             choose(id)

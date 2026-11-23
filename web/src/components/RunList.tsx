@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { RunStatus, RunSummary } from '../api'
+import type { Engine, RunStatus, RunSummary } from '../api'
 import { engineName, engineRank } from '../engines'
 import { useFolded } from '../folded'
 import { formatStep } from '../format'
@@ -12,6 +12,7 @@ interface Props {
   onSelect: (name: string) => void
   onNew: () => void
   loading: boolean
+  engines: Engine[] // their names and order
 }
 
 export const NEW_RUN = '\0new'
@@ -32,14 +33,14 @@ export function ProgressBar({ value, max }: { value: number; max: number }) {
   )
 }
 
-export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
+export function RunList({ runs, selected, onSelect, onNew, loading, engines: known }: Props) {
   const t = useT()
   const [filter, setFilter] = useState('')
   const [folded, toggleGroup] = useFolded('polyvox.runGroups') // engine ids whose group is folded
 
   const shown = runs.filter((r) => r.name.toLowerCase().includes(filter.trim().toLowerCase()))
   // Runs grouped by model (in the list's order within a group).
-  const engines = [...new Set(runs.map((r) => r.engine))].sort((a, b) => engineRank(a) - engineRank(b))
+  const engines = [...new Set(runs.map((r) => r.engine))].sort((a, b) => engineRank(a, known) - engineRank(b, known))
   const groups = engines
     .map((id) => ({ id, runs: shown.filter((r) => r.engine === id) }))
     .filter((g) => g.runs.length > 0)
@@ -103,7 +104,7 @@ export function RunList({ runs, selected, onSelect, onNew, loading }: Props) {
                 onClick={() => !filter && toggleGroup(group.id)}
               >
                 <Chevron open={open} />
-                <span>{engineName(group.id)}</span>
+                <span>{engineName(group.id, known)}</span>
                 <span className="muted">{group.runs.length}</span>
               </button>
               {group.runs.filter(visible).map(row)}

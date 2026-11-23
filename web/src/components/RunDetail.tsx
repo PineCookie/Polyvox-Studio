@@ -30,14 +30,9 @@ interface Props {
 // A run's checkpoint id, from the run's folder (RunSummary.path).
 const checkpointId = (runPath: string, step: number) => `${runPath}/checkpoints/step_${String(step).padStart(7, '0')}`
 
-// The losses a run's worker logs, in order (the first two charted up front);
-// before its first step, the ones its engine will log.
-// GPT-SoVITS: each stage's main loss up front (SoVITS mel, or v4's flow matching, then the GPT's).
-const FIRST_LOSSES: Record<string, string[]> = { gpt_sovits: ['loss/mel', 'loss/cfm', 'loss/gpt'] }
-const DEFAULT_LOSSES = ['loss/diff', 'loss/stop']
-
-function lossKeys(run: Run): string[] {
-  const first = FIRST_LOSSES[run.engine] ?? DEFAULT_LOSSES
+// The losses a run's worker logs, in order (the first two charted up front): its engine's
+// chart_losses first; before its first step, those.
+function lossKeys(run: Run, first: string[]): string[] {
   const keys: string[] = []
   for (const point of run.train) {
     for (const key of Object.keys(point)) {
@@ -59,7 +54,8 @@ export function RunDetail({ run, loras, activeRun, onStop, onResume, onTryCheckp
   const eta = live && run.seconds_per_step ? (run.num_iters - step) * run.seconds_per_step : null
   const otherJob = activeRun !== null && activeRun !== run.name
   const similarity = useSimilarity(run)
-  const losses = useMemo(() => lossKeys(run), [run])
+  const first = engines.find((e) => e.id === run.engine)?.chart_losses
+  const losses = useMemo(() => lossKeys(run, first ?? ['loss/diff', 'loss/stop']), [run, first])
   // Progress sections (loss, similarity, samples) folded, for every run.
   const [folded, toggle] = useFolded('polyvox.runSections')
   const section = (id: string): Fold => ({ open: !folded.has(id), onToggle: () => toggle(id) })

@@ -100,10 +100,13 @@ export interface Engine {
     speech_edit: boolean // edits recorded speech: changed words spoken again, the rest kept
     conversion: boolean // converts recordings (speech or singing) into a voice: the Convert tab, not Synthesize
     takes: boolean // a long text is spoken as separate takes (getTakes says where); a blank line starts one
+    voice_import: boolean // imports voices another tool made (importDialogs.ts, importVoice)
   }
   params: EngineParam[] // synthesis settings
   train_form: EngineParam[] // New run's fields, with the defaults that fit this GPU (engines that train)
   model_setting: string // its base model in the Models list
+  model_id: string | null // the Hugging Face id of the model it runs (a LoRA trained on another can't load)
+  chart_losses: string[] // the losses a run's charts show first
   base_repo: string | null // that model's Hugging Face repo
   loaded: boolean
 }
@@ -115,13 +118,9 @@ export async function listEngines(): Promise<Engine[]> {
 }
 
 export interface Status {
-  device: string
+  device: string // the speech engines'
   optimize: boolean
-  model: string
-  // Hugging Face id of the base model, when it can be inferred.
-  model_id: string | null
   torch: string // PyTorch build, e.g. 2.14.1+cu130
-  loaded: boolean
   asr_loaded: boolean
   aligner_loaded: boolean
   separation_loaded: boolean
@@ -135,8 +134,6 @@ export interface Status {
   update: { version: string; url: string } | null // a newer release (checked on GitHub daily)
   // The GPU's memory and the settings picked for it (src/polyvox/vram.py).
   gpu: GpuProfile
-  lora_rank: number | null
-  active_lora: string | null
   loaded_engines: string[] // engines with a model in memory
 }
 

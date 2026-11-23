@@ -63,7 +63,7 @@ def test_training_frees_the_asr_gpu(service, settings, asr_loader, device, train
     asr_service = AsrService(dataclasses.replace(settings, asr_device=device), loader=asr_loader)
     asr_service.transcribe([np.zeros(10, dtype=np.float32)])
 
-    free_gpu_for_training(service, train_gpu, asr_service)
+    free_gpu_for_training(train_gpu, service, asr_service)
 
     assert asr_service.loaded is not unloaded
 

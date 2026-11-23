@@ -5,14 +5,13 @@ import_package): the weights without metadata, lora_config.json ({"base_model": 
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Callable
 from pathlib import Path
 
 from ...lora_library import CONFIG_FILE, WEIGHTS_FILE, LoraCheckpoint
+from ...models import HUB_ID
 
 README_FILE = "README.md"
-HUB_ID = re.compile(r"[A-Za-z0-9][\w.-]*/[\w.-]+")
 
 
 def number(value) -> int | float:

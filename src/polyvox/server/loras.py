@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import TypeAdapter, ValidationError
 from starlette.background import BackgroundTask
 
-from .. import engines, lora_library, reference_search, sharing
+from .. import engines, lora_library, models, reference_search, sharing
 from ..data import manifests, references
 from ..engines.common import reference
 from ..engines.gpt_sovits import voices
@@ -45,7 +45,7 @@ def router(s: Studio) -> APIRouter:
                 voice_path=c.voice_path,
                 voice=c.voice,
                 base_model=c.base_model,
-                base_model_id=sharing.hub_id(c.base_model),
+                base_model_id=models.hub_id(c.base_model),
                 step=c.step,
                 rank=c.rank,
                 alpha=c.alpha,

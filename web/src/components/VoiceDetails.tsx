@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import { DEFAULT_ENGINE } from '../api'
 import type { Engine, Lora } from '../api'
 import type { VoiceChoice } from '../engines'
 import { useT } from '../i18n'
@@ -13,7 +12,6 @@ interface Props {
   engines: Engine[]
   loras: Lora[]
   selected: VoiceChoice
-  modelId: string | null
   onSelect: (choice: VoiceChoice) => void
   onRefresh: () => void
   onImported: (id: string, engine: string) => void // a saved-reference voice made here
@@ -22,7 +20,7 @@ interface Props {
 
 /** What the chosen voice is, at the top of the settings: its checkpoint, its own reference clip,
  * Export, or (on a base model that can) Save as a voice. */
-export function VoiceDetails({ engines, loras, selected, modelId, onSelect, onRefresh, onImported, onError }: Props) {
+export function VoiceDetails({ engines, loras, selected, onSelect, onRefresh, onImported, onError }: Props) {
   const t = useT()
   const voices = useMemo(() => groupVoices(loras, t), [loras, t])
   const [exporting, setExporting] = useState<Lora | null>(null)
@@ -107,9 +105,7 @@ export function VoiceDetails({ engines, loras, selected, modelId, onSelect, onRe
           <h3>
             {t.baseModel}
             <Info
-              text={[engine?.name ?? selected.engine, t.zeroShotInfo, selected.engine === DEFAULT_ENGINE && modelId]
-                .filter(Boolean)
-                .join(' · ')}
+              text={[engine?.name ?? selected.engine, t.zeroShotInfo, engine?.model_id].filter(Boolean).join(' · ')}
             />
           </h3>
           {engine?.capabilities.reference_voices && !engine.unavailable && (
