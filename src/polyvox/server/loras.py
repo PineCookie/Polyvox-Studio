@@ -19,7 +19,7 @@ from ..engines.common import reference
 from ..engines.gpt_sovits import voices
 from ..jobs import Job
 from .context import Studio, checked, found, save_upload
-from .schemas import MAX_REFERENCE_CLIPS, JobOut, LoraConfigOut, LoraOut, ReferenceSearchIn
+from .schemas import MAX_REFERENCE_CLIPS, JobOut, LoraOut, ReferenceSearchIn
 
 
 def keeps_reference(engine: str) -> bool:
@@ -36,6 +36,13 @@ def router(s: Studio) -> APIRouter:
         ref = reference.read_reference(ckpt.path) if keeps_reference(ckpt.engine) else None
         return ref[1] if ref else None
 
+    def lora_layers(ckpt: lora_library.LoraCheckpoint) -> list[str]:
+        cls = engines.classes().get(ckpt.engine)
+        try:
+            return cls.lora_layers(ckpt.raw_config) if cls and ckpt.raw_config else []
+        except (TypeError, ValueError):  # a config its engine can't read
+            return []
+
     @api.get("/api/loras")
     def list_loras() -> list[LoraOut]:
         return [
@@ -49,7 +56,7 @@ def router(s: Studio) -> APIRouter:
                 step=c.step,
                 rank=c.rank,
                 alpha=c.alpha,
-                config=LoraConfigOut(**c.config.model_dump()) if c.config else None,
+                layers=lora_layers(c),
                 reference_text=reference_text(c),
                 version=c.version,
             )

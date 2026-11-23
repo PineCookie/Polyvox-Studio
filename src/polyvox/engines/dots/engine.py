@@ -125,6 +125,10 @@ class DotsEngine(Engine):
     checkpoint_files = (lora_library.WEIGHTS_FILE,)
 
     @classmethod
+    def lora_layers(cls, lora_config: dict) -> list[str]:
+        return [part for part, key in (("lm", "enable_lm"), ("dit", "enable_dit")) if lora_config.get(key, True)]
+
+    @classmethod
     def package_files(cls, ckpt, name, base_model, half):
         return package.files(ckpt, name, base_model, half)
 

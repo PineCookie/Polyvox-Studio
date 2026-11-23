@@ -13,7 +13,7 @@ from ...data import manifests
 from ...models import ModelSpec
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 from ..common import train_form
-from . import package
+from . import layout, package
 from .inference import InferenceService
 from .inference import SynthesisRequest as VoxRequest
 
@@ -167,6 +167,10 @@ class VoxCPMEngine(Engine):
     model_specs = MODEL_SPECS
     worker_module = "polyvox.engines.voxcpm.worker"
     checkpoint_files = (lora_library.WEIGHTS_FILE,)
+
+    @classmethod
+    def lora_layers(cls, lora_config: dict) -> list[str]:
+        return layout.layers(lora_config)
 
     @classmethod
     def package_files(cls, ckpt, name, base_model, half):

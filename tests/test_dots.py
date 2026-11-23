@@ -345,7 +345,7 @@ def test_dots_checkpoints_are_listed_with_their_engine(lora_dir):
     make_dots_lora(lora_dir, "voice/checkpoints/step_0000010", TinyDots())
     (ckpt,) = lora_library.scan(lora_dir)
     info = json.loads((ckpt.path / "lora_config.json").read_text())
-    assert (ckpt.engine, ckpt.rank, ckpt.alpha, ckpt.config) == ("dots_tts", 4, 8.0, None)
+    assert (ckpt.engine, ckpt.rank, ckpt.alpha) == ("dots_tts", 4, 8.0)
     assert info["base_model"] == "org/dots"
 
 

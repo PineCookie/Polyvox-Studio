@@ -17,7 +17,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from . import engines
-from .lora_library import CONFIG_FILE, VOICE_FILE, LoraCheckpoint, engine_dir
+from .lora_library import CONFIG_FILE, LEGACY_ENGINE, VOICE_FILE, LoraCheckpoint, engine_dir
 
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)  # zip's earliest date: entries carry no export time
 PACKAGE_NAME = r"^[^\W_][\w.-]{0,79}$"  # Unicode letters allowed, like run names
@@ -78,14 +78,15 @@ def read_package(package: Path, filename: str) -> tuple[str, dict[str, bytes]]:
 
 
 def package_engine(files: dict[str, bytes]) -> str:
-    """The engine its config names (lora_config.json, else voice.json; none: VoxCPM)."""
+    """The engine its config names (lora_config.json, else voice.json). None named: a VoxCPM
+    LoRA in voxcpm's own format (and our packages made before they named it)."""
     for config in (CONFIG_FILE, VOICE_FILE):
         if config in files:
             try:
                 info = json.loads(files[config])
             except ValueError as e:
                 raise ValueError(f"{config} is invalid: {e}") from e
-            return str(info.get("engine") or engines.DEFAULT) if isinstance(info, dict) else engines.DEFAULT
+            return str((info.get("engine") if isinstance(info, dict) else None) or LEGACY_ENGINE)
     raise ValueError(f"A package needs {CONFIG_FILE} or {VOICE_FILE}.")
 
 

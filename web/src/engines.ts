@@ -1,6 +1,5 @@
 // TTS engines in the UI: their settings' defaults, names and order (as /api/engines lists them),
 // and the voice a request uses.
-import { DEFAULT_ENGINE } from './api'
 import type { Engine, EngineOptions } from './api'
 
 export function defaultOptions(engine: Engine): EngineOptions {
@@ -13,7 +12,10 @@ export interface VoiceChoice {
   lora: string | null
 }
 
-export const BASE_VOICE: VoiceChoice = { engine: DEFAULT_ENGINE, lora: null }
+/** The base model Synthesize starts with: the first speech engine's. */
+export function firstVoice(engines: Engine[]): VoiceChoice {
+  return { engine: engines.find((e) => !e.capabilities.conversion)?.id ?? '', lora: null }
+}
 
 /** An engine's name (its id when this server doesn't have it). */
 export function engineName(id: string, engines: Engine[]): string {

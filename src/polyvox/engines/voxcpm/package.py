@@ -4,20 +4,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...lora_library import LoraCheckpoint, default_lora_config
+from ...lora_library import LoraCheckpoint
 from ..common import lora_package
 from ..common.lora_package import number
+from . import layout
+
+ENGINE = "voxcpm"
 
 
 def files(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool) -> dict[str, bytes]:
-    config = (ckpt.config or default_lora_config()).model_dump()  # no "engine": voxcpm reads this file too
+    config = layout.config_of(ckpt).model_dump()
     return lora_package.files(ckpt, base_model, half, config, readme(name, base_model, config, ckpt.step, half))
 
 
 def unpack(folder: Path, name: str, files: dict[str, bytes]) -> str:
     from voxcpm.model.voxcpm import LoRAConfig
 
-    return lora_package.unpack(folder, name, files, lambda raw: LoRAConfig(**raw))
+    return lora_package.unpack(folder, name, files, ENGINE, lambda raw: LoRAConfig(**raw))
 
 
 def readme(name: str, base_model: str, config: dict, step: int | None, half: bool) -> str:

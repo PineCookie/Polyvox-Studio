@@ -26,11 +26,11 @@ def config(raw: dict | None) -> dict:
 
 def files(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool) -> dict[str, bytes]:
     lora = config(ckpt.raw_config)
-    return lora_package.files(ckpt, base_model, half, lora, readme(name, base_model, lora, ckpt.step, half), ENGINE)
+    return lora_package.files(ckpt, base_model, half, lora, readme(name, base_model, lora, ckpt.step, half))
 
 
 def unpack(folder: Path, name: str, files: dict[str, bytes]) -> str:
-    return lora_package.unpack(folder, name, files, config)
+    return lora_package.unpack(folder, name, files, ENGINE, config)
 
 
 def readme(name: str, base_model: str, config: dict, step: int | None, half: bool) -> str:

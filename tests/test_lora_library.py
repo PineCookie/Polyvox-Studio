@@ -20,15 +20,18 @@ def test_scan_reads_config_and_base_model(lora_dir):
 
     (ckpt,) = lora_library.scan(lora_dir)
 
-    assert ckpt.config.r == 64
+    assert (ckpt.engine, ckpt.rank) == ("voxcpm", 64)
     assert ckpt.base_model == "models/VoxCPM2"
 
 
 def test_missing_or_broken_config_yields_none(lora_dir):
-    make_lora(lora_dir, "no_config", r=None)
+    (make_lora(lora_dir, "voxcpm/no_config", r=None) / "lora_config.json").unlink()
     (make_lora(lora_dir, "broken", r=None) / "lora_config.json").write_text("{not json")
 
-    assert all(c.config is None for c in lora_library.scan(lora_dir))
+    found = {c.id: c for c in lora_library.scan(lora_dir)}
+    assert all(c.raw_config is None and c.base_model is None for c in found.values())
+    # The engine folder names its engine; a broken file at the top level names none.
+    assert (found["voxcpm/no_config"].engine, found["broken"].engine) == ("voxcpm", "")
 
 
 def test_scan_missing_dir_is_empty(tmp_path):
@@ -47,7 +50,7 @@ def test_resolve_rejects_unknown_or_escaping_ids(lora_dir, bad_id):
 def test_resolve_returns_checkpoint(lora_dir):
     make_lora(lora_dir, "voice/step_1", r=16)
 
-    assert lora_library.resolve(lora_dir, "voice/step_1").config.r == 16
+    assert lora_library.resolve(lora_dir, "voice/step_1").rank == 16
 
 
 def test_checkpoints_know_their_run_or_voice(lora_dir):
@@ -100,8 +103,32 @@ def test_migrate_moves_runs_and_voices_into_engine_folders(lora_dir):
     assert config["elsewhere"] == str(lora_dir / "made_here_2" / "x")  # only the run's own folder moves
     webui_config = yaml.safe_load((lora_dir / "voxcpm" / "webui_run" / "train_config.yaml").read_text(encoding="utf-8"))
     assert webui_config == {
+        "engine": "voxcpm",  # recorded: it records none (from before engines)
         "save_path": "lora\\voxcpm\\webui_run\\checkpoints",
         "tensorboard": "lora/voxcpm/webui_run/logs",
     }
     assert (lora_dir / "notes").is_dir() and (lora_dir / "voice_d").is_dir()  # left (name taken)
     assert lora_library.migrate(lora_dir) == []  # once
+
+
+def test_stamp_engines_records_the_engine_folder_in_configs_without_one(lora_dir):
+    import json
+
+    import yaml
+
+    run = lora_dir / "voxcpm" / "run_a"
+    (run / "checkpoints" / "step_1").mkdir(parents=True)
+    (run / "train_config.yaml").write_text(yaml.safe_dump({"num_iters": 2}), encoding="utf-8")
+    (run / "checkpoints" / "step_1" / "lora_config.json").write_text(json.dumps({"lora_config": {"r": 8}}))
+    voice = lora_dir / "dots_tts" / "voice_b"
+    voice.mkdir(parents=True)
+    (voice / "lora_config.json").write_text(json.dumps({"engine": "dots_tts", "base_model": "org/m"}))
+
+    assert lora_library.stamp_engines(lora_dir) == 2
+    assert yaml.safe_load((run / "train_config.yaml").read_text(encoding="utf-8")) == {
+        "engine": "voxcpm",
+        "num_iters": 2,
+    }
+    saved = json.loads((run / "checkpoints" / "step_1" / "lora_config.json").read_text(encoding="utf-8"))
+    assert saved == {"engine": "voxcpm", "lora_config": {"r": 8}}
+    assert lora_library.stamp_engines(lora_dir) == 0  # once

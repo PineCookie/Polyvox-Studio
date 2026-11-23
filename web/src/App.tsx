@@ -1,16 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  DEFAULT_ENGINE,
-  editSpeech,
-  getStatus,
-  importLora,
-  listEngines,
-  listLoras,
-  synthesize,
-  unloadModel,
-} from './api'
+import { editSpeech, getStatus, importLora, listEngines, listLoras, synthesize, unloadModel } from './api'
 import type { Engine, Lora, Status, SynthesisParams } from './api'
-import { BASE_VOICE, engineName } from './engines'
+import { engineName, firstVoice } from './engines'
 import { formatStep } from './format'
 import type { VoiceChoice } from './engines'
 import { forgetPeaks } from './peaks'
@@ -51,7 +42,7 @@ export default function App() {
   const [loras, setLoras] = useState<Lora[]>([])
   const [lorasLoading, setLorasLoading] = useState(true)
   const [engines, setEngines] = useState<Engine[]>([])
-  const [voice, setVoice] = useState<VoiceChoice>(BASE_VOICE)
+  const [voice, setVoice] = useState<VoiceChoice>({ engine: '', lora: null }) // set once the engines are known
   const [seed, setSeed] = useState<number | null>(null)
   const [clips, setClips] = useState<Clip[]>([])
   const [busy, setBusy] = useState(false)
@@ -80,7 +71,13 @@ export default function App() {
   useEffect(() => {
     refreshStatus()
     refreshLoras()
-    listEngines().then(setEngines, (e: Error) => setError(e.message))
+    listEngines().then(
+      (list) => {
+        setEngines(list)
+        setVoice((v) => (v.engine ? v : firstVoice(list)))
+      },
+      (e: Error) => setError(e.message),
+    )
     // The server asks GitHub for a newer release in the background at startup: look again soon.
     const later = setTimeout(refreshStatus, UPDATE_LOOK_MS)
     return () => clearTimeout(later)
@@ -217,7 +214,8 @@ export default function App() {
   }
 
   function tryCheckpoint(loraId: string, known?: string) {
-    const engine = known ?? loras.find((l) => l.id === loraId)?.engine ?? DEFAULT_ENGINE
+    const engine = known ?? loras.find((l) => l.id === loraId)?.engine
+    if (!engine) return
     if (engines.some((e) => e.id === engine && e.capabilities.conversion)) {
       setConvertPick({ id: loraId, key: Date.now() })
       switchTab('convert')

@@ -7,17 +7,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-class LoraConfigOut(BaseModel):
-    r: int
-    alpha: float
-    dropout: float
-    enable_lm: bool
-    enable_dit: bool
-    enable_proj: bool
-    target_modules_lm: list[str]
-    target_modules_dit: list[str]
-
-
 class LoraOut(BaseModel):
     id: str
     engine: str
@@ -30,7 +19,7 @@ class LoraOut(BaseModel):
     step: int | None
     rank: int | None
     alpha: float | None
-    config: LoraConfigOut | None  # VoxCPM's layout (VoxCPM checkpoints only)
+    layers: list[str] = []  # the parts its LoRA adapts (Engine.lora_layers): "lm", "dit", ...
     # Its default reference clip's transcript (GPT-SoVITS voices); None: it has none.
     reference_text: str | None = None
     version: str | None = None  # the model version, when the checkpoint records one (e.g. v2ProPlus)

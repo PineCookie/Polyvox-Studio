@@ -1,16 +1,5 @@
 // Typed client for the Polyvox Studio API (src/polyvox/server/).
 
-export interface LoraConfig {
-  r: number
-  alpha: number
-  dropout: number
-  enable_lm: boolean
-  enable_dit: boolean
-  enable_proj: boolean
-  target_modules_lm: string[]
-  target_modules_dit: string[]
-}
-
 export interface Lora {
   id: string // its path in the LoRA folder, e.g. "gpt_sovits/speaker_a/checkpoints/step_0000100"
   engine: string // the engine it was trained for (Engine.id)
@@ -22,7 +11,7 @@ export interface Lora {
   step: number | null
   rank: number | null
   alpha: number | null
-  config: LoraConfig | null // VoxCPM's layout (VoxCPM LoRAs only)
+  layers: string[] // the parts of the model its LoRA adapts (Engine.lora_layers): 'lm', 'dit', ...
   reference_text: string | null // its default reference clip's transcript (GPT-SoVITS, S2-Pro voices); null: none
   version: string | null // model version, when recorded (e.g. v2ProPlus)
 }
@@ -110,8 +99,6 @@ export interface Engine {
   base_repo: string | null // that model's Hugging Face repo
   loaded: boolean
 }
-
-export const DEFAULT_ENGINE = 'voxcpm' // runs and LoRAs from before engines
 
 export async function listEngines(): Promise<Engine[]> {
   return (await request('/api/engines')).json()

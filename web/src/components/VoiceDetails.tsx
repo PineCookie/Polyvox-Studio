@@ -36,20 +36,15 @@ export function VoiceDetails({ engines, loras, selected, onSelect, onRefresh, on
       ? [...currentVoice.checkpoints, { lora: current, step: current.step, label: current.id.split('/').at(-1)! }]
       : (currentVoice?.checkpoints ?? [])
 
+  const layerName = (layer: string) => (t.loraLayers as Record<string, string>)[layer] ?? layer
   const layout = (lora: Lora) =>
     lora.version
       ? lora.version
-      : lora.config
-        ? t.loraLayout(
-            lora.config.r,
-            lora.config.alpha,
-            [lora.config.enable_lm && 'LM', lora.config.enable_dit && 'DiT', lora.config.enable_proj && t.projections]
-              .filter(Boolean)
-              .join(' + '),
-          )
-        : lora.rank !== null && lora.alpha !== null
-          ? t.rankAlpha(lora.rank, lora.alpha)
-          : t.defaultLayout
+      : lora.rank !== null && lora.alpha !== null
+        ? lora.layers.length
+          ? t.loraLayout(lora.rank, lora.alpha, lora.layers.map(layerName).join(' + '))
+          : t.rankAlpha(lora.rank, lora.alpha)
+        : t.defaultLayout
 
   return (
     <section className="settings-section voice-details">

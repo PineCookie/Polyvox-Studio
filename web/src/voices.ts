@@ -1,5 +1,4 @@
 // Voices for Synthesize: checkpoints grouped by run / voice folder, as the picker lists them.
-import { DEFAULT_ENGINE } from './api'
 import type { Engine, Lora } from './api'
 import { formatStep } from './format'
 import type { Messages } from './i18n'
@@ -46,7 +45,7 @@ export function groupVoices(loras: Lora[], t: Messages): Voice[] {
       return {
         key,
         name,
-        engine: best?.engine ?? DEFAULT_ENGINE,
+        engine: (best ?? list[0]).engine,
         checkpoints,
         baseModelId: best?.base_model_id ?? null,
       }

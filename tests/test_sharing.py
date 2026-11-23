@@ -63,7 +63,7 @@ def test_export_contains_only_the_essentials_without_local_info(lora_dir):
 
     assert sorted(files) == ["voice/README.md", "voice/lora_config.json", "voice/lora_weights.safetensors"]
     info = json.loads(files["voice/lora_config.json"])
-    assert info["base_model"] == "openbmb/VoxCPM2" and info["lora_config"]["r"] == 32
+    assert (info["engine"], info["base_model"], info["lora_config"]["r"]) == ("voxcpm", "openbmb/VoxCPM2", 32)
     weights = load(files["voice/lora_weights.safetensors"])
     assert all(t.dtype == torch.bfloat16 for t in weights.values())
     readme = files["voice/README.md"].decode()
@@ -101,7 +101,12 @@ def test_import_round_trip(lora_dir, tmp_path):
     assert sharing.import_package(other, package, "whatever.zip") == ("voxcpm/shared_voice", "voxcpm")
 
     (ckpt,) = lora_library.scan(other)
-    assert ckpt.id == "voxcpm/shared_voice" and ckpt.config.r == 16 and ckpt.base_model == "openbmb/VoxCPM2"
+    assert (ckpt.id, ckpt.engine, ckpt.rank, ckpt.base_model) == (
+        "voxcpm/shared_voice",
+        "voxcpm",
+        16,
+        "openbmb/VoxCPM2",
+    )
     with pytest.raises(FileExistsError):
         sharing.import_package(other, package, "whatever.zip")
 
@@ -112,6 +117,18 @@ def test_import_accepts_files_without_a_folder(lora_dir, tmp_path):
     package.write_bytes(make_zip({k.split("/")[1]: v for k, v in files.items()}))
 
     assert sharing.import_package(tmp_path / "lora2", package, "My_Voice.zip")[0] == "voxcpm/My_Voice"
+
+
+def test_a_package_naming_no_engine_is_a_voxcpm_lora(lora_dir, tmp_path):
+    files = read_zip(sharing.export_package(make_checkpoint(lora_dir), "v", "openbmb/VoxCPM2"))
+    info = json.loads(files["v/lora_config.json"])
+    del info["engine"]  # voxcpm's own format names none
+    package = tmp_path / "plain.zip"
+    package.write_bytes(make_zip({**files, "v/lora_config.json": json.dumps(info).encode()}))
+
+    assert sharing.import_package(tmp_path / "lora2", package, "plain.zip") == ("voxcpm/v", "voxcpm")
+    saved = json.loads((tmp_path / "lora2" / "voxcpm" / "v" / "lora_config.json").read_text(encoding="utf-8"))
+    assert saved["engine"] == "voxcpm"
 
 
 @pytest.mark.parametrize(
@@ -179,7 +196,7 @@ def test_dots_export_and_round_trip(lora_dir, tmp_path):
     other = tmp_path / "other_lora"
     assert sharing.import_package(other, package, "x.zip") == ("dots_tts/dots_voice", "dots_tts")
     (imported,) = lora_library.scan(other)
-    assert (imported.engine, imported.rank, imported.alpha, imported.config) == ("dots_tts", 16, 16.0, None)
+    assert (imported.engine, imported.rank, imported.alpha) == ("dots_tts", 16, 16.0)
 
 
 def test_import_rejects_unknown_engines_and_bad_dots_configs(lora_dir, tmp_path):

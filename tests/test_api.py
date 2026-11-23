@@ -22,7 +22,10 @@ def test_list_loras(client, lora_dir):
 
     body = client.get("/api/loras").json()
 
-    assert [(x["id"], x["config"] and x["config"]["r"]) for x in body] == [("voice/step_1", 64), ("legacy", None)]
+    assert [(x["id"], x["rank"], x["layers"]) for x in body] == [
+        ("voice/step_1", 64, ["lm", "dit"]),
+        ("legacy", None, []),
+    ]
 
 
 def test_tts_returns_wav_and_seed(client):

@@ -54,6 +54,19 @@ PROFILES = (  # (at least this many GB, profile), largest first
 CPU = Profile(ON_CPU, 400, 160, 2, False, False, False, "No CUDA GPU: everything runs on the CPU (slow).")
 
 
+def runtime_device(device: str | None) -> str:
+    """A device setting as torch takes it: "auto" (or none) = CUDA if there is a GPU, else the
+    CPU; ValueError when CUDA is asked for and there is none."""
+    import torch
+
+    name = (device or "auto").strip().lower()
+    if name == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if name.startswith("cuda") and not torch.cuda.is_available():
+        raise ValueError(f"Device '{device}' asked for, but there is no CUDA GPU (POLYVOX_DEVICE=auto falls back).")
+    return name
+
+
 def per_gpu(profile: Profile | None, table: dict, default):
     """An engine's setting for this GPU (``table`` by profile name), else ``default``."""
     return table.get(profile.name, default) if profile else default

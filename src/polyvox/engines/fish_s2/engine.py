@@ -241,6 +241,10 @@ class FishS2Engine(Engine):
     checkpoint_files = (lora_library.WEIGHTS_FILE,)
 
     @classmethod
+    def lora_layers(cls, lora_config: dict) -> list[str]:
+        return list(lora_config.get("targets") or s2lora.DEFAULT_TARGETS)
+
+    @classmethod
     def package_files(cls, ckpt, name, base_model, half):
         return package.files(ckpt, name, base_model, half)
 

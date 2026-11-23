@@ -30,11 +30,11 @@ def files(ckpt: LoraCheckpoint, name: str, base_model: str, half: bool) -> dict[
         extra[REFERENCE_WAV] = reference[0].read_bytes()
         extra[REFERENCE_JSON] = (json.dumps({"text": reference[1]}, ensure_ascii=False, indent=1) + "\n").encode()
     text = readme(name, base_model, lora, ckpt.step, half, bool(extra))
-    return lora_package.files(ckpt, base_model, half, lora, text, s2lora.ENGINE, extra)
+    return lora_package.files(ckpt, base_model, half, lora, text, extra)
 
 
 def unpack(folder: Path, name: str, files: dict[str, bytes]) -> str:
-    return lora_package.unpack(folder, name, files, config, keep=(REFERENCE_WAV, REFERENCE_JSON))
+    return lora_package.unpack(folder, name, files, s2lora.ENGINE, config, keep=(REFERENCE_WAV, REFERENCE_JSON))
 
 
 def readme(name: str, base_model: str, config: dict, step: int | None, half: bool, has_reference: bool) -> str:

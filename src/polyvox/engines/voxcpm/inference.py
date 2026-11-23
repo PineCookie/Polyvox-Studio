@@ -16,6 +16,7 @@ import numpy as np
 from ... import lora_library, models, vram
 from ...config import Settings
 from ...lora_library import LoraCheckpoint
+from . import layout
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ def load_lora_padded(tts_model, ckpt: LoraCheckpoint) -> float:
                 f"LoRA '{ckpt.id}' does not match the loaded model: {len(state) - used} of {len(state)} tensors "
                 "have no matching layer (trained on another base model?)."
             )
-    config = ckpt.config or lora_library.default_lora_config()
+    config = layout.config_of(ckpt)
     return config.alpha / config.r
 
 
@@ -193,10 +194,10 @@ def _denoiser_to_cpu(model) -> None:
 
 class InferenceService:
     def __init__(self, settings: Settings, loader: ModelLoader = load_voxcpm):
-        from voxcpm.model.utils import resolve_runtime_device
+        from ... import vram
 
         self.settings = settings
-        self.device = resolve_runtime_device(settings.device, "cuda")
+        self.device = vram.runtime_device(settings.device)
         self.optimize = self.device.startswith("cuda") if settings.optimize is None else settings.optimize
         self._loader = loader
         self._lock = threading.Lock()
@@ -296,19 +297,15 @@ class InferenceService:
             self._release()
 
     def _ensure_model(self, ckpt: LoraCheckpoint | None):
-        needed = (ckpt.config or lora_library.default_lora_config()) if ckpt else None
+        needed = layout.config_of(ckpt) if ckpt else None
         # Base output only needs LoRA disabled, so any loaded layout works.
-        if self._model is not None and (needed is None or lora_library.covers(self._lora_config, needed)):
+        if self._model is not None and (needed is None or layout.covers(self._lora_config, needed)):
             return self._model
 
         # Cover every checkpoint present, so switching among them never reloads;
         # only a LoRA with a larger rank or new targets added later does.
-        configs = [
-            c.config or lora_library.default_lora_config()
-            for c in lora_library.scan(self.settings.lora_dir)
-            if c.engine == ENGINE
-        ]
-        target = lora_library.layout_covering(configs + ([needed] if needed else []))
+        configs = [layout.config_of(c) for c in lora_library.scan(self.settings.lora_dir) if c.engine == ENGINE]
+        target = layout.covering(configs + ([needed] if needed else []))
 
         self._release()
         logger.info(

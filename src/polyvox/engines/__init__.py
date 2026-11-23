@@ -20,10 +20,7 @@ from .base import (
     TagGroup,
 )
 
-DEFAULT = "voxcpm"  # runs and checkpoints that record no engine
-
 __all__ = [
-    "DEFAULT",
     "Capabilities",
     "ConvertRequest",
     "EditRequest",
@@ -35,6 +32,7 @@ __all__ = [
     "TagGroup",
     "classes",
     "create",
+    "default",
     "with_capability",
 ]
 
@@ -55,6 +53,11 @@ def classes() -> dict[str, type[Engine]]:
         FishDrama3Engine.id: FishDrama3Engine,
         RvcEngine.id: RvcEngine,
     }
+
+
+def default() -> str:
+    """The engine a request that names none uses: the first one."""
+    return next(iter(classes()))
 
 
 def with_capability(capability: str, engine: str | None = None) -> type[Engine] | None:

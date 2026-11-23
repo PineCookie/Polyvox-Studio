@@ -35,8 +35,8 @@ def make_lora(
     alpha: float | None = None,
     layers: list[str] = LM_LAYERS,
 ) -> Path:
-    """Create a checkpoint with real LoRA weights for the tiny model; r=None
-    omits lora_config.json (the default layout, rank 32, applies)."""
+    """Create a VoxCPM checkpoint with real LoRA weights for the tiny model; r=None
+    saves no layout (the default one, rank 32, applies)."""
     ckpt = lora_dir / rel
     ckpt.mkdir(parents=True)
     rank = r or 32
@@ -46,9 +46,10 @@ def make_lora(
         tensors[f"{layer}.lora_A"] = torch.randn(rank, DIM, generator=gen)
         tensors[f"{layer}.lora_B"] = torch.randn(DIM, rank, generator=gen)
     save_file(tensors, ckpt / "lora_weights.safetensors")
+    info = {"engine": "voxcpm", "base_model": base_model}
     if r is not None:
-        cfg = {"enable_lm": True, "enable_dit": True, "r": r, "alpha": alpha or r}
-        (ckpt / "lora_config.json").write_text(json.dumps({"lora_config": cfg, "base_model": base_model}))
+        info["lora_config"] = {"enable_lm": True, "enable_dit": True, "r": r, "alpha": alpha or r}
+    (ckpt / "lora_config.json").write_text(json.dumps(info))
     return ckpt
 
 

@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { useT } from '../i18n'
-import { DEFAULT_ENGINE } from '../api'
 import type { Engine, EngineParam, FormValue, FormValues } from '../api'
 import { isLocked, isShown, labelKey } from '../trainParams'
 import { Info } from './Info'
@@ -51,7 +50,7 @@ export function ParamsFields({
   const main = shown.filter((p) => p.group === 'main')
   const advanced = shown.filter((p) => p.group === 'advanced')
 
-  const showEngine = engines.length > 1 || engine !== DEFAULT_ENGINE
+  const showEngine = engines.length > 1 || engine !== engines[0]?.id
   const engineOptions = engines.some((e) => e.id === engine)
     ? engines
     : [...engines, { id: engine, name: engine, unavailable: null } as Engine]

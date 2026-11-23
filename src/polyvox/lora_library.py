@@ -18,18 +18,16 @@ import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from voxcpm.model.voxcpm import LoRAConfig
-
-from .engines import DEFAULT as DEFAULT_ENGINE
-
 logger = logging.getLogger(__name__)
 
 WEIGHTS_FILE = "lora_weights.safetensors"  # a LoRA's weights (VoxCPM, dots.tts, S2-Pro)
 # A voice's config when it isn't a LoRA (RVC, saved-reference voices): {"engine": ..., "base_model": ...},
 # read like lora_config.json.
 VOICE_FILE = "voice.json"
-# {"lora_config": {...}, "base_model": ..., "engine": ...}; no engine: VoxCPM.
-CONFIG_FILE = "lora_config.json"
+CONFIG_FILE = "lora_config.json"  # {"engine": ..., "base_model": ..., "lora_config": {...}}
+RUN_CONFIGS = ("train_config.yaml", "train_config.orig.yaml")
+# Runs and checkpoints from before there were engines (they record none) are VoxCPM's.
+LEGACY_ENGINE = "voxcpm"
 
 
 @functools.cache
@@ -46,9 +44,8 @@ class LoraCheckpoint:
     # POSIX path relative to the LoRA directory, e.g. "speaker_r64/checkpoints/step_0005000".
     id: str
     path: Path
-    config: LoRAConfig | None  # VoxCPM checkpoints only
-    base_model: str | None
-    engine: str = DEFAULT_ENGINE
+    engine: str  # "" when neither its config nor its folder names one
+    base_model: str | None = None
     # The saved lora_config as written, for any engine (rank "r", "alpha", ...).
     raw_config: dict | None = None
     version: str | None = None  # model version, when recorded (GPT-SoVITS: v2Pro / v2ProPlus)
@@ -91,72 +88,24 @@ class LoraCheckpoint:
         return float(alpha) if isinstance(alpha, int | float) else None
 
 
-def default_lora_config() -> LoRAConfig:
-    """Layout used when a checkpoint has no lora_config.json."""
-    return LoRAConfig(
-        enable_lm=True,
-        enable_dit=True,
-        r=32,
-        alpha=16,
-        target_modules_lm=["q_proj", "v_proj", "k_proj", "o_proj"],
-        target_modules_dit=["q_proj", "v_proj", "k_proj", "o_proj"],
-    )
-
-
-def _union(lists) -> list[str]:
-    out: list[str] = []
-    for names in lists:
-        out += [n for n in names if n not in out]
-    return out
-
-
-def layout_covering(configs: list[LoRAConfig]) -> LoRAConfig:
-    """The smallest LoRA layout any of ``configs`` fits into: highest rank,
-    union of target layers. A smaller LoRA loads zero-padded (see inference)."""
-    configs = configs or [default_lora_config()]
-    r = max(c.r for c in configs)
-    return LoRAConfig(
-        enable_lm=any(c.enable_lm for c in configs),
-        enable_dit=any(c.enable_dit for c in configs),
-        enable_proj=any(c.enable_proj for c in configs),
-        r=r,
-        alpha=r,  # unused: each loaded LoRA sets its own alpha / r
-        dropout=0.0,
-        target_modules_lm=_union(c.target_modules_lm for c in configs if c.enable_lm),
-        target_modules_dit=_union(c.target_modules_dit for c in configs if c.enable_dit),
-        target_proj_modules=_union(c.target_proj_modules for c in configs if c.enable_proj),
-    )
-
-
-def covers(layout: LoRAConfig, config: LoRAConfig) -> bool:
-    """Whether a model built with ``layout`` can hold a LoRA with ``config``."""
-    return (
-        layout.r >= config.r
-        and (layout.enable_lm or not config.enable_lm)
-        and (layout.enable_dit or not config.enable_dit)
-        and (layout.enable_proj or not config.enable_proj)
-        and (not config.enable_lm or set(config.target_modules_lm) <= set(layout.target_modules_lm))
-        and (not config.enable_dit or set(config.target_modules_dit) <= set(layout.target_modules_dit))
-        and (not config.enable_proj or set(config.target_proj_modules) <= set(layout.target_proj_modules))
-    )
+def _config_file(ckpt_dir: Path) -> Path:
+    config_file = ckpt_dir / CONFIG_FILE
+    return config_file if config_file.is_file() else ckpt_dir / VOICE_FILE
 
 
 def _load(lora_dir: Path, ckpt_dir: Path) -> LoraCheckpoint:
-    ckpt = LoraCheckpoint(id=ckpt_dir.relative_to(lora_dir).as_posix(), path=ckpt_dir, config=None, base_model=None)
-    config_file = ckpt_dir / CONFIG_FILE
-    if not config_file.is_file():
-        config_file = ckpt_dir / VOICE_FILE
+    ckpt_id = ckpt_dir.relative_to(lora_dir).as_posix()
+    folder = ckpt_id.split("/")[0]
+    ckpt = LoraCheckpoint(id=ckpt_id, path=ckpt_dir, engine=folder if folder in engine_folders() else "")
+    config_file = _config_file(ckpt_dir)
     if not config_file.is_file():
         return ckpt
     try:
         info = json.loads(config_file.read_text(encoding="utf-8"))
-        engine = str(info.get("engine") or DEFAULT_ENGINE)
         raw = info.get("lora_config") or None
-        config = LoRAConfig(**raw) if raw and engine == DEFAULT_ENGINE else None
         version = info.get("version") if isinstance(info.get("version"), str) else None
-        return replace(
-            ckpt, config=config, base_model=info.get("base_model"), engine=engine, raw_config=raw, version=version
-        )
+        engine = str(info.get("engine") or ckpt.engine)
+        return replace(ckpt, base_model=info.get("base_model"), engine=engine, raw_config=raw, version=version)
     except (OSError, ValueError, TypeError) as e:
         logger.warning("Ignoring unreadable %s: %s", config_file, e)
         return ckpt
@@ -194,31 +143,73 @@ def engine_dir(lora_dir: Path, engine: str) -> Path:
 
 
 def folder_engine(folder: Path) -> str | None:
-    """The engine of a run or voice folder (its train_config.yaml, else its
-    checkpoints' lora_config.json), or None when it holds neither."""
+    """The engine of a run or voice folder lying directly in the LoRA folder (its
+    train_config.yaml, else its checkpoints' lora_config.json; none recorded: from before
+    engines), or None when it holds neither."""
     import yaml
 
-    config = folder / "train_config.yaml"
+    config = folder / RUN_CONFIGS[0]
     if config.is_file():
         try:
             data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError):
             return None
-        return str(data.get("engine") or DEFAULT_ENGINE) if isinstance(data, dict) else None
+        return str(data.get("engine") or LEGACY_ENGINE) if isinstance(data, dict) else None
     for ckpt in scan(folder):
-        return ckpt.engine
+        return ckpt.engine or LEGACY_ENGINE
     return None
 
 
 def migrate(lora_dir: Path) -> list[tuple[str, str]]:
     """Move runs and voices lying directly in ``lora_dir`` into their engine's
-    folder; returns the (from, to) names moved. Paths into the folder that a
-    run's train_config records (absolute, or the webui's ``lora/<name>/...``)
-    follow it. A folder whose engine can't be told, or whose name is taken in
-    its engine folder, stays (and is logged)."""
+    folder, then write the engine into every run and checkpoint config in an
+    engine folder that records none (stamp_engines); returns the (from, to) names moved.
+    Paths into the folder that a run's train_config records (absolute, or the webui's
+    ``lora/<name>/...``) follow it. A folder whose engine can't be told, or whose name is
+    taken in its engine folder, stays (and is logged)."""
     lora_dir = lora_dir.resolve()
     if not lora_dir.is_dir():
         return []
+    moved = _move_into_engine_folders(lora_dir)
+    stamp_engines(lora_dir)
+    return moved
+
+
+def stamp_engines(lora_dir: Path) -> int:
+    """Write ``engine`` into the run configs and checkpoint configs of each engine folder that
+    lack it (the folder names their engine); returns how many files changed."""
+    import yaml
+
+    changed = 0
+    for engine in sorted(engine_folders()):
+        folder = engine_dir(lora_dir, engine)
+        if not folder.is_dir():
+            continue
+        for path in [p for name in RUN_CONFIGS for p in folder.glob(f"*/{name}")]:
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError) as e:
+                logger.warning("Ignoring unreadable %s: %s", path, e)
+                continue
+            if isinstance(data, dict) and not data.get("engine"):
+                text = yaml.safe_dump({"engine": engine, **data}, sort_keys=False, allow_unicode=True)
+                path.write_text(text, encoding="utf-8")
+                changed += 1
+        for path in [p for name in (CONFIG_FILE, VOICE_FILE) for p in folder.rglob(name)]:
+            try:
+                info = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as e:
+                logger.warning("Ignoring unreadable %s: %s", path, e)
+                continue
+            if isinstance(info, dict) and not info.get("engine"):
+                path.write_text(json.dumps({"engine": engine, **info}, indent=2), encoding="utf-8")
+                changed += 1
+    if changed:
+        logger.info("Recorded the engine in %d run and checkpoint configs", changed)
+    return changed
+
+
+def _move_into_engine_folders(lora_dir: Path) -> list[tuple[str, str]]:
     folders, moved = engine_folders(), []
     for item in sorted(lora_dir.iterdir()):
         if not item.is_dir() or item.name.startswith(".") or item.name in folders:

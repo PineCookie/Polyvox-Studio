@@ -339,7 +339,15 @@ export const en = {
   latest: 'Latest',
   final: ' (final)',
   loraLayout: (r: number, alpha: number, parts: string) => `Rank ${r} · alpha ${alpha} · ${parts}`,
-  projections: 'projections',
+  // The parts a LoRA adapts (Engine.lora_layers); others show as named.
+  loraLayers: {
+    lm: 'LM',
+    dit: 'DiT',
+    proj: 'projections',
+    fast_attn: 'fast attention',
+    fast_mlp: 'fast MLP',
+    slow_attn: 'slow attention',
+  } as Record<string, string>,
   defaultLayout: 'Default layout (no lora_config.json)',
   baseOf: (base: string) => `Base ${base}`,
   notRecorded: 'not recorded',

@@ -292,10 +292,10 @@ class AlignService:
 
     @property
     def device(self) -> str:
-        from voxcpm.model.utils import resolve_runtime_device
+        from .. import vram
 
         device = self.settings.device if self.settings.asr_device == "auto" else self.settings.asr_device
-        return resolve_runtime_device(device, "cuda")
+        return vram.runtime_device(device)
 
     @property
     def loaded(self) -> bool:

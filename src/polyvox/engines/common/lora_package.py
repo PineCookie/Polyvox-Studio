@@ -1,6 +1,6 @@
 """Shareable packages of LoRA checkpoints (VoxCPM, dots.tts, S2-Pro; Engine.package_files /
-import_package): the weights without metadata, lora_config.json ({"base_model": <HF id>,
-"lora_config": {...}}, + "engine" but for VoxCPM), a README, and files of the engine's own."""
+import_package): the weights without metadata, lora_config.json ({"engine": ..., "base_model":
+<HF id>, "lora_config": {...}}), a README, and files of the engine's own."""
 
 from __future__ import annotations
 
@@ -25,17 +25,15 @@ def files(
     half: bool,
     lora_config: dict,
     readme: str,
-    engine: str | None = None,
     extra: dict[str, bytes] | None = None,
 ) -> dict[str, bytes]:
-    """A LoRA package's files: ``engine`` named in its lora_config.json (none: VoxCPM, whose own
-    loader reads the file too)."""
+    """A LoRA package's files."""
     import torch
     from safetensors.torch import load_file, save
 
     if not HUB_ID.fullmatch(base_model):
         raise ValueError(f"Base model must be a Hugging Face id such as 'org/model', not '{base_model}'.")
-    info = {**({"engine": engine} if engine else {}), "base_model": base_model, "lora_config": lora_config}
+    info = {"engine": ckpt.engine, "base_model": base_model, "lora_config": lora_config}
     tensors = load_file(str(ckpt.path / WEIGHTS_FILE))
     if half:  # inference runs in bfloat16 and loading casts to it: half the download, the same output
         tensors = {k: v.to(torch.bfloat16) if v.is_floating_point() else v for k, v in tensors.items()}
@@ -51,9 +49,11 @@ def dtype(half: bool) -> str:
     return "bfloat16" if half else "float32"
 
 
-def unpack(folder: Path, name: str, files: dict[str, bytes], check: Callable[[dict], object], keep=()) -> str:
-    """A LoRA package's weights, config, README and ``keep`` files into ``folder/<name>/``;
-    ``check(lora_config)`` raises on a config its engine can't load."""
+def unpack(
+    folder: Path, name: str, files: dict[str, bytes], engine: str, check: Callable[[dict], object], keep=()
+) -> str:
+    """A LoRA package's weights, config (naming ``engine``), README and ``keep`` files into
+    ``folder/<name>/``; ``check(lora_config)`` raises on a config its engine can't load."""
     from safetensors.torch import load
 
     if WEIGHTS_FILE not in files or CONFIG_FILE not in files:
@@ -65,16 +65,18 @@ def unpack(folder: Path, name: str, files: dict[str, bytes], check: Callable[[di
     if not tensors or not all("lora_" in k for k in tensors):
         raise ValueError(f"{WEIGHTS_FILE} does not contain LoRA weights.")
     try:
-        check(json.loads(files[CONFIG_FILE])["lora_config"])
+        info = json.loads(files[CONFIG_FILE])
+        check(info["lora_config"])
     except Exception as e:
         raise ValueError(f"{CONFIG_FILE} is invalid: {e}") from e
     target = folder / name
     if target.exists():
         raise FileExistsError(f"A LoRA named '{name}' already exists.")
     target.mkdir(parents=True)
-    for file in (WEIGHTS_FILE, CONFIG_FILE, README_FILE, *keep):
-        if file in files:
-            (target / file).write_bytes(files[file])
+    config = (json.dumps({**info, "engine": engine}, indent=2) + "\n").encode()
+    for file, data in {**files, CONFIG_FILE: config}.items():
+        if file in (WEIGHTS_FILE, CONFIG_FILE, README_FILE, *keep):
+            (target / file).write_bytes(data)
     return name
 
 

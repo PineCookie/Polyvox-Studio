@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { DEFAULT_ENGINE, getStatus, planRun } from '../api'
+import { getStatus, planRun } from '../api'
 import type {
   DatasetReport,
   Engine,
@@ -51,7 +51,7 @@ export function NewRunForm({ datasets, runNames, activeRun, onStart, initialData
   const t = useT()
   const [tab, setTab] = useState<Tab>('dataset')
   const trainable = engines.filter((e) => e.capabilities.training)
-  const [engineId, setEngineId] = useState(DEFAULT_ENGINE)
+  const [engineId, setEngineId] = useState<string | null>(null) // null: the first
   const engine = trainable.find((e) => e.id === engineId) ?? trainable[0]
   const form = engine?.train_form ?? []
   // Values changed so far (null: the engine's defaults), and the sizing fields set by hand.

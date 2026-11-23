@@ -63,7 +63,7 @@ class TrainingConflict(Exception):
 
 class TrainParams(BaseModel):
     name: str = Field(pattern=RUN_NAME)
-    engine: str = engines.DEFAULT
+    engine: str = Field(default_factory=lambda: engines.default())
     # Manifest ids relative to the data dir.
     dataset: str
     val_dataset: str | None = None
@@ -275,8 +275,10 @@ def write_config(run_dir: Path, config: dict) -> None:
 
 
 def engine_of(config: dict) -> str:
-    """The engine a run trains (runs from before engines: VoxCPM)."""
-    return str(config.get("engine") or engines.DEFAULT)
+    """The engine a run trains (lora_library.migrate wrote it into older runs' configs)."""
+    if not config.get("engine"):
+        raise ValueError("The run's config records no engine.")
+    return str(config["engine"])
 
 
 def _count_lines(manifest: str) -> int:

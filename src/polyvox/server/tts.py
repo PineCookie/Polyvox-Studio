@@ -44,7 +44,7 @@ def router(s: Studio) -> APIRouter:
     @api.post("/api/tts", responses={200: {"content": {"audio/wav": {}}}})
     def tts(
         text: Annotated[str, Form()],
-        engine: Annotated[str, Form()] = engines.DEFAULT,
+        engine: Annotated[str | None, Form()] = None,  # none: engines.default()
         # The engine's settings (its params in /api/engines) as a JSON object.
         options: Annotated[str | None, Form()] = None,
         control: Annotated[str, Form()] = "",  # style / voice description
@@ -59,6 +59,7 @@ def router(s: Studio) -> APIRouter:
         prompt_audio: Annotated[UploadFile | None, File()] = None,
         prompt_clips: Annotated[str | None, Form()] = None,
     ) -> Response:
+        engine = engine or engines.default()
         tts_engine = s.registry.get(engine)
         if tts_engine is None:
             raise HTTPException(404, f"Unknown engine '{engine}'.")

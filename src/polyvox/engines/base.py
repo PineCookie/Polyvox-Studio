@@ -229,6 +229,12 @@ class Engine(ABC):
     checkpoint_files: tuple[str, ...] = ()
 
     @classmethod
+    def lora_layers(cls, lora_config: dict) -> list[str]:
+        """The parts of the model a checkpoint's saved lora_config adapts (shown with its rank:
+        "lm", "dit", ...); none for engines without LoRAs."""
+        return []
+
+    @classmethod
     def package_files(cls, ckpt: LoraCheckpoint, name: str, base_model: str, half: bool) -> dict[str, bytes]:
         """A checkpoint's shareable package (capabilities.package; sharing.py zips it): its files by
         name, a README and a config naming the engine (lora_config.json or voice.json) among them.

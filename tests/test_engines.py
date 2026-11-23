@@ -189,7 +189,7 @@ def test_runs_record_their_engine(client, manager, data_dir, lora_dir):
 
 
 def test_worker_command_runs_the_engines_worker(tmp_path):
-    training.write_config(tmp_path, {"num_iters": 1})
+    training.write_config(tmp_path, {"engine": "voxcpm", "num_iters": 1})
     cmd = training.worker_command(tmp_path / training.CONFIG_FILE, tmp_path / "samples", tmp_path / "stop")
     assert cmd[1:3] == ["-m", "polyvox.engines.voxcpm.worker"]
 
@@ -207,7 +207,7 @@ def test_other_engines_checkpoints(service, loader, lora_dir):
     (ckpt / lora_library.CONFIG_FILE).write_text(json.dumps(info))
 
     found = {c.id: c for c in lora_library.scan(lora_dir)}
-    assert (found["dots/step_1"].engine, found["dots/step_1"].config) == ("other", None)
+    assert found["dots/step_1"].engine == "other"
     assert (found["dots/step_1"].rank, found["dots/step_1"].alpha) == (64, 32.0)
     assert (found["vox/step_1"].engine, found["vox/step_1"].rank) == ("voxcpm", 16)
 
@@ -218,7 +218,7 @@ def test_other_engines_checkpoints(service, loader, lora_dir):
 
 
 def test_default_engine_and_params():
-    assert engines.DEFAULT == "voxcpm" and TrainParams(name="x", dataset="d").engine == "voxcpm"
+    assert engines.default() == "voxcpm" and TrainParams(name="x", dataset="d").engine == "voxcpm"
     p = Param("n", "int", 1, 0, 5)
     assert p.coerce("3") == 3
     with pytest.raises(ValueError):
