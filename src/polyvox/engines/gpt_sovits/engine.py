@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from ... import lora_library, vram
 from ...config import Settings
+from ...models import ModelSpec
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from ..common import train_form
 from . import voices
@@ -64,6 +65,64 @@ class Progress:
     started: float = 0.0
 
 
+# The models it uses (models.all_specs: the Models tab, downloads, Settings.model_path).
+MODEL_SPECS = (
+    ModelSpec(
+        "gsv_model",
+        "GPT-SoVITS v2Pro / v2ProPlus",
+        "Text to speech (32 kHz), voice training: base models with their HuBERT, RoBERTa and speaker encoders",
+        "lj1995/GPT-SoVITS",
+        "lj1995__GPT-SoVITS",
+        (
+            "s1v3.ckpt",
+            "v2Pro/s2Gv2ProPlus.pth",
+            "v2Pro/s2Gv2Pro.pth",
+            "v2Pro/s2Dv2ProPlus.pth",
+            "v2Pro/s2Dv2Pro.pth",
+            "chinese-hubert-base/config.json",
+            "chinese-hubert-base/preprocessor_config.json",
+            "chinese-hubert-base/pytorch_model.bin",
+            "chinese-roberta-wwm-ext-large/config.json",
+            "chinese-roberta-wwm-ext-large/pytorch_model.bin",
+            "chinese-roberta-wwm-ext-large/tokenizer.json",
+            "sv/pretrained_eres2netv2w24s4ep4.ckpt",
+        ),
+        1660,
+        license="MIT",
+    ),
+    ModelSpec(
+        "gsv_v4_model",
+        "GPT-SoVITS v4",
+        "Text to speech (48 kHz), voice training: v4's SoVITS base (a mel DiT) and vocoder",
+        "lj1995/GPT-SoVITS",
+        "lj1995__GPT-SoVITS",
+        ("gsv-v4-pretrained/s2Gv4.pth", "gsv-v4-pretrained/vocoder.pth"),
+        830,
+        entry="gsv-v4-pretrained",
+        license="MIT",
+    ),
+    ModelSpec(
+        "gsv_g2pw_model",
+        "G2PW",
+        "GPT-SoVITS: pronunciation of Chinese characters with several readings",
+        "kamiorinn/g2pw",
+        "G2PWModel",
+        (
+            "g2pW.onnx",
+            "config.py",
+            "char_bopomofo_dict.json",
+            "bopomofo_to_pinyin_wo_tune_dict.json",
+            "MONOPHONIC_CHARS.txt",
+            "POLYPHONIC_CHARS.txt",
+        ),
+        590,
+        license="Apache-2.0",
+        hub="modelscope",
+        archive="G2PWModel_1.1.zip",
+    ),
+)
+
+
 class GptSovitsEngine(Engine):
     id = voices.ENGINE
     name = "GPT-SoVITS"
@@ -102,6 +161,8 @@ class GptSovitsEngine(Engine):
         Param("base_version", "choice", BASE_VERSION, choices=BASE_VERSIONS, base_only=True),
     )
     model_setting = "gsv_model"
+
+    model_specs = MODEL_SPECS
     worker_module = "polyvox.engines.gpt_sovits.worker"
     checkpoint_files = (voices.SOVITS_FILE, voices.GPT_FILE)
 

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from ... import lora_library, vram
 from ...config import Settings
+from ...models import ModelSpec
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 from ..common import train_form
 from . import lora as s2lora
@@ -148,6 +149,32 @@ class Runtime:
         self.lora = key
 
 
+# The models it uses (models.all_specs: the Models tab, downloads, Settings.model_path).
+MODEL_SPECS = (
+    ModelSpec(
+        "s2_model",
+        "Fish Audio S2-Pro",
+        "Text to speech (44.1 kHz), zero-shot cloning; needs a 16 GB GPU",
+        "fishaudio/s2-pro",
+        "fishaudio__s2-pro",
+        (
+            "config.json",
+            "model.safetensors.index.json",
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+            "codec.pth",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "chat_template.jinja",
+            "LICENSE.md",
+        ),
+        11_000,
+        license="Fish Audio Research License (non-commercial)",
+    ),
+)
+
+
 class FishS2Engine(Engine):
     id = ENGINE
     name = "Fish Audio S2-Pro"
@@ -208,6 +235,8 @@ class FishS2Engine(Engine):
         Param("top_k", "int", 30, 1, 100, 1),
     )
     model_setting = "s2_model"
+
+    model_specs = MODEL_SPECS
     worker_module = "polyvox.engines.fish_s2.worker"
     checkpoint_files = (lora_library.WEIGHTS_FILE,)
 

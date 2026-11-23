@@ -15,6 +15,7 @@ from pathlib import Path
 from ... import lora_library, models, vram
 from ...config import Settings
 from ...data import audio_io
+from ...models import ModelSpec
 from ..base import Capabilities, ConvertRequest, Engine, Param, SynthesisRequest, SynthesisResult
 from ..common import train_form
 from . import voices
@@ -58,6 +59,46 @@ class Progress:
     started: float = 0.0
 
 
+# The models it uses (models.all_specs: the Models tab, downloads, Settings.model_path).
+MODEL_SPECS = (
+    ModelSpec(
+        "rvc_model",
+        "RVC v2",
+        "Voice conversion (covers): RMVPE pitch extraction",
+        "lj1995/VoiceConversionWebUI",
+        "lj1995__VoiceConversionWebUI",
+        ("rmvpe.pt",),
+        181,
+        license="MIT",
+        group="conversion",
+    ),
+    ModelSpec(
+        "contentvec_model",
+        "ContentVec",
+        "RVC: content features of the audio to convert",
+        "IAHispano/Applio",
+        "IAHispano__Applio",
+        ("Resources/embedders/contentvec/config.json", "Resources/embedders/contentvec/pytorch_model.bin"),
+        378,
+        entry="Resources/embedders/contentvec",
+        license="MIT",
+        group="conversion",
+    ),
+    ModelSpec(
+        "rvc_train_model",
+        "RVC v2 base models",
+        "Training RVC voices: the 32, 40 and 48 kHz base models (generator and discriminator)",
+        "lj1995/VoiceConversionWebUI",
+        "lj1995__VoiceConversionWebUI",
+        tuple(f"pretrained_v2/f0{part}{rate}k.pth" for rate in (32, 40, 48) for part in "GD"),
+        651,
+        entry="pretrained_v2",
+        license="MIT",
+        group="conversion",
+    ),
+)
+
+
 class RvcEngine(Engine):
     id = voices.ENGINE
     name = "RVC"
@@ -83,6 +124,8 @@ class RvcEngine(Engine):
         Param("rms_mix", "float", 1.0, 0.0, 1.0, 0.05),
     )
     model_setting = "rvc_model"
+
+    model_specs = MODEL_SPECS
     worker_module = "polyvox.engines.rvc.worker"
     checkpoint_files = (voices.INFO, voices.WEIGHTS)
 

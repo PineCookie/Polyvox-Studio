@@ -8,7 +8,7 @@ picked by a search for the least error:
   the weights become near Gaussian), then rounded to the 16 levels with the least error for a
   Gaussian. The engine rotates the experts' inputs the same way, so their outputs are unchanged.
   tools/convert_drama3_higgs.py writes the same files without this package (a test keeps them
-  equal); the build in models.DRAMA3_BUILD_REPO was made with it.
+  equal); the build in engine.DRAMA3_BUILD_REPO was made with it.
   Teacher-forced on real speech, this won back about three quarters of what plain 4-bit rounding
   of the experts cost (GPTQ, calibrated on speech, about half);
 - the full-attention q / k / v / o and linear-attention in_proj_qkv / in_proj_z / out_proj:

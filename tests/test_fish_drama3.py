@@ -163,7 +163,7 @@ def test_a_cancelled_build_leaves_no_model(tmp_path):
 
 def small_drama3_spec():
     """Drama 3's spec with a fallback that fetches one file of a made-up FP8 checkpoint."""
-    spec = models.BY_SETTING["drama3_model"]
+    spec = models.by_setting()["drama3_model"]
     fallback = models.Source("fp8", ("config.json",), spec.fallback.build, repo=spec.fallback.repo,
                              revision=spec.fallback.revision)  # fmt: skip
     files = ("config.json", "model.safetensors.index.json", convert.NOTICE, convert.STATS)
@@ -183,7 +183,7 @@ def test_drama3_downloads_the_prebuilt_build(tmp_path, monkeypatch):
 
     monkeypatch.setattr(models, "_fetch_hf", fake_fetch)
     models.download(small, tmp_path)
-    assert fetched == [(models.DRAMA3_BUILD_REPO, models.DRAMA3_BUILD_REVISION)] and small.downloaded(tmp_path)
+    assert fetched == [(engine.DRAMA3_BUILD_REPO, engine.DRAMA3_BUILD_REVISION)] and small.downloaded(tmp_path)
 
 
 def test_drama3_is_built_from_the_official_weights_when_the_build_is_gone(tmp_path, monkeypatch):
@@ -192,7 +192,7 @@ def test_drama3_is_built_from_the_official_weights_when_the_build_is_gone(tmp_pa
 
     def fake_fetch(repo, revision, folder, files, endpoint, report):
         fetched.append((repo, revision))
-        if repo == models.DRAMA3_BUILD_REPO:
+        if repo == engine.DRAMA3_BUILD_REPO:
             raise FileNotFoundError(f"{repo} has no config.json.")
         fake_fp8_checkpoint(staging := folder.with_name("staging"))
         for f in staging.iterdir():
@@ -203,8 +203,8 @@ def test_drama3_is_built_from_the_official_weights_when_the_build_is_gone(tmp_pa
     monkeypatch.setattr(models, "_fetch_hf", fake_fetch)
     progress = []
     models.download(small, tmp_path, progress=lambda done, total: progress.append((done, total)))
-    assert fetched == [(models.DRAMA3_BUILD_REPO, models.DRAMA3_BUILD_REVISION),
-                       ("fishaudio/drama-3", models.BY_SETTING["drama3_model"].fallback.revision)]  # fmt: skip
+    assert fetched == [(engine.DRAMA3_BUILD_REPO, engine.DRAMA3_BUILD_REVISION),
+                       ("fishaudio/drama-3", models.by_setting()["drama3_model"].fallback.revision)]  # fmt: skip
     assert small.downloaded(tmp_path) and not (tmp_path / "fp8").exists()
     assert "Built with Fish Audio" in (tmp_path / small.folder / convert.NOTICE).read_text(encoding="utf-8")
     assert progress[-1][0] == progress[-1][1] > 0  # download + build reach the end of one bar
@@ -215,7 +215,7 @@ def test_official_weights_the_user_put_there_stay_after_a_build(tmp_path, monkey
     fake_fp8_checkpoint(tmp_path / "fp8")  # downloaded by hand before
 
     def fake_fetch(repo, revision, folder, files, endpoint, report):
-        if repo == models.DRAMA3_BUILD_REPO:
+        if repo == engine.DRAMA3_BUILD_REPO:
             raise FileNotFoundError(f"{repo} has no config.json.")
         report(1, 1)  # everything is there already
 
@@ -354,12 +354,9 @@ class FakeRuntime:
 
 
 def drama3(settings, monkeypatch, m):
-    import dataclasses
 
     monkeypatch.setattr(engine.FishDrama3Engine, "unavailable", lambda self: None)
-    return engine.FishDrama3Engine(
-        dataclasses.replace(settings, drama3_model="X:/models/drama3"), lambda *a: FakeRuntime(m)
-    )
+    return engine.FishDrama3Engine(settings.with_models(drama3_model="X:/models/drama3"), lambda *a: FakeRuntime(m))
 
 
 def test_a_take_that_runs_away_is_drawn_again(settings, monkeypatch, tmp_path):
@@ -372,9 +369,8 @@ def test_a_take_that_runs_away_is_drawn_again(settings, monkeypatch, tmp_path):
 
 
 def test_the_engine_needs_its_model_and_a_transcript(settings, monkeypatch, tmp_path):
-    import dataclasses
 
-    plain = engine.FishDrama3Engine(dataclasses.replace(settings, drama3_model=""))
+    plain = engine.FishDrama3Engine(settings.with_models(drama3_model=""))
     assert "download" in plain.unavailable()
     tts = drama3(settings, monkeypatch, FakeModel())
     clip = tmp_path / "ref.wav"

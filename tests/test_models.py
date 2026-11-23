@@ -1,6 +1,5 @@
 """Model downloads: where settings point, and the download job (nothing is fetched)."""
 
-import dataclasses
 import os
 import time
 
@@ -65,7 +64,7 @@ def test_download_progress_counts_received_bytes_once():
 
 
 def test_a_setting_uses_the_downloaded_copy_once_complete(settings):
-    spec = models.BY_SETTING["asr_model"]
+    spec = models.by_setting()["asr_model"]
     assert settings.model_path("asr_model") == "Qwen/Qwen3-ASR-1.7B-hf"  # not downloaded: the hub id
 
     folder = settings.models_dir / spec.folder
@@ -76,9 +75,9 @@ def test_a_setting_uses_the_downloaded_copy_once_complete(settings):
     fake_download(spec, settings.models_dir)
     assert settings.model_path("asr_model") == str(folder.resolve())
     # A model set explicitly is used as configured.
-    assert dataclasses.replace(settings, asr_model="/home/someone/asr").model_path("asr_model") == "/home/someone/asr"
+    assert settings.with_models(asr_model="/home/someone/asr").model_path("asr_model") == "/home/someone/asr"
     # Separation models point to their checkpoint file; "" until downloaded.
-    vocals = models.BY_SETTING["vocals_model"]
+    vocals = models.by_setting()["vocals_model"]
     assert settings.model_path("vocals_model") == ""
     fake_download(vocals, settings.models_dir)
     assert settings.model_path("vocals_model").endswith(vocals.entry)
@@ -111,9 +110,9 @@ def test_models_endpoint_lists_and_downloads(service, training, asr_service, mon
 def test_any_engines_model_counts_as_a_speech_model(settings):
     """No model is required: one engine's model, downloaded or configured, is enough."""
     names = ["model", "dots_model", "drama3_model"]
-    unset = dataclasses.replace(settings, model=type(settings)().model)  # VoxCPM at its default (the hub id)
+    unset = settings.with_models(model=models.by_setting()["model"].default)  # VoxCPM at its default (the hub id)
     assert not models.any_available(unset, names)
-    fake_download(models.BY_SETTING["dots_model"], unset.models_dir)
+    fake_download(models.by_setting()["dots_model"], unset.models_dir)
     assert models.any_available(unset, names)
     assert models.any_available(settings, ["model"])  # the tests' VoxCPM is configured
 
@@ -141,7 +140,7 @@ def test_models_come_in_groups_and_drama3_offers_its_ways(service, training, asr
 def test_a_failed_fetch_of_a_model_not_downloaded_says_which_and_where(settings):
     from huggingface_hub.errors import LocalEntryNotFoundError
 
-    unset = dataclasses.replace(settings, model=type(settings)().model)  # VoxCPM2 not configured
+    unset = settings.with_models(model=models.by_setting()["model"].default)  # VoxCPM2 not configured
     offline = LocalEntryNotFoundError("Cannot find the requested files in the disk cache")
     with pytest.raises(models.ModelUnavailable, match="VoxCPM2 isn't downloaded.*Models tab"):
         with models.loading(unset, "model"):
@@ -199,11 +198,11 @@ def test_a_model_a_feature_needs_downloads_first_with_its_progress(settings, mon
 
     fake_download.calls, fake_download.ways = [], []
     monkeypatch.setattr(models, "download", fake)
-    unset = dataclasses.replace(settings, model=type(settings)().model)
+    unset = settings.with_models(model=models.by_setting()["model"].default)
     with models.loading(unset, "model", "denoiser_model", fetch=("model",)):
         assert settings.model_path("model")  # (loaded here)
     assert seen == [{"setting": "model", "name": "VoxCPM2", "done": 2480, "total": 4960}]
-    assert models.active_download() is None and models.BY_SETTING["model"].downloaded(unset.models_dir)
+    assert models.active_download() is None and models.by_setting()["model"].downloaded(unset.models_dir)
     assert fake_download.calls == [("model", None)]  # only "model": the denoiser wasn't asked for
     with models.loading(unset, "model"):  # downloaded now: nothing to fetch
         pass
@@ -247,9 +246,9 @@ def test_converting_keeps_the_source_only_when_asked(tmp_path, monkeypatch):
 
     monkeypatch.setattr(models, "_download_and_build", fake_build)
     monkeypatch.setattr(models, "_fetch_hf", lambda *a: pytest.fail("the build isn't wanted"))
-    spec = models.BY_SETTING["drama3_model"]
+    spec = models.by_setting()["drama3_model"]
     models.download(spec, tmp_path, way="convert")
     models.download(spec, tmp_path, way="convert_keep")
     assert built == [("fishaudio/drama-3", False), ("fishaudio/drama-3", True)]
     with pytest.raises(ValueError, match="can't be downloaded"):
-        models.download(models.BY_SETTING["asr_model"], tmp_path, way="convert")
+        models.download(models.by_setting()["asr_model"], tmp_path, way="convert")

@@ -115,9 +115,8 @@ def test_import_endpoint_refuses_clean_up_without_a_model(service, training, asr
 def test_import_endpoint_separates_with_the_configured_chain(
     service, training, asr_service, data_dir, tmp_path, monkeypatch
 ):
-    from dataclasses import replace
 
-    settings = replace(service.settings, vocals_model="vocals.ckpt", denoise_model="denoise.ckpt")
+    settings = service.settings.with_models(vocals_model="vocals.ckpt", denoise_model="denoise.ckpt")
     chain, calls = halving_chain()
     asked = []
     monkeypatch.setattr(SeparationService, "chain", lambda self, specs: asked.append(specs) or chain)

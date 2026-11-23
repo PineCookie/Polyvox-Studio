@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from ... import lora_library, models, vram
 from ...config import Settings
+from ...models import ModelSpec
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult
 from ..common import train_form
 from . import lora as dots_lora
@@ -64,6 +65,36 @@ class Progress:
     started: float = 0.0
 
 
+# The models it uses (models.all_specs: the Models tab, downloads, Settings.model_path).
+MODEL_SPECS = (
+    ModelSpec(
+        "dots_model",
+        "dots.tts SOAR",
+        "Text to speech (48 kHz), LoRA training",
+        "rednote-hilab/dots.tts-soar",
+        "rednote-hilab__dots.tts-soar",
+        (
+            "config.json",
+            "llm_config.json",
+            "latent_stats.pt",
+            "model.safetensors",
+            "vocoder.safetensors",
+            "speaker_encoder.safetensors",
+            "added_tokens.json",
+            "chat_template.jinja",
+            "merges.txt",
+            "special_tokens_map.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+        ),
+        4920,
+        license="Apache-2.0",
+        default="rednote-hilab/dots.tts-soar",
+    ),
+)
+
+
 class DotsEngine(Engine):
     id = dots_lora.ENGINE
     name = "dots.tts"
@@ -88,6 +119,8 @@ class DotsEngine(Engine):
         Param("normalize", "bool", False),  # spell out numbers, dates, ... first
     )
     model_setting = "dots_model"
+
+    model_specs = MODEL_SPECS
     worker_module = "polyvox.engines.dots.worker"
     checkpoint_files = (lora_library.WEIGHTS_FILE,)
 

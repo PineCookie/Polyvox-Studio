@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from ... import lora_library, vram
 from ...config import Settings
 from ...data import manifests
+from ...models import ModelSpec
 from ..base import Capabilities, Engine, Param, ReferenceInput, SynthesisRequest, SynthesisResult, TagGroup
 from ..common import train_form
 from . import package
@@ -80,6 +81,42 @@ def build_config(
     }
 
 
+# The models it uses (models.all_specs: the Models tab, downloads, Settings.model_path).
+MODEL_SPECS = (
+    ModelSpec(
+        "model",
+        "VoxCPM2",
+        "Text to speech, LoRA training",
+        "openbmb/VoxCPM2",
+        "openbmb__VoxCPM2",
+        (
+            "config.json",
+            "model.safetensors",
+            "audiovae.pth",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "tokenization_voxcpm2.py",
+        ),
+        4960,
+        license="Apache-2.0",
+        default="openbmb/VoxCPM2",
+    ),
+    ModelSpec(
+        "denoiser_model",
+        "ZipEnhancer",
+        "Synthesis: clean up reference audio before cloning",
+        "iic/speech_zipenhancer_ans_multiloss_16k_base",
+        "iic__speech_zipenhancer_ans_multiloss_16k_base",
+        ("configuration.json", "pytorch_model.bin"),
+        8,
+        license="Apache-2.0",
+        hub="modelscope",
+        default="iic/speech_zipenhancer_ans_multiloss_16k_base",
+    ),
+)
+
+
 class VoxCPMEngine(Engine):
     id = "voxcpm"
     name = "VoxCPM"
@@ -125,6 +162,8 @@ class VoxCPMEngine(Engine):
         Param("denoise", "bool", True),
     )
     model_setting = "model"
+
+    model_specs = MODEL_SPECS
     worker_module = "polyvox.engines.voxcpm.worker"
     checkpoint_files = (lora_library.WEIGHTS_FILE,)
 

@@ -28,6 +28,7 @@ from pathlib import Path
 from ... import vram
 from ...config import Settings
 from ...lora_library import VOICE_FILE
+from ...models import ModelSpec, Source
 from ..base import (
     Capabilities,
     EditRequest,
@@ -291,6 +292,56 @@ class Runtime:
         return audio_io.mono_tensor(wav, self.codec.sample_rate, self.device)
 
 
+# Drama 3 in 4 bits as convert.py makes it from the official weights (78e5ab7).
+DRAMA3_BUILD_REPO = "PineCookie/drama-3-int4-higgs"
+DRAMA3_BUILD_REVISION = "dedb85dba9318b2353cec15eda1142f8586a4e80"
+# The models it uses (models.all_specs: the Models tab, downloads, Settings.model_path).
+MODEL_SPECS = (
+    ModelSpec(
+        "drama3_model",
+        "Fish Audio Drama 3",
+        "Text to speech (44.1 kHz), zero-shot cloning, run in 4 bits",
+        DRAMA3_BUILD_REPO,
+        "fishaudio__drama-3__int4",
+        (
+            "config.json",
+            "model.safetensors.index.json",
+            *(f"model-{i:05d}-of-00011.safetensors" for i in range(1, 12)),
+            "codec.pth",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "chat_template.jinja",
+            "LICENSE",
+            "NOTICE",
+            "quant_stats.json",
+        ),
+        24_070,
+        license="Fish Audio Community License (free below USD 500k yearly revenue; no hosted services); "
+        "Built with Fish Audio",
+        revision=DRAMA3_BUILD_REVISION,
+        fallback=Source(
+            "fishaudio__drama-3",
+            (
+                "config.json",
+                "model.safetensors.index.json",
+                *(f"model-{i:05d}-of-00015.safetensors" for i in range(1, 16)),
+                "codec.pth",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "special_tokens_map.json",
+                "chat_template.jinja",
+                "LICENSE",
+            ),
+            "polyvox.engines.fish_drama3.convert:build",
+            repo="fishaudio/drama-3",
+            revision="78e5ab79e49aa9a25abe8799eff2c4d73a1c3216",
+            size_mb=39_600,
+        ),
+    ),
+)
+
+
 class FishDrama3Engine(Engine):
     id = ENGINE
     name = "Fish Audio Drama 3"
@@ -329,6 +380,8 @@ class FishDrama3Engine(Engine):
         Param("duration", "float", 0.0, 0.0, 60.0, 0.5),  # seconds, for a one-line text; 0 = its own
     )
     model_setting = "drama3_model"
+
+    model_specs = MODEL_SPECS
     checkpoint_files = (VOICE_FILE,)  # its voices are saved references (common.reference.create_voice)
 
     def __init__(self, settings: Settings, loader=Runtime):

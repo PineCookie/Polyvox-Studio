@@ -8,6 +8,7 @@ a downloaded copy unless a model was configured explicitly.
 
 from __future__ import annotations
 
+import functools
 import logging
 import shutil
 import threading
@@ -23,9 +24,6 @@ HF_ENDPOINT = "https://huggingface.co"
 # Speech models (and their helpers), voice conversion, dataset tools, audio clean-up.
 GROUPS = ("tts", "conversion", "dataset", "cleanup")
 WAYS = ("prebuilt", "convert", "convert_keep")  # ModelSpec.ways' ids
-# Drama 3 in 4 bits as fish_drama3/convert.py makes it from the official weights (78e5ab7).
-DRAMA3_BUILD_REPO = "PineCookie/drama-3-int4-higgs"
-DRAMA3_BUILD_REVISION = "dedb85dba9318b2353cec15eda1142f8586a4e80"
 POLL_S = 0.5
 
 
@@ -47,7 +45,7 @@ class Source:
 
 @dataclass(frozen=True)
 class ModelSpec:
-    setting: str  # the config.Settings field it fills
+    setting: str  # its key in config.Settings.models (env POLYVOX_<SETTING>)
     name: str
     purpose: str
     repo: str  # Hugging Face repo id
@@ -67,6 +65,9 @@ class ModelSpec:
     # say), the model is built from this instead (or when asked: download's ``way``).
     fallback: Source | None = None
     group: str = "tts"  # the Models tab's section: GROUPS
+    # What the setting names when it isn't configured and the model isn't downloaded: an id that
+    # loading fetches (Hugging Face / ModelScope); "" = not available until downloaded.
+    default: str = ""
 
     def ways(self) -> list[dict]:
         """How it can be downloaded, when there's a choice: the build, or its source converted here
@@ -100,211 +101,8 @@ _HF_ASR_FILES = (
     "tokenizer_config.json",
 )
 
-MODELS: tuple[ModelSpec, ...] = (
-    ModelSpec(
-        "model",
-        "VoxCPM2",
-        "Text to speech, LoRA training",
-        "openbmb/VoxCPM2",
-        "openbmb__VoxCPM2",
-        (
-            "config.json",
-            "model.safetensors",
-            "audiovae.pth",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "special_tokens_map.json",
-            "tokenization_voxcpm2.py",
-        ),
-        4960,
-        license="Apache-2.0",
-    ),
-    ModelSpec(
-        "dots_model",
-        "dots.tts SOAR",
-        "Text to speech (48 kHz), LoRA training",
-        "rednote-hilab/dots.tts-soar",
-        "rednote-hilab__dots.tts-soar",
-        (
-            "config.json",
-            "llm_config.json",
-            "latent_stats.pt",
-            "model.safetensors",
-            "vocoder.safetensors",
-            "speaker_encoder.safetensors",
-            "added_tokens.json",
-            "chat_template.jinja",
-            "merges.txt",
-            "special_tokens_map.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "vocab.json",
-        ),
-        4920,
-        license="Apache-2.0",
-    ),
-    ModelSpec(
-        "gsv_model",
-        "GPT-SoVITS v2Pro / v2ProPlus",
-        "Text to speech (32 kHz), voice training: base models with their HuBERT, RoBERTa and speaker encoders",
-        "lj1995/GPT-SoVITS",
-        "lj1995__GPT-SoVITS",
-        (
-            "s1v3.ckpt",
-            "v2Pro/s2Gv2ProPlus.pth",
-            "v2Pro/s2Gv2Pro.pth",
-            "v2Pro/s2Dv2ProPlus.pth",
-            "v2Pro/s2Dv2Pro.pth",
-            "chinese-hubert-base/config.json",
-            "chinese-hubert-base/preprocessor_config.json",
-            "chinese-hubert-base/pytorch_model.bin",
-            "chinese-roberta-wwm-ext-large/config.json",
-            "chinese-roberta-wwm-ext-large/pytorch_model.bin",
-            "chinese-roberta-wwm-ext-large/tokenizer.json",
-            "sv/pretrained_eres2netv2w24s4ep4.ckpt",
-        ),
-        1660,
-        license="MIT",
-    ),
-    ModelSpec(
-        "gsv_v4_model",
-        "GPT-SoVITS v4",
-        "Text to speech (48 kHz), voice training: v4's SoVITS base (a mel DiT) and vocoder",
-        "lj1995/GPT-SoVITS",
-        "lj1995__GPT-SoVITS",
-        ("gsv-v4-pretrained/s2Gv4.pth", "gsv-v4-pretrained/vocoder.pth"),
-        830,
-        entry="gsv-v4-pretrained",
-        license="MIT",
-    ),
-    ModelSpec(
-        "s2_model",
-        "Fish Audio S2-Pro",
-        "Text to speech (44.1 kHz), zero-shot cloning; needs a 16 GB GPU",
-        "fishaudio/s2-pro",
-        "fishaudio__s2-pro",
-        (
-            "config.json",
-            "model.safetensors.index.json",
-            "model-00001-of-00002.safetensors",
-            "model-00002-of-00002.safetensors",
-            "codec.pth",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "special_tokens_map.json",
-            "chat_template.jinja",
-            "LICENSE.md",
-        ),
-        11_000,
-        license="Fish Audio Research License (non-commercial)",
-    ),
-    ModelSpec(
-        "drama3_model",
-        "Fish Audio Drama 3",
-        "Text to speech (44.1 kHz), zero-shot cloning, run in 4 bits",
-        DRAMA3_BUILD_REPO,
-        "fishaudio__drama-3__int4",
-        (
-            "config.json",
-            "model.safetensors.index.json",
-            *(f"model-{i:05d}-of-00011.safetensors" for i in range(1, 12)),
-            "codec.pth",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "special_tokens_map.json",
-            "chat_template.jinja",
-            "LICENSE",
-            "NOTICE",
-            "quant_stats.json",
-        ),
-        24_070,
-        license="Fish Audio Community License (free below USD 500k yearly revenue; no hosted services); "
-        "Built with Fish Audio",
-        revision=DRAMA3_BUILD_REVISION,
-        fallback=Source(
-            "fishaudio__drama-3",
-            (
-                "config.json",
-                "model.safetensors.index.json",
-                *(f"model-{i:05d}-of-00015.safetensors" for i in range(1, 16)),
-                "codec.pth",
-                "tokenizer.json",
-                "tokenizer_config.json",
-                "special_tokens_map.json",
-                "chat_template.jinja",
-                "LICENSE",
-            ),
-            "polyvox.engines.fish_drama3.convert:build",
-            repo="fishaudio/drama-3",
-            revision="78e5ab79e49aa9a25abe8799eff2c4d73a1c3216",
-            size_mb=39_600,
-        ),
-    ),
-    ModelSpec(
-        "rvc_model",
-        "RVC v2",
-        "Voice conversion (covers): RMVPE pitch extraction",
-        "lj1995/VoiceConversionWebUI",
-        "lj1995__VoiceConversionWebUI",
-        ("rmvpe.pt",),
-        181,
-        license="MIT",
-        group="conversion",
-    ),
-    ModelSpec(
-        "contentvec_model",
-        "ContentVec",
-        "RVC: content features of the audio to convert",
-        "IAHispano/Applio",
-        "IAHispano__Applio",
-        ("Resources/embedders/contentvec/config.json", "Resources/embedders/contentvec/pytorch_model.bin"),
-        378,
-        entry="Resources/embedders/contentvec",
-        license="MIT",
-        group="conversion",
-    ),
-    ModelSpec(
-        "rvc_train_model",
-        "RVC v2 base models",
-        "Training RVC voices: the 32, 40 and 48 kHz base models (generator and discriminator)",
-        "lj1995/VoiceConversionWebUI",
-        "lj1995__VoiceConversionWebUI",
-        tuple(f"pretrained_v2/f0{part}{rate}k.pth" for rate in (32, 40, 48) for part in "GD"),
-        651,
-        entry="pretrained_v2",
-        license="MIT",
-        group="conversion",
-    ),
-    ModelSpec(
-        "gsv_g2pw_model",
-        "G2PW",
-        "GPT-SoVITS: pronunciation of Chinese characters with several readings",
-        "kamiorinn/g2pw",
-        "G2PWModel",
-        (
-            "g2pW.onnx",
-            "config.py",
-            "char_bopomofo_dict.json",
-            "bopomofo_to_pinyin_wo_tune_dict.json",
-            "MONOPHONIC_CHARS.txt",
-            "POLYPHONIC_CHARS.txt",
-        ),
-        590,
-        license="Apache-2.0",
-        hub="modelscope",
-        archive="G2PWModel_1.1.zip",
-    ),
-    ModelSpec(
-        "denoiser_model",
-        "ZipEnhancer",
-        "Synthesis: clean up reference audio before cloning",
-        "iic/speech_zipenhancer_ans_multiloss_16k_base",
-        "iic__speech_zipenhancer_ans_multiloss_16k_base",
-        ("configuration.json", "pytorch_model.bin"),
-        8,
-        license="Apache-2.0",
-        hub="modelscope",
-    ),
+# The dataset and clean-up tools' models; each engine declares its own (Engine.model_specs).
+SHARED: tuple[ModelSpec, ...] = (
     ModelSpec(
         "asr_model",
         "Qwen3-ASR 1.7B",
@@ -315,6 +113,7 @@ MODELS: tuple[ModelSpec, ...] = (
         4090,
         license="Apache-2.0",
         group="dataset",
+        default="Qwen/Qwen3-ASR-1.7B-hf",
     ),
     ModelSpec(
         "align_model",
@@ -326,6 +125,7 @@ MODELS: tuple[ModelSpec, ...] = (
         1850,
         license="Apache-2.0",
         group="dataset",
+        default="Qwen/Qwen3-ForcedAligner-0.6B-hf",
     ),
     ModelSpec(
         "ctc_align_model",
@@ -337,6 +137,7 @@ MODELS: tuple[ModelSpec, ...] = (
         1280,
         license="Apache-2.0",
         group="dataset",
+        default="jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
     ),
     ModelSpec(
         "singing_model",
@@ -348,6 +149,7 @@ MODELS: tuple[ModelSpec, ...] = (
         350,
         license="BSD-3-Clause",
         group="dataset",
+        default="MIT/ast-finetuned-audioset-10-10-0.4593",
     ),
     ModelSpec(
         "speaker_model",
@@ -360,6 +162,7 @@ MODELS: tuple[ModelSpec, ...] = (
         license="Apache-2.0",
         hub="modelscope",
         group="dataset",
+        default="iic/speech_campplus_sv_zh-cn_16k-common",
     ),
     ModelSpec(
         "vocals_model",
@@ -410,7 +213,19 @@ MODELS: tuple[ModelSpec, ...] = (
     ),
 )
 
-BY_SETTING = {m.setting: m for m in MODELS}
+
+@functools.cache
+def all_specs() -> tuple[ModelSpec, ...]:
+    """Every model: each engine's (Engine.model_specs, in the registry's order), then the dataset
+    and clean-up tools' (SHARED)."""
+    from . import engines
+
+    return (*(spec for cls in engines.classes().values() for spec in cls.model_specs), *SHARED)
+
+
+@functools.cache
+def by_setting() -> dict[str, ModelSpec]:
+    return {m.setting: m for m in all_specs()}
 
 
 SOURCE_FILE = ".download-source"  # in the models folder: the download source chosen in the Models tab
@@ -510,7 +325,7 @@ def active_download() -> dict | None:
 def ensure_downloaded(settings, setting: str) -> None:
     """A model not configured and not downloaded is downloaded into the models folder now (from
     the download source in use), its progress in active_download(), before it is loaded."""
-    spec = BY_SETTING[setting]
+    spec = by_setting()[setting]
     if settings.configured(setting) or spec.downloaded(settings.models_dir):
         return
     from . import jobs
@@ -537,7 +352,7 @@ def loading(settings, *setting_names: str, fetch: tuple[str, ...] | None = None)
     fetch of one that isn't downloaded becomes a ModelUnavailable naming it; other errors pass."""
     try:
         for name in setting_names if fetch is None else fetch:
-            if name in BY_SETTING:
+            if name in by_setting():
                 ensure_downloaded(settings, name)
         yield
     except ModelUnavailable:
@@ -545,9 +360,9 @@ def loading(settings, *setting_names: str, fetch: tuple[str, ...] | None = None)
     except Exception as e:
         cause = _fetch_failure(e)
         missing = [
-            BY_SETTING[n]
+            by_setting()[n]
             for n in setting_names
-            if n in BY_SETTING and not settings.configured(n) and not BY_SETTING[n].downloaded(settings.models_dir)
+            if n in by_setting() and not settings.configured(n) and not by_setting()[n].downloaded(settings.models_dir)
         ]
         if cause is None or not missing:
             raise
@@ -564,9 +379,9 @@ def loading(settings, *setting_names: str, fetch: tuple[str, ...] | None = None)
 def any_available(settings, setting_names) -> bool:
     """Whether any of these models is configured explicitly or downloaded (config.Settings)."""
     return any(
-        settings.configured(name) or BY_SETTING[name].downloaded(settings.models_dir)
+        settings.configured(name) or by_setting()[name].downloaded(settings.models_dir)
         for name in setting_names
-        if name in BY_SETTING
+        if name in by_setting()
     )
 
 

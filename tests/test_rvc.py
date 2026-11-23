@@ -145,7 +145,7 @@ def test_long_audio_is_cut_in_a_quiet_moment():
 
 
 def rvc_client(settings, service, training, **extra) -> TestClient:
-    settings = dataclasses.replace(settings, rvc_model="rvc-models", contentvec_model="contentvec", **extra)
+    settings = settings.with_models(rvc_model="rvc-models", contentvec_model="contentvec", **extra)
     registry = engines.create(settings, voxcpm=VoxCPMEngine(settings, service), rvc=RvcEngine(settings, fake_runtime))
     return TestClient(create_app(settings, service, training, engines_=registry))
 
@@ -353,11 +353,11 @@ def test_a_training_run_is_planned_from_the_dataset(settings, monkeypatch, tmp_p
 
     from conftest import make_dataset
 
-    settings = dataclasses.replace(settings, rvc_model=str(tmp_path / "rvc"), contentvec_model=str(tmp_path / "cv"))
+    settings = settings.with_models(rvc_model=str(tmp_path / "rvc"), contentvec_model=str(tmp_path / "cv"))
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     with pytest.raises(ValueError, match="base models"):  # not downloaded yet
         RvcEngine(settings, fake_runtime).training_config(None, tmp_path / "run", tmp_path / "x.jsonl", None)
-    settings = dataclasses.replace(settings, rvc_train_model=str(tmp_path / "rvc" / "pretrained_v2"))
+    settings = settings.with_models(rvc_train_model=str(tmp_path / "rvc" / "pretrained_v2"))
     make_dataset(settings.data_dir, "speaker_a")
     # As TrainingManager hands it over: the run's copy of the manifest, with absolute paths.
     wavs = sorted((settings.data_dir / "speaker_a" / "wavs").glob("*.wav"))

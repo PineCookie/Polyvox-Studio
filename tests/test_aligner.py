@@ -105,4 +105,4 @@ def test_service_uses_the_configured_model_per_backend(settings, align_loader):
 
     service.align([tone([(0.2, 0.8)], 1.0)], ["四"], "ctc")
 
-    assert seen == [settings.ctc_align_model]
+    assert seen == [settings.model_path("ctc_align_model")]

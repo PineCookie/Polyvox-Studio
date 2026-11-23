@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from .. import models
-from ..config import Settings
 from ..jobs import Job
 from .context import Studio, checked, found
 from .schemas import DownloadIn, JobOut, ModelOut, ModelsOut, SourceIn
@@ -32,7 +31,7 @@ def router(s: Studio) -> APIRouter:
     @api.get("/api/models")
     def list_models() -> ModelsOut:
         out = []
-        for spec in models.MODELS:
+        for spec in models.all_specs():
             path = settings.model_path(spec.setting)
             if settings.configured(spec.setting):
                 state = "custom"
@@ -49,7 +48,7 @@ def router(s: Studio) -> APIRouter:
                     license=spec.license,
                     state=state,
                     path=path,
-                    fallback=bool(Settings.__dataclass_fields__[spec.setting].default),
+                    fallback=bool(spec.default),
                     group=spec.group,
                     ways=spec.ways(),
                 )
@@ -73,7 +72,7 @@ def router(s: Studio) -> APIRouter:
         """Download models into the models folder, one after another (job phase:
         the setting being downloaded; done / total in MB). A given ``endpoint`` becomes the
         download source (set_source)."""
-        unknown = [m for m in body.settings if m not in models.BY_SETTING]
+        unknown = [m for m in body.settings if m not in models.by_setting()]
         if unknown:
             raise HTTPException(422, f"Unknown model: {', '.join(unknown)}")
         if body.endpoint is None:
@@ -82,9 +81,9 @@ def router(s: Studio) -> APIRouter:
             endpoint = checked(models.check_endpoint, body.endpoint)
         if running := jobs.running("download"):
             raise HTTPException(409, f"Wait for “{running.title}” to finish.")
-        specs = [models.BY_SETTING[m] for m in body.settings]
+        specs = [models.by_setting()[m] for m in body.settings]
         for setting, way in body.ways.items():
-            spec = models.BY_SETTING.get(setting)
+            spec = models.by_setting().get(setting)
             if spec is None or way not in {w["id"] for w in spec.ways()} | {"prebuilt"}:
                 raise HTTPException(422, f"{setting} can't be downloaded as {way}.")
         if body.endpoint is not None:  # the source these come from is the source from now on

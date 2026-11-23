@@ -1,6 +1,5 @@
 """Saved Drama 3 voices: a name and a reference (no training), listed with the other voices."""
 
-import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -102,7 +101,7 @@ def test_a_voice_speaks_with_its_reference_unless_given_another(settings, lora_d
     monkeypatch.setattr(engine.FishDrama3Engine, "unavailable", lambda self: None)
     m = FakeModel()
     rt = FakeRuntime(m)
-    tts = engine.FishDrama3Engine(dataclasses.replace(settings, drama3_model="X:/models/drama3"), lambda *a: rt)
+    tts = engine.FishDrama3Engine(settings.with_models(drama3_model="X:/models/drama3"), lambda *a: rt)
 
     tts.synthesize(SynthesisRequest(text="你好。", lora_id="fish_drama3/voice_a"))
     assert rt.encoded[-1] == lora_dir.resolve() / "fish_drama3" / "voice_a" / "reference.wav"

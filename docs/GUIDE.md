@@ -561,7 +561,8 @@ lora/              training runs, LoRAs and voices: voxcpm/, dots_tts/, gpt_sovi
                    fish_drama3/ (git-ignored)
 src/polyvox/
   config.py        settings from POLYVOX_* env vars
-  models.py        the models used, and downloading them
+  models.py        the dataset / clean-up models, every engine's (Engine.model_specs), and
+                   downloading them
   vram.py          GPU size classes (profiles): batches of the dataset tools, which models share the
                    GPU; each engine keeps its own training batches per class
   engines/         TTS engines behind one interface (base.py: Engine, Capabilities;

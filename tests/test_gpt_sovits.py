@@ -134,9 +134,8 @@ def test_a_given_reference_and_the_base_model(engine, pipeline, tmp_path):
 
 
 def test_more_clips_add_their_timbre_except_on_v4(engine, pipeline, tmp_path):
-    import dataclasses
 
-    engine.settings = dataclasses.replace(engine.settings, gsv_v4_model=str(tmp_path / "v4"))
+    engine.settings = engine.settings.with_models(gsv_v4_model=str(tmp_path / "v4"))
     first, second, third = (tone(tmp_path / f"{n}.wav", 5.0) for n in ("first", "second", "third"))
     request = SynthesisRequest(text="你好", reference_wav=first, prompt_text="示例。", extra_references=[second, third])
 
@@ -668,7 +667,6 @@ def test_training_can_start_from_v2pro(engine, data_dir, tmp_path):
 
 
 def test_v4_training_is_a_lora_on_v2proplus_features(engine, data_dir, tmp_path):
-    import dataclasses
 
     from polyvox.training import TrainParams
 
@@ -680,7 +678,7 @@ def test_v4_training_is_a_lora_on_v2proplus_features(engine, data_dir, tmp_path)
     )
     with pytest.raises(ValueError, match="v4 isn't downloaded"):
         engine.training_config(params, tmp_path / "run_v4", run_manifest, None)
-    engine.settings = dataclasses.replace(engine.settings, gsv_v4_model=str(tmp_path / "v4"))
+    engine.settings = engine.settings.with_models(gsv_v4_model=str(tmp_path / "v4"))
     config = engine.training_config(params, tmp_path / "run_v4", run_manifest, None)
     assert (config["version"], config["lora_rank"], config["v4_path"]) == ("v4", 16, str(tmp_path / "v4"))
     assert config["feature_cache"].endswith("gpt_sovits_v2ProPlus.pt")  # v4 shares v2ProPlus's quantizer

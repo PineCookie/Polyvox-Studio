@@ -376,7 +376,7 @@ def test_a_run_trains_the_fast_transformer_with_the_datasets_best_clips(settings
 def test_training_needs_less_gpu_memory_than_synthesis(settings, monkeypatch):
     from polyvox import vram
 
-    engine = FishS2Engine(dataclasses.replace(settings, s2_model="X:/models/s2-pro"))
+    engine = FishS2Engine(settings.with_models(s2_model="X:/models/s2-pro"))
     for gb, synthesis, training in ((16.0, True, True), (11.6, False, True), (7.6, False, False)):
         monkeypatch.setattr(vram, "total_gb", lambda device, gb=gb: gb)
         assert (engine.unavailable() is None, engine.training_unavailable() is None) == (synthesis, training), gb

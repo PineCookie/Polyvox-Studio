@@ -13,6 +13,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from ..lora_library import LoraCheckpoint
+    from ..models import ModelSpec
     from ..training import TrainParams
     from ..vram import Profile
 
@@ -214,7 +215,8 @@ class Engine(ABC):
     name: str
     capabilities: Capabilities
     params: tuple[Param, ...]
-    model_setting: str  # Settings field (and models.MODELS entry) of the base model
+    model_setting: str  # its base model's setting (one of model_specs)
+    model_specs: tuple[ModelSpec, ...] = ()  # the models it uses (models.all_specs collects them)
     worker_module: str  # run as `python -m <module> <config> --samples-dir ... --stop-file ...`
     # The files of one of its checkpoints / voices in the LoRA folder (lora_library): the first
     # marks such a folder; all of them count for when its weights last changed.
@@ -333,11 +335,9 @@ class Engine(ABC):
 
     @classmethod
     def base_repo(cls) -> str | None:
-        """The Hugging Face repo of its base model (models.MODELS): the model's own, also when it
+        """The Hugging Face repo of its base model (model_specs): the model's own, also when it
         is downloaded from a converted copy (Drama 3)."""
-        from ..models import MODELS
-
-        return next((m.model_repo for m in MODELS if m.setting == cls.model_setting), None)
+        return next((m.model_repo for m in cls.model_specs if m.setting == cls.model_setting), None)
 
     def public(self, profile: Profile | None = None) -> dict:
         """For /api/engines; ``profile``: the GPU's, for the training form's defaults."""

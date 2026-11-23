@@ -1,8 +1,6 @@
 """Speech editing by infilling (fish_drama3.edit): which words are spoken again, the prompt, the
 splice into the original, and the engine's path with a fake model."""
 
-import dataclasses
-
 import numpy as np
 import pytest
 import torch
@@ -138,9 +136,7 @@ def test_the_engine_speaks_the_changed_words_and_keeps_the_rest(settings, monkey
     m = FakeModel()
     monkeypatch.setattr(engine.FishDrama3Engine, "unavailable", lambda self: None)
     n = frames(ZH)
-    tts = engine.FishDrama3Engine(
-        dataclasses.replace(settings, drama3_model="X:/models/drama3"), lambda *a: FakeRuntime(m, n)
-    )
+    tts = engine.FishDrama3Engine(settings.with_models(drama3_model="X:/models/drama3"), lambda *a: FakeRuntime(m, n))
     asked = []
 
     def align(path, text):
