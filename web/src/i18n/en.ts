@@ -70,7 +70,7 @@ export const en = {
     voxcpm: 'What should the voice say? e.g. That is so funny [laughing] I can not stop.',
     fish_s2: "What should the voice say? Tags direct it, e.g. [excited] Guess what! [whisper] Don't tell anyone.",
     fish_drama3:
-      "What should the voice say? Tags direct it, e.g. [sighs] Not again… <whisper>don't tell anyone</whisper>",
+      "What should the voice say? Tags direct it, e.g. [excited] We made it! [sighs] Fine… <whisper>don't tell anyone</whisper>",
   } as Record<string, string>,
   showTags: 'Show the tags',
   hideTags: 'Hide the tags',
@@ -95,7 +95,7 @@ export const en = {
   tagNames: {} as Record<string, string>,
   insertTag: (tag: string) => `Insert ${tag} at the cursor`,
   customTag: 'Your own…',
-  customTagPlaceholder: 'Any description, e.g. speaking slowly, almost hesitant',
+  customTagPlaceholder: 'One or two words work best, e.g. nervous',
   insert: 'Insert',
   // How an engine's tags act, by engine id.
   tagHints: {
@@ -103,7 +103,7 @@ export const en = {
     fish_s2:
       'A tag acts on the words after it, until the next tag or the end of the sentence. Any description works; start with one or two.',
     fish_drama3:
-      'A [tag] acts where it stands; an "around words" tag wraps the words selected (or the cursor). Any wording works, in either kind.',
+      'A [tag] acts where it stands: one or two plain words work best, e.g. [excited] at the start of a line. An "around words" tag wraps the selected words (or goes at the cursor): <whisper> really whispers. Any wording works in either kind.',
   } as Record<string, string>,
   unknownTags: (engine: string, tags: string, count: number) =>
     `${engine} doesn't know ${tags}: it would read ${count === 1 ? 'it' : 'them'} out as words.`,
@@ -112,10 +112,11 @@ export const en = {
   stylePlaceholder: 'e.g. a calm, warm female voice, speaking slowly',
   // By engine id, where the style means something else than a voice description.
   stylePlaceholders: {
-    fish_drama3: 'e.g. with bright eager excitement',
+    fish_drama3: 'e.g. excited, or sad and quiet',
   } as Record<string, string>,
   styleHints: {
-    fish_drama3: 'How to say it: put before the text (each part of a long text) as a direction.',
+    fish_drama3:
+      'How to say it, in one or two plain words (e.g. excited): put before the text, and before each part of a long text. Short words direct it more than long descriptions; for a whisper use the <whisper> tag instead.',
   } as Record<string, string>,
   referenceAudio: 'Reference audio',
   referenceInfoOptional:

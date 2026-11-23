@@ -65,7 +65,8 @@ export const zh: Messages = {
   textPlaceholders: {
     voxcpm: '想让这个声音说什么？例如：这也太好笑了吧[laughing]我停不下来。',
     fish_s2: '想让这个声音说什么？用标签指导语气，例如：[excited]你猜怎么着！[whisper]别告诉别人。',
-    fish_drama3: '想让这个声音说什么？用标签指导语气，例如：[sighs]又来了……<whisper>别告诉别人</whisper>',
+    fish_drama3:
+      '想让这个声音说什么？用标签指导语气，例如：[excited]我们成功了！[sighs]好吧……<whisper>别告诉别人</whisper>',
   },
   showTags: '显示标签',
   hideTags: '隐藏标签',
@@ -129,27 +130,31 @@ export const zh: Messages = {
     gasps: '倒吸气',
     'clears throat': '清嗓子',
     hesitates: '犹豫',
-    whispering: '低语',
     slow: '放慢',
+    happy: '开心',
+    scared: '害怕',
+    calm: '平静',
   },
   insertTag: (tag) => `在光标处插入 ${tag}`,
   customTag: '自己写…',
-  customTagPlaceholder: '任意描述，例如 speaking slowly, almost hesitant',
+  customTagPlaceholder: '一两个词效果最好，例如 nervous',
   insert: '插入',
   tagHints: {
     voxcpm: '标签是该处的一个声音。请少量使用；其他方括号里的文字会被读出来。',
     fish_s2: '标签作用于其后的文字，直到下一个标签或句末。任意描述都可以；先用一两个。',
-    fish_drama3: '[标签] 在所在位置起作用；“包住文字”的标签会包住选中的文字（或光标处）。两种都可以用任意描述。',
+    fish_drama3:
+      '[标签] 在所在位置起作用：一两个简单的词效果最好，例如放在句首的 [excited]。“包住文字”的标签会包住选中的文字（或放在光标处）：<whisper> 是真正的耳语。两种都可以用任意词语。',
   },
   unknownTags: (engine, tags) => `${engine} 不认识 ${tags}：会被当作文字读出来。`,
   style: '风格',
   optional: '可选',
   stylePlaceholder: '例如：沉稳温柔的女声，语速较慢',
   stylePlaceholders: {
-    fish_drama3: '例如：带着明亮又急切的兴奋',
+    fish_drama3: '例如：excited，或 sad and quiet',
   },
   styleHints: {
-    fish_drama3: '怎么说：作为指示放在文字前（长文本的每一段都会加上）。',
+    fish_drama3:
+      '怎么说，用一两个简单的词（例如 excited）：放在文字前，长文本的每一段都会加上。简短的词比长描述更能影响语气；要耳语请改用 <whisper> 标签。',
   },
   referenceAudio: '参考音频',
   referenceInfoOptional: '要克隆的声音的一段音频。不提供时，训练过的音色用它自己的声音，基础模型则自己选一个声音。',

@@ -71,9 +71,12 @@ EDIT_CAP_MIN = 48  # frames an edit's new part may run to at least (~2.2 s)
 EDIT_RUNON = 1.6
 EDIT_TRIES = ((0, 0), (1, 0), (1, 1))  # (more words after the span, seed offset) per try
 FRAMES_PER_SECOND = 44_100 / 2048  # the codec's
-# The report's examples (Table 10) and common sounds; any words in brackets work.
+# The report's examples (Table 10) and common sounds; any words in brackets work. Emotions as one or
+# two plain words: they moved delivery more than long style descriptions. Whispering only as the scoped
+# tag: the point form mostly spoke quieter, the scoped one really whispers.
 TAG_GROUPS = (
-    TagGroup("sounds", ("[sighs]", "[laughs]", "[gasps]", "[clears throat]", "[pause]", "[hesitates]", "[crying]", "[whispering]")),
+    TagGroup("emotion", ("[excited]", "[happy]", "[surprised]", "[sad]", "[angry]", "[scared]", "[calm]")),
+    TagGroup("sounds", ("[sighs]", "[laughs]", "[gasps]", "[clears throat]", "[pause]", "[hesitates]", "[crying]")),
     TagGroup("scoped", ("<whisper></whisper>", "<slow></slow>", "<emphasis></emphasis>")),
 )  # fmt: skip
 LANGUAGES = ("auto", "zh", "en", "ja", "ko", "yue", "de", "fr", "es", "it", "pt", "ru")
@@ -351,7 +354,7 @@ class FishDrama3Engine(Engine):
         languages=("zh", "en", "ja", "ko"),
         reference_audio=True,
         reference_transcript=True,
-        style=True,  # a style prefix on each line: "[with bright eager excitement] ..."
+        style=True,  # a style prefix on each line: "[excited] ..."
         tags=True,
         # Point tags at a word, scoped tags around a span; any wording works (the report's Table 10).
         tag_groups=TAG_GROUPS,
