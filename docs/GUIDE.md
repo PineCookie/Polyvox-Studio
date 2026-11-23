@@ -573,7 +573,9 @@ src/polyvox/
                    import_package) and voices from other tools (import_voice)
     common/        train_form.py (shared training fields, runs sized in epochs),
                    lora_package.py (LoRA packages: weights, config, README),
-                   lora.py (LoRA hooks), worker.py (training-worker helpers), cache.py
+                   lora.py (LoRA hooks, weights, config), worker.py (what training workers
+                   share: Run = config, stop, log lines, resume state, samples; LoraTraining =
+                   the update loop of LoRA runs), cache.py
                    (per-clip dataset caches), reference.py (voices' default references,
                    saved-reference voices), layers.py, fish_codec.py (Fish Audio's codec)
     voxcpm/        engine.py; inference.py (model cache, LoRA hot-swap); worker.py (training);

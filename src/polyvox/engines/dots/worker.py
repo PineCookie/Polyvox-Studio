@@ -25,9 +25,7 @@ vocabulary logits are not computed, as the basic template puts no loss on them.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
-import json
 import os
 import random
 import threading
@@ -35,11 +33,10 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-import yaml
 from torch.utils.data import Dataset
 
 from ... import vram
-from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, replacing, watch_for_stop
+from ..common.worker import Batches, LoraTraining, Run, log, replacing
 
 SAMPLES = 2  # validation clips whose texts are synthesized at each validation
 SAMPLE_SEED = 42
@@ -253,35 +250,22 @@ def loss_terms(model, batch: dict) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("config_path", type=Path)
-    parser.add_argument("--samples-dir", type=Path, required=True)
-    parser.add_argument("--stop-file", type=Path, required=True)
-    parser.add_argument("--parent-pid", type=int)
-    args = parser.parse_args()
-    config = yaml.safe_load(args.config_path.read_text(encoding="utf-8"))
+    run = Run(__doc__.splitlines()[0])
+    config, stop = run.config, run.stop
 
-    import numpy as np
-    import soundfile as sf
     import torch
     from safetensors.torch import save_file
 
-    from polyvox import vram
     from polyvox.config import optimize_from_env
-    from polyvox.data import audio_io, manifests
     from polyvox.engines.dots import lora as dots_lora
     from polyvox.vendor.dots_tts.data.pipelines.tts_pipeline import BasicTtsPipeline
     from polyvox.vendor.dots_tts.models.dots_tts.model import DotsTtsModel
     from polyvox.vendor.dots_tts.runtime import DotsTtsRuntime
+    from polyvox.vendor.dots_tts.utils.text import detect
 
-    vram.apply_limit("cuda")
+    from ..common.lora import state, write_config
+
     dots_lora.quiet_logging()
-    stop = threading.Event()
-    threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid, stop), daemon=True).start()
-
-    save_dir = Path(config["save_path"])
-    save_dir.mkdir(parents=True, exist_ok=True)
-    num_iters = int(config["num_iters"])
     lora_cfg = config["lora"]
     networks = tuple(
         n for n, on in (("llm", lora_cfg.get("enable_lm", True)), ("dit", lora_cfg.get("enable_dit", True))) if on
@@ -307,9 +291,7 @@ def main() -> None:
     log(f"dots.tts loaded in {time.time() - t0:.0f} s; LoRA r{rank} on {len(loras)} layers ({', '.join(networks)})"
         f"{'; gradient checkpointing' if checkpointing else ''}{'; fused layers' if fused else ''}.")  # fmt: skip
 
-    train_records = [dict(e) for e in manifests.read_manifest(Path(config["train_manifest"]))[0]]
-    val_path = Path(config["val_manifest"]) if config.get("val_manifest") else None
-    val_records = [dict(e) for e in manifests.read_manifest(val_path)[0]] if val_path and val_path.is_file() else []
+    train_records, val_records = run.records("train_manifest"), run.records("val_manifest")
     data_cfg = SimpleNamespace(
         train_audio_sample_rate=model.config.vocoder.sample_rate,
         audio_samples_per_llm_token=model.hop_size * model.config.patch_size,
@@ -319,7 +301,7 @@ def main() -> None:
     pad_id = pad_id if pad_id is not None else (model.tokenizer.eos_token_id or 0)
     batch_size, accum = int(config["batch_size"]), int(config["grad_accum_steps"])
     workers = int(config.get("num_workers") or 0)
-    cache_dir = save_dir.parent / "cache"  # the run folder's
+    cache_dir = run.run_dir / "cache"
     train_clips = cached(
         cache_dir / "encoded_train.pt",
         cache_key(Path(config["train_manifest"]), config["pretrained_path"]),
@@ -329,7 +311,7 @@ def main() -> None:
     val_clips = (
         cached(
             cache_dir / "encoded_val.pt",
-            cache_key(val_path, config["pretrained_path"]),
+            cache_key(Path(config["val_manifest"]), config["pretrained_path"]),
             lambda: encode(model, pipeline, val_records, 0, stop, "validation"),
             len(val_records),
         )
@@ -338,69 +320,21 @@ def main() -> None:
     )
     batches = Batches(train_clips, batch_size, seed=0)
     epoch_steps = max(1.0, batches.per_epoch / accum)
-
     groups = [
-        {"name": net, "params": [p for n, lo in loras.values() if n == net for p in (lo.A, lo.B)]} for net in networks
+        {"name": net, "params": [p for lo in loras.values() if lo.network == net for p in (lo.A, lo.B)]}
+        for net in networks
     ]
-    params = [p for g in groups for p in g["params"]]
-    optimizer_name = str(config.get("optimizer") or "prodigy_sf")
-    opt, scheduler = make_optimizer(optimizer_name, groups, config, num_iters)
-    schedule_free = hasattr(opt, "train") and hasattr(opt, "eval")
-    log(f"Optimizer: {optimizer_name}; {len(train_records)} clips, {epoch_steps:.1f} steps per epoch.")
+    lora_config = {"r": rank, "alpha": alpha, "dropout": lora_cfg.get("dropout") or 0.0,
+                   "enable_lm": "llm" in networks, "enable_dit": "dit" in networks}  # fmt: skip
 
-    # ---------------------------------------------------------------- resume
-    step = 0
-    latest = save_dir / "latest"
-    if (latest / "training_state.pt").is_file():
-        state = torch.load(latest / "training_state.pt", map_location="cpu", weights_only=False)
-        with torch.no_grad():
-            for name, (_, lora) in loras.items():
-                lora.A.copy_(state["train_weights"][f"{name}.lora_A"])
-                lora.B.copy_(state["train_weights"][f"{name}.lora_B"])
-        opt.load_state_dict(state["optimizer"])
-        if scheduler is not None and state.get("scheduler"):
-            scheduler.load_state_dict(state["scheduler"])
-        step = int(state["step"])
-        log(f"Resumed at step {step}.")
-    if schedule_free:
-        opt.train()
+    def write_checkpoint(folder: Path, weights: dict) -> None:
+        with replacing(folder / "lora_weights.safetensors") as tmp:
+            save_file(weights, tmp)
+        write_config(folder, dots_lora.ENGINE, lora_config, str(config["pretrained_path"]))
 
-    def lora_tensors() -> dict:
-        """The weights to use (Schedule-Free: the average)."""
-        if schedule_free:
-            opt.eval()
-        try:
-            return dots_lora.state(loras)
-        finally:
-            if schedule_free:
-                opt.train()
-
-    def save(at: int) -> None:
-        weights = lora_tensors()
-        lora_config = {"r": rank, "alpha": alpha, "dropout": lora_cfg.get("dropout") or 0.0,
-                       "enable_lm": "llm" in networks, "enable_dit": "dit" in networks}  # fmt: skip
-        for folder in (save_dir / f"step_{at:07d}", latest):
-            folder.mkdir(parents=True, exist_ok=True)
-            with replacing(folder / "lora_weights.safetensors") as tmp:
-                save_file(weights, tmp)
-            dots_lora.write_config(folder, lora_config, str(config["pretrained_path"]))
-        with replacing(latest / "training_state.pt") as tmp:
-            torch.save(
-                {
-                    "step": at,
-                    "train_weights": dots_lora.state(loras),
-                    "optimizer": opt.state_dict(),
-                    "scheduler": scheduler.state_dict() if scheduler is not None else None,
-                },
-                tmp,
-            )
-        (latest / "training_state.json").write_text(json.dumps({"step": at}), encoding="utf-8")
-        log(f"Saved step {at}.")
-
-    def write_wav(path: Path, audio: np.ndarray, rate: int) -> None:
-        tmp = path.with_suffix(".tmp")
-        sf.write(tmp, audio, rate, format="WAV")
-        tmp.replace(path)
+    training = LoraTraining(run, loras, groups, epoch_steps, write_checkpoint)
+    log(f"Optimizer: {training.optimizer}; {len(train_records)} clips, {epoch_steps:.1f} steps per epoch.")
+    step = training.resume()
 
     def batch_loss(batch: dict, norms: dict[str, float] | None = None):
         """(gradient loss, {name: (sum, count)}) of one collated batch."""
@@ -418,8 +352,6 @@ def main() -> None:
         if not val_clips:
             return
         model.eval()
-        if schedule_free:
-            opt.eval()
         try:
             totals: dict[str, list[float]] = {}
             with torch.no_grad():
@@ -430,99 +362,55 @@ def main() -> None:
                         acc[0] += s
                         acc[1] += n
             values = {NAMES[k]: s / max(n, 1.0) for k, (s, n) in totals.items() if k in NAMES}
-            values = {"loss/total": sum(values.values()), **values}
-            with (save_dir / "train.log").open("a", encoding="utf-8") as f:
-                f.write(f"[val] step {at}: {format_metrics(values)}\n")
+            run.validation(at, {"loss/total": sum(values.values()), **values})
             samples(at)
         finally:
             model.train()
-            if schedule_free:
-                opt.train()
 
     def samples(at: int) -> None:
         """Synthesize the first validation texts without a reference, LoRA merged."""
-        args.samples_dir.mkdir(parents=True, exist_ok=True)
-        for lora in (lo for _, lo in loras.values()):
+        for lora in loras.values():
             lora.enabled = False
         try:
-            merger.apply(dots_lora.state(loras), alpha / rank)  # opt.eval(): the averaged weights
+            merger.apply(state(loras), alpha / rank)  # the averaged weights (validate runs averaged)
             for i, record in enumerate(val_records[:SAMPLES]):
-                reference = args.samples_dir / f"reference_{i}.wav"
-                if not reference.exists():
-                    audio, rate = audio_io.read(record["audio"])
-                    write_wav(reference, audio.T, rate)
+                run.reference(i, record["audio"])
                 torch.manual_seed(SAMPLE_SEED)
-                from polyvox.vendor.dots_tts.utils.text import detect
-
                 with torch.no_grad():
                     out = runtime.generate(text=record["text"], language=detect(record["text"]))
                 audio = out["audio"].detach().float().cpu().numpy().reshape(-1)
-                write_wav(args.samples_dir / f"step_{at:07d}_{i}.wav", audio, runtime.sample_rate)
+                run.write_wav(f"step_{at:07d}_{i}.wav", audio, runtime.sample_rate)
         except Exception as e:  # a failed sample never stops training
             log(f"Sample generation failed: {e}")
         finally:
             merger.apply(None)
-            for lora in (lo for _, lo in loras.values()):
+            for lora in loras.values():
                 lora.enabled = True
 
-    # ---------------------------------------------------------------- train
-    log_interval = int(config.get("log_interval") or 10)
-    valid_interval = int(config.get("valid_interval") or 0)
-    save_interval = int(config.get("save_interval") or 0)
+    def update() -> dict:
+        """One optimizer step's micro-batches: losses weighted over the whole accumulated batch."""
+        micro = [collate(model, batches.next(), pad_id) for _ in range(accum)]
+        norms: dict[str, float] = {}
+        for batch in micro:
+            for k in NAMES:
+                norms[k] = norms.get(k, 0.0) + float(batch["loss_masks"][k].sum())
+        totals: dict[str, list[float]] = {}
+        for batch in micro:
+            loss, sums = batch_loss(batch, norms)
+            loss.backward()
+            for k, (s, n) in sums.items():
+                acc = totals.setdefault(k, [0.0, 0.0])
+                acc[0] += s
+                acc[1] += n
+        return {NAMES[k]: (s, n) for k, (s, n) in totals.items() if k in NAMES}
+
     if step == 0:
-        validate(0)
+        training.averaged(lambda: validate(0))
     model.train()
     model.vocoder.eval()
     model.xvector_extractor.eval()
-
-    def train(step: int) -> int:
-        """Optimizer steps until num_iters or a stop request; returns the last step."""
-        t_log = time.time()
-        window: dict[str, list[float]] = {}
-        while step < num_iters and not stop.is_set():
-            micro = [collate(model, batches.next(), pad_id) for _ in range(accum)]
-            norms: dict[str, float] = {}  # loss weights over the whole accumulated batch
-            for batch in micro:
-                for k in NAMES:
-                    norms[k] = norms.get(k, 0.0) + float(batch["loss_masks"][k].sum())
-            for batch in micro:
-                loss, sums = batch_loss(batch, norms)
-                loss.backward()
-                for k, (s, n) in sums.items():
-                    acc = window.setdefault(k, [0.0, 0.0])
-                    acc[0] += s
-                    acc[1] += n
-            grad_norm = float(torch.nn.utils.clip_grad_norm_(params, float(config.get("max_grad_norm") or 1e9)))
-            opt.step()
-            if scheduler is not None:
-                scheduler.step()
-            opt.zero_grad(set_to_none=True)
-            step += 1
-
-            if step % log_interval == 0 or step == num_iters:
-                now = time.time()
-                values = {NAMES[k]: s / max(n, 1.0) for k, (s, n) in window.items() if k in NAMES}
-                values |= rates(opt)
-                values |= {"epoch": step / epoch_steps, "grad_norm": grad_norm}
-                values["log interval"] = now - t_log  # since the last line (training.seconds_per_step)
-                line = f"[train] step {step}: {format_metrics(values)}"
-                with (save_dir / "train.log").open("a", encoding="utf-8") as f:
-                    f.write(line + "\n")
-                print(line, flush=True)
-                t_log, window = now, {}
-            if valid_interval and step % valid_interval == 0 and step < num_iters:
-                validate(step)
-            if save_interval and step % save_interval == 0 and step < num_iters:
-                save(step)
-        return step
-
-    step = train(step)
-    if step >= num_iters:
-        validate(step)
-    if step > 0:
-        save(step)
-    log(f"Peak GPU memory {torch.cuda.max_memory_reserved() / 2**30:.1f} GB.")
-    log("Stopped." if stop.is_set() and step < num_iters else "Training complete.")
+    step = training.train(step, update, lambda at: training.averaged(lambda: validate(at)))
+    run.finish(step)
 
 
 if __name__ == "__main__":

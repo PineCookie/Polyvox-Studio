@@ -56,26 +56,15 @@ def target_layers(model: nn.Module, networks: tuple[str, ...] = tuple(TARGETS)) 
 
 
 def attach(model: nn.Module, rank: int, alpha: float, dropout: float, networks: tuple[str, ...]) -> dict:
-    """Hook a new LoRA onto each target layer: {module name: (network, LoRA)}."""
+    """Hook a new LoRA onto each target layer: {module name: LoRA}; each LoRA's ``network``
+    ("llm" / "dit") says where it is."""
     loras = {}
     for name, (net, layer) in target_layers(model, networks).items():
         lora = LoRA(layer, rank, alpha, dropout)
+        lora.network = net
         layer.register_forward_hook(lora.hook)
-        loras[name] = (net, lora)
+        loras[name] = lora
     return loras
-
-
-def state(loras: dict) -> dict[str, torch.Tensor]:
-    return {
-        f"{name}.{key}": getattr(lora, part).detach().float().cpu().contiguous()
-        for name, (_, lora) in loras.items()
-        for key, part in (("lora_A", "A"), ("lora_B", "B"))
-    }
-
-
-def write_config(ckpt_dir: Path, config: dict, base_model: str) -> None:
-    info = {"engine": ENGINE, "base_model": base_model, "lora_config": config}
-    (ckpt_dir / "lora_config.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
 
 
 class Unfuse:

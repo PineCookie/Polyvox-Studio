@@ -8,6 +8,7 @@ from torch import nn
 
 from polyvox import lora_library, training
 from polyvox.engines import SynthesisRequest
+from polyvox.engines.common.lora import state, write_config
 from polyvox.engines.common.worker import format_metrics, make_optimizer, rates
 from polyvox.engines.dots import lora as dots_lora
 from polyvox.engines.dots.engine import DotsEngine
@@ -84,15 +85,16 @@ def test_merged_lora_equals_the_trained_hooks():
     trained, merged = TinyDots(), TinyDots()
     merged.load_state_dict(trained.state_dict())
     loras = dots_lora.attach(trained, rank=4, alpha=8, dropout=0.0, networks=("llm", "dit"))
-    for _, lora in loras.values():
+    assert {lora.network for lora in loras.values()} == {"llm", "dit"}
+    for lora in loras.values():
         nn.init.normal_(lora.B)
-    dots_lora.Merger(merged).apply(dots_lora.state(loras), scale=8 / 4)
+    dots_lora.Merger(merged).apply(state(loras), scale=8 / 4)
 
     x = torch.randn(3, DIM)
     for name in dots_lora.target_layers(merged):
         assert torch.allclose(trained.get_submodule(name)(x), merged.get_submodule(name)(x), atol=1e-5)
 
-    for _, lora in loras.values():
+    for lora in loras.values():
         lora.enabled = False  # samples: merged weights, hooks off
     layer = "core.llm.model.layers.0.self_attn.q_proj"
     assert not torch.allclose(trained.get_submodule(layer)(x), merged.get_submodule(layer)(x))
@@ -195,7 +197,7 @@ def make_dots_lora(lora_dir, rel, model, seed=0, rank=4, alpha=8.0):
     ckpt = lora_dir / rel
     ckpt.mkdir(parents=True)
     save_file(lora_tensors(model, rank, seed), ckpt / lora_library.WEIGHTS_FILE)
-    dots_lora.write_config(ckpt, {"r": rank, "alpha": alpha}, "org/dots")
+    write_config(ckpt, "dots_tts", {"r": rank, "alpha": alpha}, "org/dots")
     return ckpt
 
 

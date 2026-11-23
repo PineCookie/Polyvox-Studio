@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from safetensors.torch import load, save_file
 
 from polyvox import lora_library, sharing
-from polyvox.engines.dots import lora as dots_lora
+from polyvox.engines.common.lora import write_config
 from polyvox.server import create_app
 
 from conftest import make_lora
@@ -142,8 +142,8 @@ def make_dots_checkpoint(lora_dir, rel="dots_voice/checkpoints/step_0000300"):
         },
         ckpt / "lora_weights.safetensors",
     )
-    dots_lora.write_config(
-        ckpt, {"r": 16, "alpha": 16.0, "dropout": 0.0, "enable_lm": True, "enable_dit": False}, LOCAL_DOTS
+    write_config(
+        ckpt, "dots_tts", {"r": 16, "alpha": 16.0, "dropout": 0.0, "enable_lm": True, "enable_dit": False}, LOCAL_DOTS
     )
     (ckpt / "training_state.pt").write_bytes(b"optimizer state")
     return lora_library.resolve(lora_dir, rel)

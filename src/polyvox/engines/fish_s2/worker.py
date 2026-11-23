@@ -33,7 +33,6 @@ is compiled (Trainer ``fused``; config "compile").
 
 from __future__ import annotations
 
-import argparse
 import json
 import random
 import re
@@ -43,10 +42,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-import yaml
-
 from ..common.reference import REFERENCE_JSON, REFERENCE_WAV
-from ..common.worker import Batches, format_metrics, log, make_optimizer, rates, replacing, watch_for_stop
+from ..common.worker import Batches, LoraTraining, Run, log, replacing
 
 SAMPLES = 2  # validation clips whose texts are spoken at each validation
 SAMPLE_SEED = 42
@@ -136,25 +133,16 @@ def write_reference(run_dir: Path, config: dict) -> tuple[Path, str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("config_path", type=Path)
-    parser.add_argument("--samples-dir", type=Path, required=True)
-    parser.add_argument("--stop-file", type=Path, required=True)
-    parser.add_argument("--parent-pid", type=int)
-    args = parser.parse_args()
-    config = yaml.safe_load(args.config_path.read_text(encoding="utf-8"))
+    run = Run(__doc__.splitlines()[0])
+    config, stop, run_dir = run.config, run.stop, run.run_dir
 
-    import numpy as np
-    import soundfile as sf
     import torch
     from safetensors.torch import save_file
     from transformers import AutoTokenizer
 
-    from polyvox import vram
-    from polyvox.data import audio_io, manifests
-
     from ..common import fish_codec as s2codec
     from ..common.cache import clip_key, load_cache, save_cache
+    from ..common.lora import write_config
     from . import decode, generate, prompt
     from . import lora as s2lora
     from . import model as s2model
@@ -169,14 +157,6 @@ def main() -> None:
         slow_states,
     )
 
-    vram.apply_limit("cuda")
-    stop = threading.Event()
-    threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid, stop), daemon=True).start()
-
-    save_dir = Path(config["save_path"])
-    save_dir.mkdir(parents=True, exist_ok=True)
-    run_dir = save_dir.parent
-    num_iters = int(config["num_iters"])
     lora_cfg = config["lora"]
     rank, alpha = int(lora_cfg["r"]), float(lora_cfg["alpha"])
     targets = tuple(lora_cfg.get("targets") or s2lora.DEFAULT_TARGETS)
@@ -198,9 +178,7 @@ def main() -> None:
         + ("; the slow transformer waits in CPU memory." if offload else ".")
     )
 
-    train_records = [dict(e) for e in manifests.read_manifest(Path(config["train_manifest"]))[0]]
-    val_path = Path(config["val_manifest"]) if config.get("val_manifest") else None
-    val_records = [dict(e) for e in manifests.read_manifest(val_path)[0]] if val_path and val_path.is_file() else []
+    train_records, val_records = run.records("train_manifest"), run.records("val_manifest")
     if len(train_records) < 2:
         raise SystemExit("S2-Pro training needs at least 2 clips.")
     cache_file = Path(config.get("cache_file") or run_dir / "cache" / "fish_s2.pt")
@@ -275,7 +253,6 @@ def main() -> None:
     batch_size, accum = int(config["batch_size"]), int(config["grad_accum_steps"])
     batches = Batches(list(range(len(train_clips))), batch_size, seed=0)  # batches of clip indices
     epoch_steps = max(1.0, batches.per_epoch / accum)
-    params = [p for lo in loras.values() for p in (lo.A, lo.B)]
     groups = []
     for net in ("fast", "slow"):
         group = [p for name, lo in loras.items() if name.startswith("fast_") == (net == "fast") for p in (lo.A, lo.B)]
@@ -286,66 +263,18 @@ def main() -> None:
                 else float(config["learning_rate"])
             )
             groups.append({"name": net, "params": group, "lr": lr})
-    optimizer_name = str(config.get("optimizer") or "prodigy_sf")
-    opt, scheduler = make_optimizer(optimizer_name, groups, config, num_iters)
-    schedule_free = hasattr(opt, "train") and hasattr(opt, "eval")
-    log(f"Optimizer: {optimizer_name}; {len(train_clips)} clips, {epoch_steps:.1f} steps per epoch.")
+    lora_config = {"r": rank, "alpha": alpha, "dropout": lora_cfg.get("dropout") or 0.0, "targets": list(targets)}
 
-    # ---------------------------------------------------------------- resume
-    step = 0
-    latest = save_dir / "latest"
-    if (latest / "training_state.pt").is_file():
-        state = torch.load(latest / "training_state.pt", map_location="cpu", weights_only=False)
-        with torch.no_grad():
-            for name, lora in loras.items():
-                lora.A.copy_(state["train_weights"][f"{name}.lora_A"])
-                lora.B.copy_(state["train_weights"][f"{name}.lora_B"])
-        opt.load_state_dict(state["optimizer"])
-        if scheduler is not None and state.get("scheduler"):
-            scheduler.load_state_dict(state["scheduler"])
-        step = int(state["step"])
-        log(f"Resumed at step {step}.")
-    if schedule_free:
-        opt.train()
+    def write_checkpoint(folder: Path, weights: dict) -> None:
+        with replacing(folder / "lora_weights.safetensors") as tmp:
+            save_file(weights, tmp)
+        write_config(folder, s2lora.ENGINE, lora_config, str(model_dir))
+        for name in (REFERENCE_WAV, REFERENCE_JSON):
+            shutil.copy2(run_dir / name, folder / name)
 
-    def averaged(fn):
-        """fn() with the weights to use (Schedule-Free: the average)."""
-        if schedule_free:
-            opt.eval()
-        try:
-            return fn()
-        finally:
-            if schedule_free:
-                opt.train()
-
-    def save(at: int) -> None:
-        weights = averaged(lambda: s2lora.state(loras))
-        lora_config = {"r": rank, "alpha": alpha, "dropout": lora_cfg.get("dropout") or 0.0, "targets": list(targets)}
-        for folder in (save_dir / f"step_{at:07d}", latest):
-            folder.mkdir(parents=True, exist_ok=True)
-            with replacing(folder / "lora_weights.safetensors") as tmp:
-                save_file(weights, tmp)
-            s2lora.write_config(folder, lora_config, str(model_dir))
-            for name in (REFERENCE_WAV, REFERENCE_JSON):
-                shutil.copy2(run_dir / name, folder / name)
-        tmp = latest / "training_state.tmp"
-        torch.save(
-            {
-                "step": at,
-                "train_weights": s2lora.state(loras),
-                "optimizer": opt.state_dict(),
-                "scheduler": scheduler.state_dict() if scheduler is not None else None,
-            },
-            tmp,
-        )
-        tmp.replace(latest / "training_state.pt")
-        (latest / "training_state.json").write_text(json.dumps({"step": at}), encoding="utf-8")
-        log(f"Saved step {at}.")
-
-    def write_wav(path: Path, audio: np.ndarray, rate: int) -> None:
-        tmp = path.with_suffix(".tmp")
-        sf.write(tmp, audio, rate, format="WAV")
-        tmp.replace(path)
+    training = LoraTraining(run, loras, groups, epoch_steps, write_checkpoint)
+    log(f"Optimizer: {training.optimizer}; {len(train_clips)} clips, {epoch_steps:.1f} steps per epoch.")
+    step = training.resume()
 
     def item(clips: list[dict], i: int, rng: random.Random, with_reference: bool):
         c = clips[i]
@@ -387,18 +316,15 @@ def main() -> None:
                             acc[1] += n
             return {k: s / max(n, 1) for k, (s, n) in totals.items()}
 
-        values = averaged(losses)
-        with (save_dir / "train.log").open("a", encoding="utf-8") as f:
-            f.write(f"[val] step {at}: {format_metrics(values)}\n")
+        run.validation(at, training.averaged(losses))
         peak("training")
-        averaged(lambda: samples(at))
+        training.averaged(lambda: samples(at))
         peak("samples")
 
     def samples(at: int) -> None:
         """The first validation texts, spoken with the run's reference (LoRA as trained).
         The whole model is on the GPU only meanwhile (with offload), then the codec
         decodes in its place."""
-        args.samples_dir.mkdir(parents=True, exist_ok=True)
         spoken = []
         try:  # a failed sample never stops training
             with visiting_gpu(visiting):
@@ -406,10 +332,7 @@ def main() -> None:
                     decoder = decode.Decoder(model, end_token, graphs=False)
                     c = model.config
                     for i, record in enumerate(val_records[:SAMPLES]):
-                        ref_path = args.samples_dir / f"reference_{i}.wav"
-                        if not ref_path.exists():
-                            audio, rate = audio_io.read(record["audio"])
-                            write_wav(ref_path, audio.T, rate)
+                        run.reference(i, record["audio"])
                         text = clean(record["text"])
                         tokens = prompt.build(tokenizer, c.codebooks, c.semantic_begin, text, reference)
                         torch.manual_seed(SAMPLE_SEED)
@@ -423,23 +346,15 @@ def main() -> None:
                 for i, codes in spoken:
                     if codes.shape[1]:
                         audio = codec.decode(codes.cuda()).float().cpu().numpy()
-                        write_wav(args.samples_dir / f"step_{at:07d}_{i}.wav", audio, codec.sample_rate)
+                        run.write_wav(f"step_{at:07d}_{i}.wav", audio, codec.sample_rate)
         except Exception as e:
             log(f"Sample decoding failed: {e}")
             torch.cuda.empty_cache()
 
-    # ---------------------------------------------------------------- train
-    log_interval = int(config.get("log_interval") or 10)
-    valid_interval = int(config.get("valid_interval") or 0)
-    save_interval = int(config.get("save_interval") or 0)
-    max_grad_norm = float(config.get("max_grad_norm") or 1e9)
     rng = random.Random(1)
-    if step == 0:
-        validate(0)
-    model.train()
 
-    t_log, window = time.time(), {}
-    while step < num_iters and not stop.is_set():
+    def update() -> dict:
+        window: dict[str, list] = {}
         for _ in range(accum):
             picked = batches.next()
             if cache:
@@ -459,35 +374,14 @@ def main() -> None:
                 acc = window.setdefault(f"loss/{k}", [0.0, 0])
                 acc[0] += float(s.detach())
                 acc[1] += n
-        grad_norm = float(torch.nn.utils.clip_grad_norm_(params, max_grad_norm))
-        opt.step()
-        if scheduler is not None:
-            scheduler.step()
-        opt.zero_grad(set_to_none=True)
-        step += 1
+        return {k: (s, n) for k, (s, n) in window.items()}
 
-        if step % log_interval == 0 or step == num_iters:
-            now = time.time()
-            values = {k: s / max(n, 1) for k, (s, n) in window.items()} | rates(opt)
-            values |= {"epoch": step / epoch_steps, "grad_norm": grad_norm, "log interval": now - t_log}
-            line = f"[train] step {step}: {format_metrics(values)}"
-            with (save_dir / "train.log").open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
-            print(line, flush=True)
-            t_log, window = now, {}
-        if valid_interval and step % valid_interval == 0 and step < num_iters:
-            validate(step)
-        if save_interval and step % save_interval == 0 and step < num_iters:
-            save(step)
-
-    if step >= num_iters:
-        validate(step)
-    if step > 0:
-        save(step)
+    if step == 0:
+        validate(0)
+    model.train()
+    step = training.train(step, update, validate)
     peak("training")
-    log(f"Peak GPU memory {max(peaks.values()):.1f} GB ("
-        + ", ".join(f"{phase} {gb:.1f}" for phase, gb in peaks.items() if gb) + ").")  # fmt: skip
-    log("Stopped." if stop.is_set() and step < num_iters else "Training complete.")
+    run.finish(step, peaks)
 
 
 if __name__ == "__main__":

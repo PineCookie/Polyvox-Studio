@@ -3,10 +3,27 @@ as they are. Each engine picks its target layers and saves / merges the weights 
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import torch
 from torch import nn
+
+
+def state(loras: dict[str, LoRA]) -> dict[str, torch.Tensor]:
+    """The LoRAs' weights as saved: ``<layer>.lora_A`` / ``<layer>.lora_B``, float32 on the CPU."""
+    return {
+        f"{name}.{key}": getattr(lora, part).detach().float().cpu().contiguous()
+        for name, lora in loras.items()
+        for key, part in (("lora_A", "A"), ("lora_B", "B"))
+    }
+
+
+def write_config(folder: Path, engine: str, config: dict, base_model: str) -> None:
+    """A checkpoint's lora_config.json (lora_library reads it)."""
+    info = {"engine": engine, "base_model": base_model, "lora_config": config}
+    (folder / "lora_config.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
 
 
 class LoRA(nn.Module):

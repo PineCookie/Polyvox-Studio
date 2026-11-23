@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from polyvox.engines.common import fish_codec as codec
+from polyvox.engines.common.lora import state, write_config
 from polyvox.engines.fish_s2 import decode, generate, model, prompt, train
 from polyvox.engines.fish_s2 import lora as s2lora
 from polyvox.engines.fish_s2.engine import FishS2Engine, text_parts
@@ -186,7 +187,7 @@ def test_the_lora_trains_only_itself_and_merges_into_the_weights():
         hooked, _ = trainer.losses(*batch)["codes"]
     originals = {k: v.clone() for k, v in plain.state_dict().items()}
     merger = s2lora.Merger(plain)
-    merger.apply(s2lora.state(loras), 4.0 / 2)
+    merger.apply(state(loras), 4.0 / 2)
     merged, _ = train.Trainer(plain, END).losses(*batch)["codes"]
     assert torch.allclose(hooked, merged, rtol=1e-4) and not torch.allclose(merged, loss, rtol=1e-3)
     merger.apply(None)
@@ -224,7 +225,7 @@ def test_a_voice_that_fails_to_load_leaves_the_base_model(tmp_path):
             lo.B.normal_(std=0.5)
     good, bad = tmp_path / "good", tmp_path / "bad"
     good.mkdir(), bad.mkdir()
-    save_file({k: v.contiguous() for k, v in s2lora.state(loras).items()}, str(good / lora_library.WEIGHTS_FILE))
+    save_file({k: v.contiguous() for k, v in state(loras).items()}, str(good / lora_library.WEIGHTS_FILE))
     (bad / lora_library.WEIGHTS_FILE).write_bytes(b"half a file")  # e.g. read while training saves it
     voice = lambda path: SimpleNamespace(id=path.name, weights_mtime=1.0, path=path, rank=2, alpha=2.0)  # noqa: E731
     runtime = object.__new__(Runtime)
@@ -395,8 +396,11 @@ def test_a_voice_package_carries_its_reference(lora_dir, tmp_path):
     ckpt.mkdir(parents=True)
     save_file({"fast_layers.0.attention.wo.lora_A": torch.randn(4, 8), "fast_layers.0.attention.wo.lora_B": torch.zeros(8, 4)},
               ckpt / "lora_weights.safetensors")  # fmt: skip
-    s2lora.write_config(
-        ckpt, {"r": 4, "alpha": 4.0, "dropout": 0.0, "targets": ["fast_attn"]}, r"X:\old_pc\models\fishaudio__s2-pro"
+    write_config(
+        ckpt,
+        "fish_s2",
+        {"r": 4, "alpha": 4.0, "dropout": 0.0, "targets": ["fast_attn"]},
+        r"X:\old_pc\models\fishaudio__s2-pro",
     )
     sf.write(ckpt / "reference.wav", torch.zeros(1600).numpy(), 16000)
     (ckpt / "reference.json").write_text(

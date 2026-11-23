@@ -44,20 +44,16 @@ SoVITS-stage checkpoints have no GPT weights: such a voice uses the base GPT.
 
 from __future__ import annotations
 
-import argparse
-import json
 import math
 import os
 import random
 import shutil
-import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
-
 from ... import vram
+from ..common import worker
 from ..common.worker import log
 
 if TYPE_CHECKING:
@@ -215,17 +211,6 @@ def grad_norm(params) -> torch.Tensor:
     return torch.linalg.vector_norm(torch.stack(torch._foreach_norm(grads)).float())
 
 
-def format_metrics(values: dict[str, float]) -> str:
-    def fmt(k: str, v: float) -> str:
-        if k == "lr":
-            return f"{k}: {v:.4e}"
-        if k == "log interval":
-            return f"{k}: {v:.2f}s"
-        return f"{k}: {v:.6f}"
-
-    return ", ".join(fmt(k, v) for k, v in values.items())
-
-
 def save_sovits(path: Path, weights: dict, config: dict, info: str, version: str, lora_rank: int = 0) -> None:
     """Weights as the webui saves a voice (process_ckpt.savee): float16, no
     posterior encoder, the version tag over the zip signature (v4: with its
@@ -260,27 +245,19 @@ def link_or_copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
-class Run:
-    """What both stages share: the config, the front ends and the base model in
-    inference form (samples load the trained weights into it), the reference,
-    logging and checkpoints."""
+class Run(worker.Run):
+    """What both stages share besides the common run (worker.Run): the front ends and the base
+    model in inference form (samples load the trained weights into it), the reference and
+    checkpoints."""
 
-    def __init__(self, args, config: dict):
+    def __init__(self, description: str):
         import torch
 
-        from ... import vram
-        from ..common.worker import watch_for_stop
         from . import voices
         from .synth import Pipeline
 
-        vram.apply_limit("cuda")
-        self.args, self.config = args, config
-        self.stop = threading.Event()
-        threading.Thread(target=watch_for_stop, args=(args.stop_file, args.parent_pid, self.stop), daemon=True).start()
-        self.save_dir = Path(config["save_path"])
-        self.save_dir.mkdir(parents=True, exist_ok=True)
-        self.run_dir = self.save_dir.parent
-        self.latest = self.save_dir / "latest"
+        super().__init__(description)
+        config = self.config
         self.version = str(config.get("version") or "v2ProPlus")
         self.base_dir = Path(config["pretrained_path"])
         self.dev = torch.device("cuda")
@@ -295,63 +272,21 @@ class Run:
         if voices.read_reference(self.run_dir) is None:  # copied into the run once
             ref = config["reference"]
             voices.write_reference(self.run_dir, Path(ref["audio"]), ref["text"], ref.get("source", ""))
-        self.reference = voices.read_reference(self.run_dir)
-        self.log_interval = int(config.get("log_interval") or 10)
-        self._window: dict[str, list[float]] = {}
-        self._t_log = time.time()
+        self.reference_clip = voices.read_reference(self.run_dir)
 
-    # ------------------------------------------------------------ logging
-    def record(self, step: int, values: dict, extra: dict[str, float], last: bool) -> None:
-        """Collect a step's values (numbers, or GPU tensors read back only here);
-        every log_interval steps (and the last) a ``[train]`` line with their
-        means (non-finite ones, from steps the gradient scaler skipped, left
-        out) and ``extra`` as is."""
-        for k, v in values.items():
-            self._window.setdefault(k, []).append(v)
-        if step % self.log_interval and not last:
-            return
-        now = time.time()
-        window = {k: [float(x) for x in v] for k, v in self._window.items()}
-        means = {k: sum(f) / len(f) for k, v in window.items() if (f := [x for x in v if math.isfinite(x)])}
-        means |= extra
-        means["log interval"] = now - self._t_log
-        line = f"[train] step {step}: {format_metrics(means)}"
-        with (self.save_dir / "train.log").open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-        print(line, flush=True)
-        self._t_log, self._window = now, {}
-
-    def reset_log(self) -> None:
-        self._window, self._t_log = {}, time.time()
-
-    # ------------------------------------------------------------ samples and checkpoints
     def samples(self, at: int, val_records: list[dict]) -> None:
         """The first validation texts in the run's reference voice, with the
         weights currently in ``self.voice``."""
-        import soundfile as sf
-
-        from ...data import audio_io
         from .synth import Options
 
         if not val_records:
             return
-        samples_dir = self.args.samples_dir
-        samples_dir.mkdir(parents=True, exist_ok=True)
-
-        def write_wav(path: Path, audio, rate: int) -> None:
-            tmp = path.with_suffix(".tmp")
-            sf.write(tmp, audio, rate, format="WAV")
-            tmp.replace(path)
-
         try:
-            ref = self.pipeline.reference(self.voice, *self.reference)
+            ref = self.pipeline.reference(self.voice, *self.reference_clip)
             for i, record in enumerate(val_records[:SAMPLES]):
-                reference = samples_dir / f"reference_{i}.wav"
-                if not reference.exists():
-                    audio, rate = audio_io.read(record["audio"])
-                    write_wav(reference, audio.T, rate)
+                self.reference(i, record["audio"])
                 audio = self.pipeline.synthesize(self.voice, ref, record["text"], Options(), SAMPLE_SEED)
-                write_wav(samples_dir / f"step_{at:07d}_{i}.wav", audio, self.voice.sample_rate)
+                self.write_wav(f"step_{at:07d}_{i}.wav", audio, self.voice.sample_rate)
         except Exception as e:  # a failed sample never stops training
             log(f"Sample generation failed: {e}")
 
@@ -365,30 +300,6 @@ class Run:
         for name in (voices.REFERENCE_WAV, voices.REFERENCE_JSON):
             shutil.copy2(self.run_dir / name, folder / name)
         return folder
-
-    def save_state(self, at: int, state: dict) -> None:
-        import torch
-
-        self.latest.mkdir(parents=True, exist_ok=True)
-        tmp = self.latest / "training_state.tmp"
-        torch.save({"step": at, **state}, tmp)
-        tmp.replace(self.latest / "training_state.pt")
-        (self.latest / "training_state.json").write_text(json.dumps({"step": at}), encoding="utf-8")
-        log(f"Saved step {at}.")
-
-    def load_state(self) -> dict | None:
-        import torch
-
-        path = self.latest / "training_state.pt"
-        return torch.load(path, map_location="cpu", weights_only=True) if path.is_file() else None
-
-    def write_plan(self, sovits_steps: int, num_iters: int) -> None:
-        """The exact step counts into the run's config (the server shows them)."""
-        self.config["sovits_steps"], self.config["num_iters"] = sovits_steps, num_iters
-        text = yaml.safe_dump(self.config, sort_keys=False, allow_unicode=True)
-        tmp = self.args.config_path.with_suffix(".tmp")
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(self.args.config_path)
 
 
 def train_sovits(run: Run, clips: list[dict], val_records: list[dict], step: int, end: int, state: dict | None) -> int:
@@ -928,26 +839,15 @@ def train_gpt(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("config_path", type=Path)
-    parser.add_argument("--samples-dir", type=Path, required=True)
-    parser.add_argument("--stop-file", type=Path, required=True)
-    parser.add_argument("--parent-pid", type=int)
-    args = parser.parse_args()
-    config = yaml.safe_load(args.config_path.read_text(encoding="utf-8"))
+    run = Run(__doc__.splitlines()[0])
+    config = run.config
 
     import torch
 
-    from ...data import manifests
     from . import features
 
-    run = Run(args, config)
-
     # ---------------------------------------------------------------- features
-    train_manifest = Path(config["train_manifest"])
-    records = [dict(e) for e in manifests.read_manifest(train_manifest)[0]]
-    val_path = Path(config["val_manifest"]) if config.get("val_manifest") else None
-    val_records = [dict(e) for e in manifests.read_manifest(val_path)[0]] if val_path and val_path.is_file() else []
+    records, val_records = run.records("train_manifest"), run.records("val_manifest")
 
     # The dataset's cache (shared by its runs); runs from before that: their own folder.
     cache = (
@@ -983,7 +883,7 @@ def main() -> None:
             )
         else:  # from before the GPT stage: SoVITS only
             sovits_steps, gpt_steps = int(config["num_iters"]), 0
-        run.write_plan(sovits_steps, sovits_steps + gpt_steps)
+        run.write_config(sovits_steps=sovits_steps, num_iters=sovits_steps + gpt_steps)
     sovits_steps, num_iters = int(config["sovits_steps"]), int(config["num_iters"])
     if (sovits_steps and not sovits_clips) or (num_iters > sovits_steps and not gpt_clips):
         raise SystemExit("No clip of this dataset can be trained on.")
@@ -1002,8 +902,7 @@ def main() -> None:
     if step >= sovits_steps and step < num_iters and not run.stop.is_set():
         gpt_state = state if state and state.get("stage") == "gpt" else None
         step = train_gpt(run, gpt_clips, val_records, sovits_steps, step, num_iters, gpt_state)
-    log(f"Peak GPU memory {torch.cuda.max_memory_reserved() / 2**30:.1f} GB.")
-    log("Stopped." if run.stop.is_set() and step < num_iters else "Training complete.")
+    run.finish(step)
 
 
 def pretrained_config_without_paths(hps) -> dict:
